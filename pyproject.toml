@@ -39,6 +39,7 @@ dependencies = [
     "matplotlib",
     "numpy==1.26.4",
     "omegaconf",
+    "opencv-python-headless",
     "pillow",
     "pipablepytorch3d==0.7.6",
     "pyarrow==14.0.1",

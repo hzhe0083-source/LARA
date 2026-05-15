@@ -57,11 +57,12 @@ These files exist to make the next implementation steps concrete, but they are n
 - The websocket deployment server caches MoE `resident_pool_mask` and `router_probs` values per `session_id`, feeds cached routes back as `previous_router_probs`, and supports `reset`, allowing closed-loop clients to reuse an episode-level expert pool and optionally bias chunk-level routing across receding-horizon chunks when `lara_inference_stickiness_weight > 0`.
 - `scripts/smoke_lara_real_components.py` now provides an explicit preflight for local Qwen/V-JEPA checkpoint paths and optional real `Lara` instantiate/one-step dummy forward-backward checks, with structured error reporting for missing runtime dependencies or model-load failures.
 - The real-component smoke script can temporarily enable the default-off Stage-1 latent-action head and Stage-2 MoE/direct action expert scaffolds. Local `--run-step --attn-implementation sdpa` checks now complete dummy forward/backward for the latent-only path, the MoE/direct-output path, and the combined latent+MoE/direct-output path.
+- The same smoke script can now use `--use-real-batch` to load examples from the configured SO101 LeRobot dataset, report real sample shapes, and run the model path on real SO101 batch contents instead of synthetic zeros. Passing this smoke only proves integration wiring; it is not evidence that the paper's latent-action MoE or two-level routing algorithm is trained or complete.
 
 ## Remaining Engineering Risks
 
 - Action target alignment is explicit for the current SO101 dataloader via strict `future_actions`. Future datasets that return past/current/future actions together must split out an `action_horizon`-length `future_actions` window before calling the action adapter.
-- Full `Lara` model instantiation with real Qwen/V-JEPA checkpoints and real-component one-step training smoke tests now have a script entry point. The current local `--run-step --attn-implementation sdpa` checks complete dummy forward/backward through the VLA baseline and optional latent/MoE scaffolds; the default FlashAttention path still reports missing `flash_attn`.
+- Full `Lara` model instantiation with real Qwen/V-JEPA checkpoints and real-component one-step training smoke tests now have a script entry point. The current local `--run-step --attn-implementation sdpa` checks complete dummy forward/backward through the VLA baseline and optional latent/MoE scaffolds, and real SO101 batch forward/backward through the VLA baseline plus the combined latent+MoE/direct-output scaffold; the default FlashAttention path still reports missing `flash_attn`.
 - The latent action head is currently a Stage-1 skeleton that can pass real-component smoke, but it still needs empirical SO101 training validation, loss-weight tuning, and ablation against the token-conditioned flow baseline.
 - The MoE/router path is currently a Stage-2 scaffold that can pass real-component smoke with direct action experts and routed direct output, but it still needs full-train validation of direct experts and per-expert action-loss posterior paths, resident-pool success evaluation, and closed-loop validation beyond server-side pool reuse.
 - Utility calibration currently validates action-loss utility labels, generic utility composition, a trainable utility-head interface, and loss surfaces; it does not yet supervise value/progress/uncertainty from latent-state or closed-loop evaluator labels.
@@ -73,7 +74,7 @@ These files exist to make the next implementation steps concrete, but they are n
 
 ## Suggested Implementation Order
 
-1. Use the existing real-component smoke flags before heavy jobs to catch Qwen/V-JEPA/action-head integration failures in the baseline, latent-only, MoE-only, and combined latent+MoE paths.
+1. Use the existing real-component smoke flags before heavy jobs to catch Qwen/V-JEPA/action-head integration failures in the baseline, latent-only, MoE-only, combined latent+MoE, dummy-batch, and real-SO101-batch paths.
 2. Use the optional `past_actions` interface when a dataset needs history; `future_actions` and `current_state` are explicit for SO101.
 3. Validate and tune the optional latent-action posterior/codebook/prior path in real SO101 fine-tuning.
 4. Validate the optional MoE/router path with real trajectory-id batches, direct action experts, per-expert posterior labels, and route-quality diagnostics.

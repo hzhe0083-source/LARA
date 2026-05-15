@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -126,6 +127,56 @@ def build_dummy_examples(cfg: Any, batch_size: int = 1) -> list[dict[str, Any]]:
     return examples
 
 
+def build_real_examples(cfg: Any, batch_size: int = 1, start_index: int = 0) -> list[dict[str, Any]]:
+    if batch_size < 1:
+        raise ValueError(f"real batch size must be >= 1, got {batch_size}")
+    os.environ.setdefault("NO_ALBUMENTATIONS_UPDATE", "1")
+    from Lara.dataloader.lerobot_datasets import get_vla_dataset
+
+    dataset = get_vla_dataset(
+        data_cfg=cfg.datasets.vla_data,
+        mode="val",
+        action_horizon=cfg.framework.action_model.action_horizon,
+        video_horizon=cfg.framework.vj2_model.num_frames,
+        execution_horizon=cfg.framework.action_model.get("execution_horizon", None),
+    )
+    if len(dataset) == 0:
+        raise RuntimeError("Configured SO101 dataset produced zero examples")
+    return [dataset[(start_index + idx) % len(dataset)] for idx in range(batch_size)]
+
+
+def _json_safe_scalar(value: Any) -> Any:
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
+
+
+def summarize_examples(examples: list[dict[str, Any]]) -> dict[str, Any]:
+    if not examples:
+        return {"batch_size": 0, "keys": [], "fields": {}}
+    keys = sorted(examples[0].keys())
+    fields = {}
+    for key in [
+        "future_actions",
+        "current_state",
+        "video",
+        "execution_state_target",
+        "prediction_state_target",
+    ]:
+        value = examples[0].get(key)
+        if hasattr(value, "shape"):
+            fields[key] = {"shape": list(value.shape), "dtype": str(getattr(value, "dtype", None))}
+    return {
+        "batch_size": len(examples),
+        "keys": keys,
+        "fields": fields,
+        "trajectory_ids": [_json_safe_scalar(example.get("trajectory_id")) for example in examples],
+        "base_indices": [_json_safe_scalar(example.get("base_index")) for example in examples],
+    }
+
+
 def instantiate_lara(cfg: Any):
     from Lara.model.framework import build_framework
 
@@ -163,10 +214,11 @@ def _exception_status(exc: Exception) -> dict[str, str]:
     }
 
 
-def run_one_step(model, cfg: Any) -> dict[str, float]:
+def run_one_step(model, cfg: Any, examples: list[dict[str, Any]] | None = None) -> dict[str, float]:
     model = place_smoke_trainable_components(model)
     model.train()
-    examples = build_dummy_examples(cfg, batch_size=1)
+    if examples is None:
+        examples = build_dummy_examples(cfg, batch_size=1)
     output = model(examples)
     scalar_losses = {key: value for key, value in output.items() if torch.is_tensor(value) and value.numel() == 1}
     if not scalar_losses:
@@ -187,6 +239,9 @@ def smoke_lara_real_components(
     use_lara_moe: bool | None = None,
     use_direct_action_experts: bool | None = None,
     use_direct_action_output: bool | None = None,
+    use_real_batch: bool = False,
+    real_batch_size: int = 1,
+    real_batch_start_index: int = 0,
 ) -> dict[str, Any]:
     cfg = load_config(config_path)
     cfg = apply_smoke_overrides(
@@ -198,10 +253,22 @@ def smoke_lara_real_components(
         use_direct_action_output=use_direct_action_output,
     )
     summary = smoke_config_summary(cfg)
-    path_status = check_required_paths(required_component_paths(cfg, require_data=require_data))
+    path_status = check_required_paths(required_component_paths(cfg, require_data=require_data or use_real_batch))
     result = {"summary": summary, "paths": path_status}
     if path_status["status"] != "ok":
         return result
+    examples = None
+    if use_real_batch:
+        try:
+            examples = build_real_examples(
+                cfg,
+                batch_size=real_batch_size,
+                start_index=real_batch_start_index,
+            )
+        except Exception as exc:
+            result["batch"] = _exception_status(exc)
+            return result
+        result["batch"] = {"status": "ok", **summarize_examples(examples)}
     if instantiate or run_step:
         try:
             model = instantiate_lara(cfg)
@@ -211,7 +278,7 @@ def smoke_lara_real_components(
         result["instantiate"] = {"status": "ok", "class": model.__class__.__name__}
         if run_step:
             try:
-                losses = run_one_step(model, cfg)
+                losses = run_one_step(model, cfg, examples=examples)
             except Exception as exc:
                 result["one_step"] = _exception_status(exc)
                 return result
@@ -225,6 +292,13 @@ def main() -> int:
     parser.add_argument("--require-data", action="store_true")
     parser.add_argument("--instantiate", action="store_true")
     parser.add_argument("--run-step", action="store_true")
+    parser.add_argument(
+        "--use-real-batch",
+        action="store_true",
+        help="Load examples from the configured SO101 dataset instead of using synthetic dummy examples.",
+    )
+    parser.add_argument("--real-batch-size", type=int, default=1)
+    parser.add_argument("--real-batch-start-index", type=int, default=0)
     parser.add_argument(
         "--attn-implementation",
         choices=["flash_attention_2", "sdpa", "eager"],
@@ -265,11 +339,14 @@ def main() -> int:
         use_lara_moe=args.use_lara_moe or None,
         use_direct_action_experts=args.use_direct_action_experts or None,
         use_direct_action_output=args.use_direct_action_output or None,
+        use_real_batch=args.use_real_batch,
+        real_batch_size=args.real_batch_size,
+        real_batch_start_index=args.real_batch_start_index,
     )
     print(json.dumps(result, indent=2, sort_keys=True))
     if result["paths"]["status"] != "ok":
         return 2
-    for key in ("instantiate", "one_step"):
+    for key in ("batch", "instantiate", "one_step"):
         if result.get(key, {}).get("status") == "error":
             return 3
     return 0
