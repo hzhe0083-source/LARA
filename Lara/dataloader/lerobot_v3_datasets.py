@@ -14,6 +14,7 @@ def collate_fn(batch, img_keys, state_key, action_key, task_key, resize_size):
     for _, b in enumerate(batch):
         example = {"image": []}
         example["action"] = b[action_key].cpu().numpy()
+        example["future_actions"] = example["action"]
         example["lang"] = b[task_key]
 
         for k in img_keys:
@@ -23,6 +24,7 @@ def collate_fn(batch, img_keys, state_key, action_key, task_key, resize_size):
         for k in b.keys():
             if k == state_key:
                 example["state"] = b[k][0:1].cpu().numpy()
+                example["current_state"] = example["state"]
         examples.append(example)
     return examples
 
@@ -94,7 +96,6 @@ def get_lerobot_v3_datasets(
                 repo_id,
                 delta_timestamps=delta_timestamps,
             )
-        )
+    )
     #[print(ds.num_episodes, ds.num_frames, i) for i, ds in enumerate(dataset_mixture)]
     return MixtureDataset(dataset_mixture)
-    

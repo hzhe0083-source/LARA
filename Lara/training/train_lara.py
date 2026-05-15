@@ -439,8 +439,10 @@ class VLATrainer(TrainerUtils):
 
             batch_images = [example["image"] for example in examples]
             instructions = [example["lang"] for example in examples]  # [B, str]
-            actions = [example["action"] for example in examples]  # label
-            state = [example["state"] for example in examples] if "state" in examples[0] else None  # [B, 1, state_dim]
+            action_key = "future_actions" if "future_actions" in examples[0] else "action"
+            state_key = "current_state" if "current_state" in examples[0] else "state"
+            actions = [example[action_key] for example in examples]  # label
+            state = [example[state_key] for example in examples] if state_key in examples[0] else None  # [B, 1, state_dim]
 
 
             # Predict actions using the model
