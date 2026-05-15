@@ -48,13 +48,14 @@ These files exist to make the next implementation steps concrete, but they are n
 - Route-switch-rate and retained-probability-mass helpers were added for offline route diagnostics; closed-loop subset-retention success curves still need real evaluation rollouts.
 - Sparse active/resident expert budget helpers were added for matched-budget reporting; real FLOPs, latency, VRAM, and success measurements still require benchmark runs.
 - Action-head auxiliary diagnostics are now returned as `metric/...` outputs and excluded from the differentiable loss sum by the trainers.
+- The websocket deployment server caches MoE `resident_pool_mask` values per `session_id` and supports `reset`, allowing closed-loop clients to reuse an episode-level expert pool across receding-horizon chunks.
 
 ## Remaining Engineering Risks
 
 - Action target alignment is explicit for the current SO101 dataloader via `future_actions`. Future datasets that return past/current/future actions together must split out `future_actions` before calling the action adapter.
 - Full `Lara` model instantiation with real Qwen/V-JEPA checkpoints and real-component one-step training smoke tests still need to be run; framework glue and fake action-head backprop are covered by checkpoint-free smoke tests.
 - The latent action head is currently a Stage-1 skeleton and still needs empirical validation, loss-weight tuning, and ablation against the token-conditioned flow baseline.
-- The MoE/router path is currently a Stage-2 scaffold and still needs full-train validation of the direct expert and per-expert action-loss posterior paths, resident-pool success evaluation, and closed-loop validation.
+- The MoE/router path is currently a Stage-2 scaffold and still needs full-train validation of the direct expert and per-expert action-loss posterior paths, resident-pool success evaluation, and closed-loop validation beyond server-side pool reuse.
 - Utility calibration currently validates action-loss utility labels, generic utility composition, a trainable utility-head interface, and loss surfaces; it does not yet supervise value/progress/uncertainty from latent-state or closed-loop evaluator labels.
 - The optional transition head and dataloader boundary targets are wired, but transition-state training still needs empirical validation and loss-weight tuning.
 - Matched-compute support currently covers expert-budget accounting only; it does not measure real FLOPs, latency, VRAM, or closed-loop success.

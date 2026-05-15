@@ -10,8 +10,15 @@ import websockets.asyncio.server
 import websockets.frames
 
 # from openpi_client import base_policy as _base_policy
-from . import msgpack_numpy
 from . import image_tools
+
+try:
+    from . import msgpack_numpy
+except ModuleNotFoundError as exc:
+    msgpack_numpy = None
+    _msgpack_numpy_import_error = exc
+else:
+    _msgpack_numpy_import_error = None
 
 class WebsocketPolicyServer:
     """Serves a policy using the websocket protocol. See websocket_client_policy.py for a client implementation.
@@ -30,9 +37,12 @@ class WebsocketPolicyServer:
         self._host = host
         self._port = port
         self._metadata = metadata or {}
+        self._session_state: dict[str, dict] = {}
         logging.getLogger("websockets.server").setLevel(logging.INFO)
 
     def serve_forever(self) -> None:
+        if msgpack_numpy is None:
+            raise ImportError("msgpack is required to run the websocket policy server") from _msgpack_numpy_import_error
         asyncio.run(self.run())
 
     async def run(self):
@@ -88,9 +98,19 @@ class WebsocketPolicyServer:
         mtype = msg.get("type", "infer")          # default = infer
         payload = msg.get("payload", msg)         # when no explicit payload, treat top-level as payload
 
+        session_id = str(
+            msg.get("session_id", payload.get("session_id", "default"))
+            if isinstance(payload, dict)
+            else "default"
+        )
+
         # ping
         if mtype == "ping":
-            return {"status": "ok", "ok": True, "type": "ping", "request_id": req_id}
+            return {"status": "ok", "ok": True, "type": "ping", "request_id": req_id, "session_id": session_id}
+
+        if mtype == "reset":
+            self._session_state.pop(session_id, None)
+            return {"status": "ok", "ok": True, "type": "reset", "request_id": req_id, "session_id": session_id}
 
         # infer
         elif mtype == "infer":
@@ -104,8 +124,17 @@ class WebsocketPolicyServer:
                     "error": {"message": "Payload must be a dict", "payload_type": str(type(payload))}
                 }
             try:
-                payload["batch_images"] = image_tools.to_pil_preserve(payload["batch_images"])
-                ouput_dict = self._policy.predict_action(**payload)
+                policy_payload = dict(payload)
+                policy_payload.pop("session_id", None)
+                session = self._session_state.setdefault(session_id, {})
+                if "resident_pool_mask" not in policy_payload and "resident_pool_mask" in session:
+                    policy_payload["resident_pool_mask"] = session["resident_pool_mask"]
+                policy_payload["batch_images"] = image_tools.to_pil_preserve(policy_payload["batch_images"])
+                ouput_dict = self._policy.predict_action(**policy_payload)
+                if isinstance(ouput_dict, dict) and "resident_pool_mask" in ouput_dict:
+                    session["resident_pool_mask"] = ouput_dict["resident_pool_mask"]
+                    if "resident_pool_probs" in ouput_dict:
+                        session["resident_pool_probs"] = ouput_dict["resident_pool_probs"]
             except Exception as e:
                 logging.exception("Policy inference error (request_id=%s)", req_id)
                 logging.exception(e)
@@ -126,6 +155,7 @@ class WebsocketPolicyServer:
                 "ok": True,
                 "type": "inference_result",
                 "request_id": req_id,
+                "session_id": session_id,
                 "data": data,
             }
 

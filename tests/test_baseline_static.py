@@ -98,6 +98,7 @@ def test_optional_moe_router_stage_two_exists():
     moe_src = read("Lara/model/modules/action_model/lara_moe.py")
     adapter_src = read("Lara/model/framework/act.py")
     core_src = read("Lara/model/framework/Lara_core.py")
+    server_src = read("deployment/model_server/tools/websocket_policy_server.py")
     config_src = read("scripts/config/lara_so101_ft.yaml")
     flow_src = read("Lara/model/modules/action_model/GR00T_ActionHeader.py")
     gap = read("document/IMPLEMENTATION_GAP.md")
@@ -146,6 +147,9 @@ def test_optional_moe_router_stage_two_exists():
     assert "pool_mask=pool_mask" in adapter_src
     assert "resident_pool_mask" in core_src
     assert '"resident_pool_mask"' in core_src
+    assert "self._session_state" in server_src
+    assert "resident_pool_mask" in server_src
+    assert 'mtype == "reset"' in server_src
     assert "has_training_teacher = expert_action_losses is not None or latent_action_tokens is not None" in moe_src
     assert "episode_pool_size" in moe_src
     assert "active_mask = topk_mask(router_logits, top_k=self.top_k, allowed_mask=pool_mask)" in moe_src
@@ -186,6 +190,7 @@ def test_optional_moe_router_stage_two_exists():
     assert "lara_use_expert_loss_posterior: true" in config_src
     assert "Stage-2 MoE/router scaffold" in gap
     assert "expert-diversity/entropy stabilizers" in gap
+    assert "caches MoE `resident_pool_mask` values per `session_id`" in gap
 
 
 def test_paper_gap_is_explicit():

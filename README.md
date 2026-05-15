@@ -177,6 +177,7 @@ During inference, `predict_action` returns:
 - `resident_pool_mask`: when MoE routing is enabled and no mask is supplied, the episode-level resident expert pool selected for reuse on later chunks.
 
 For MoE experiments, pass the returned `resident_pool_mask` back into later `predict_action` calls for the same episode so the chunk router chooses sparse experts inside a stable episode pool.
+The websocket deployment server also caches this mask by `session_id` and clears it on a `reset` request, so closed-loop clients can reuse an episode pool without manually echoing it on every inference call.
 
 ## Training
 
