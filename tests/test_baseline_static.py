@@ -39,7 +39,11 @@ def test_so101_batches_expose_future_actions():
     dataset_src = read("Lara/dataloader/gr00t_lerobot/datasets.py")
     core_src = read("Lara/model/framework/Lara_core.py")
     assert "future_actions=action" in dataset_src
+    assert "trajectory_id=trajectory_name" in dataset_src
+    assert "base_index=step" in dataset_src
     assert '"future_actions" if "future_actions" in examples[0] else "action"' in core_src
+    assert 'trajectory_ids = [example["trajectory_id"] for example in examples] if "trajectory_id" in examples[0] else None' in core_src
+    assert "trajectory_ids=trajectory_ids" in core_src
 
 
 def test_aux_action_losses_are_not_double_counted_by_trainer():
@@ -80,6 +84,9 @@ def test_optional_moe_router_stage_two_exists():
     assert "expert_action_losses" in moe_src
     assert "pool_target_probs" in moe_src
     assert "def expert_conditioning_tokens" in moe_src
+    assert "def _trajectory_ids_to_tensor" in adapter_src
+    assert "aggregate_episode_responsibilities(posterior_probs, trajectory_tensor)" in adapter_src
+    assert "has_training_teacher = expert_action_losses is not None or latent_action_tokens is not None" in moe_src
     assert "episode_pool_size" in moe_src
     assert "active_mask = topk_mask(router_logits, top_k=self.top_k, allowed_mask=pool_mask)" in moe_src
     assert "pool_loss_weight" in moe_src
@@ -108,7 +115,7 @@ def test_paper_gap_is_explicit():
     assert "Experimental scaffolding exists but is not complete or validated" in readme
     assert "Missing Paper Components" in gap
     assert "MoE action experts" in gap
-    assert "dataloader trajectory-id wiring" in gap
+    assert "Trajectory ids are now passed" in gap
     assert "chunk-level top-k routing constrained to the resident pool" in gap
     assert "pool target aggregation" in gap
     assert "per-expert action-loss posterior path" in gap

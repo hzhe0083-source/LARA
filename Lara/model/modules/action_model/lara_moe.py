@@ -373,7 +373,8 @@ class LatentActionMoE(nn.Module):
             pool_loss = router_logits.new_zeros(())
             train_weights = router_probs
 
-        weights = train_weights if self.training and latent_action_tokens is not None else router_probs
+        has_training_teacher = expert_action_losses is not None or latent_action_tokens is not None
+        weights = train_weights if self.training and has_training_teacher else router_probs
         tokens = conditioning_tokens + self._expert_residual(conditioning_tokens, weights)
         total_loss = self.router_loss_weight * route_loss + self.pool_loss_weight * pool_loss
         diagnostics = route_diagnostics(

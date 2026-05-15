@@ -10,7 +10,11 @@ import torch.nn as nn
 
 from Lara.model.modules.action_model.GR00T_ActionHeader import FlowmatchingActionHead, get_action_model
 from Lara.model.modules.action_model.lara_latent import LatentActionHead
-from Lara.model.modules.action_model.lara_moe import LatentActionMoE
+from Lara.model.modules.action_model.lara_moe import (
+    LatentActionMoE,
+    aggregate_episode_responsibilities,
+    posterior_from_expert_losses,
+)
 
 
 class ActionHeadAdapter(nn.Module):
@@ -85,6 +89,28 @@ class ActionHeadAdapter(nn.Module):
             return torch.stack([item.to(device=device, dtype=dtype) for item in value], dim=0)
         return torch.as_tensor(np.asarray(value), device=device, dtype=dtype)
 
+    @staticmethod
+    def _trajectory_ids_to_tensor(value, device: torch.device) -> torch.Tensor:
+        if isinstance(value, torch.Tensor):
+            return value.to(device=device, dtype=torch.long).view(-1)
+
+        array = np.asarray(value)
+        if np.issubdtype(array.dtype, np.number):
+            return torch.as_tensor(array, device=device, dtype=torch.long).view(-1)
+
+        encoded = []
+        id_to_index = {}
+        for item in array.reshape(-1).tolist():
+            key = item.item() if isinstance(item, np.generic) else item
+            try:
+                hash(key)
+            except TypeError:
+                key = repr(key)
+            if key not in id_to_index:
+                id_to_index[key] = len(id_to_index)
+            encoded.append(id_to_index[key])
+        return torch.tensor(encoded, device=device, dtype=torch.long)
+
     def _actions_to_tensor(self, actions, context_tokens: torch.Tensor) -> torch.Tensor:
         action_tensor = self._as_tensor(actions, device=context_tokens.device, dtype=torch.float32)
         if action_tensor.ndim != 3:
@@ -152,6 +178,7 @@ class ActionHeadAdapter(nn.Module):
         embodied_action_tokens: torch.Tensor,
         actions,
         state=None,
+        trajectory_ids=None,
         latent_action_tokens: Optional[torch.Tensor] = None,
         return_aux: bool = False,
     ):
@@ -186,6 +213,7 @@ class ActionHeadAdapter(nn.Module):
                 conditioning_tokens,
                 latent_action_tokens=latent_action_tokens,
                 expert_action_losses=expert_action_losses,
+                pool_target_probs=self._pool_target_probs(expert_action_losses, trajectory_ids),
             )
             conditioning_tokens = moe_output.tokens
             aux_losses.update(
@@ -225,6 +253,16 @@ class ActionHeadAdapter(nn.Module):
             + aux_losses.get("moe_router_loss", 0.0)
         )
         return aux_losses
+
+    def _pool_target_probs(self, expert_action_losses, trajectory_ids):
+        if expert_action_losses is None or trajectory_ids is None:
+            return None
+        posterior_probs = posterior_from_expert_losses(
+            expert_action_losses,
+            temperature=self.lara_moe.posterior_temperature,
+        )
+        trajectory_tensor = self._trajectory_ids_to_tensor(trajectory_ids, device=expert_action_losses.device)
+        return aggregate_episode_responsibilities(posterior_probs, trajectory_tensor)
 
     def _expert_action_losses(self, conditioning_tokens, actions_target, state=None) -> torch.Tensor:
         if self.lara_moe is None:

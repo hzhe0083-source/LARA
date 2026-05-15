@@ -1618,6 +1618,8 @@ class LeRobotMixtureDataset(Dataset):
                 return_dict = dict(
                     action=action,
                     future_actions=action,
+                    trajectory_id=trajectory_name,
+                    base_index=step,
                     image=images,
                     lang=language,
                     video=videos,
@@ -2128,5 +2130,4 @@ class LeRobotMixtureDataset(Dataset):
                 dataset.set_transforms_metadata(self.merged_metadata[dataset.tag])
         
         print(f"Applied cached statistics for {len(self.merged_metadata)} embodiment tags.")
-
 

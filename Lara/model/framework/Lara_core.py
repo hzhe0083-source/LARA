@@ -49,6 +49,7 @@ class Lara(baseframework):
         action_key = "future_actions" if "future_actions" in examples[0] else "action"
         actions = [example[action_key] for example in examples] if action_key in examples[0] else None
         state = [example["state"] for example in examples] if "state" in examples[0] else None
+        trajectory_ids = [example["trajectory_id"] for example in examples] if "trajectory_id" in examples[0] else None
 
         if actions is not None:
             prompt_template = self.config.datasets.vla_data.get("CoT_prompt", "")
@@ -74,6 +75,7 @@ class Lara(baseframework):
                 latent_action_tokens=qwen_context.action_tokens,
                 actions=actions,
                 state=state,
+                trajectory_ids=trajectory_ids,
                 return_aux=True,
             )
 
