@@ -17,6 +17,20 @@ ROUTE_SEQUENCE_DIAGNOSTIC_KEYS = (
     "mean_router_entropy",
 )
 
+PAPER_REQUIRED_METRIC_KEYS = (
+    "success",
+    "flops",
+    "latency_ms",
+    "vram_mb",
+    "route_switch_rate",
+    "pool_reuse_rate",
+)
+
+METRIC_KEY_ALIASES = {
+    "success": ("success", "success_rate"),
+    "return_score": ("return_score", "return"),
+}
+
 
 def _as_mean_float(values, name: str) -> float:
     tensor = torch.as_tensor(values, dtype=torch.float32)
@@ -45,6 +59,10 @@ def _record_value(record: Mapping[str, object], *keys: str):
         if key in record and record[key] is not None:
             return record[key]
     return None
+
+
+def _metric_value(record: Mapping[str, object], metric_key: str):
+    return _record_value(record, *METRIC_KEY_ALIASES.get(metric_key, (metric_key,)))
 
 
 def _group_record_values_by_fraction(
@@ -295,6 +313,75 @@ def normalize_protocol_records(
         else:
             normalized.append(dict(record))
     return normalized
+
+
+def protocol_evidence_audit(
+    records: Sequence[Mapping[str, object]],
+    *,
+    resident_fraction_key: str = "resident_fraction",
+    required_fractions: Optional[Sequence[float]] = None,
+    required_metric_keys: Sequence[str] = PAPER_REQUIRED_METRIC_KEYS,
+    add_route_diagnostics: bool = True,
+) -> dict[str, object]:
+    """Audit whether rollout records are strong enough for paper-protocol claims."""
+
+    records = normalize_protocol_records(records, add_route_diagnostics=add_route_diagnostics)
+    fractions = []
+    missing_fraction_records = []
+    for index, record in enumerate(records):
+        raw_fraction = _record_value(record, resident_fraction_key, "resident_fraction_requested")
+        if raw_fraction is None:
+            missing_fraction_records.append(index)
+            continue
+        fraction = float(raw_fraction)
+        if fraction <= 0 or fraction > 1:
+            raise ValueError(f"resident fraction must be in (0, 1], got {fraction}")
+        fractions.append(fraction)
+
+    present_fractions = sorted(set(fractions))
+    required_fractions = (
+        present_fractions if required_fractions is None else sorted({float(fraction) for fraction in required_fractions})
+    )
+    for fraction in required_fractions:
+        if fraction <= 0 or fraction > 1:
+            raise ValueError(f"required resident fraction must be in (0, 1], got {fraction}")
+
+    num_records_by_fraction = {
+        f"{fraction:g}": sum(1 for observed_fraction in fractions if observed_fraction == fraction)
+        for fraction in present_fractions
+    }
+    missing_required_fractions = [
+        f"{fraction:g}" for fraction in required_fractions if fraction not in present_fractions
+    ]
+    missing_metrics_by_fraction = {}
+    for fraction in required_fractions:
+        fraction_records = [
+            record
+            for record in records
+            if _record_value(record, resident_fraction_key, "resident_fraction_requested") is not None
+            and float(_record_value(record, resident_fraction_key, "resident_fraction_requested")) == fraction
+        ]
+        if not fraction_records:
+            continue
+        missing_metrics = [
+            metric_key
+            for metric_key in required_metric_keys
+            if not all(_metric_value(record, metric_key) is not None for record in fraction_records)
+        ]
+        if missing_metrics:
+            missing_metrics_by_fraction[f"{fraction:g}"] = missing_metrics
+
+    ok = not missing_fraction_records and not missing_required_fractions and not missing_metrics_by_fraction
+    return {
+        "ok": ok,
+        "num_records": len(records),
+        "num_records_by_fraction": num_records_by_fraction,
+        "required_fractions": [f"{fraction:g}" for fraction in required_fractions],
+        "required_metric_keys": list(required_metric_keys),
+        "missing_fraction_records": missing_fraction_records,
+        "missing_required_fractions": missing_required_fractions,
+        "missing_metrics_by_fraction": missing_metrics_by_fraction,
+    }
 
 
 def resident_experts_for_fraction(total_experts: int, resident_fraction: float) -> int:

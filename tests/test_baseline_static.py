@@ -202,14 +202,19 @@ def test_optional_moe_router_stage_two_exists():
     assert "def matched_expert_budget_flags" in protocol_src
     assert "def pareto_frontier_flags" in protocol_src
     assert "def protocol_summary_from_records" in protocol_src
+    assert "def protocol_evidence_audit" in protocol_src
+    assert "PAPER_REQUIRED_METRIC_KEYS" in protocol_src
     assert "def route_sequence_diagnostics" in protocol_src
     assert "def rollout_record_with_route_diagnostics" in protocol_src
     assert "def normalize_protocol_records" in protocol_src
     assert "router_probs_sequence" in protocol_src
     assert "route_diagnostics_by_fraction" in protocol_src
-    assert "from Lara.evaluation import protocol_summary_from_records" in protocol_cli_src
+    assert "protocol_summary_from_records" in protocol_cli_src
+    assert "protocol_evidence_audit" in protocol_cli_src
     assert "--resident-fraction-key" in protocol_cli_src
     assert "--no-route-sequence-diagnostics" in protocol_cli_src
+    assert "--require-paper-metrics" in protocol_cli_src
+    assert "--required-resident-fractions" in protocol_cli_src
     assert "JSON or JSONL rollout records" in protocol_cli_src
     assert "def smoke_lara_real_components" in smoke_src
     assert "def _exception_status" in smoke_src

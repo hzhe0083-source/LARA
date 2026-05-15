@@ -8,6 +8,7 @@ from Lara.evaluation.lara_protocol import (
     matched_expert_budget_flags,
     normalize_protocol_records,
     pareto_frontier_flags,
+    protocol_evidence_audit,
     protocol_summary_from_records,
     resident_experts_for_fraction,
     rollout_record_with_route_diagnostics,
@@ -295,6 +296,64 @@ class LARAProtocolTest(unittest.TestCase):
                 total_experts=8,
                 active_experts=2,
             )
+
+    def test_protocol_evidence_audit_reports_missing_paper_metrics(self):
+        records = [
+            {
+                "resident_fraction": 0.5,
+                "success": 1,
+                "flops": 4.0,
+                "latency_ms": 20.0,
+                "router_probs_sequence": [[0.9, 0.1], [0.8, 0.2]],
+                "pool_mask_sequence": [[True, True], [True, True]],
+            },
+            {
+                "resident_fraction": 1.0,
+                "success": 1,
+                "flops": 8.0,
+                "latency_ms": 30.0,
+                "vram_mb": 1400.0,
+                "router_probs_sequence": [[0.9, 0.1], [0.2, 0.8]],
+                "pool_mask_sequence": [[True, True], [True, True]],
+            },
+        ]
+
+        audit = protocol_evidence_audit(
+            records,
+            required_fractions=[0.25, 0.5, 1.0],
+        )
+
+        self.assertFalse(audit["ok"])
+        self.assertEqual(audit["missing_required_fractions"], ["0.25"])
+        self.assertIn("vram_mb", audit["missing_metrics_by_fraction"]["0.5"])
+        self.assertNotIn("pool_reuse_rate", audit["missing_metrics_by_fraction"]["0.5"])
+
+    def test_protocol_evidence_audit_accepts_complete_required_records(self):
+        records = [
+            {
+                "resident_fraction": 0.5,
+                "success": 1,
+                "flops": 4.0,
+                "latency_ms": 20.0,
+                "vram_mb": 1000.0,
+                "router_probs_sequence": [[0.9, 0.1], [0.8, 0.2]],
+                "pool_mask_sequence": [[True, True], [True, True]],
+            },
+            {
+                "resident_fraction": 1.0,
+                "success_rate": 1.0,
+                "flops": 8.0,
+                "latency_ms": 30.0,
+                "vram_mb": 1400.0,
+                "router_probs_sequence": [[0.9, 0.1], [0.2, 0.8]],
+                "pool_mask_sequence": [[True, True], [True, True]],
+            },
+        ]
+
+        audit = protocol_evidence_audit(records, required_fractions=[0.5, 1.0])
+
+        self.assertTrue(audit["ok"])
+        self.assertEqual(audit["missing_metrics_by_fraction"], {})
         with self.assertRaisesRegex(ValueError, "success"):
             protocol_summary_from_records(
                 [{"resident_fraction": 0.5}],

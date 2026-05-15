@@ -23,7 +23,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from Lara.evaluation import protocol_summary_from_records
+from Lara.evaluation import protocol_evidence_audit, protocol_summary_from_records
 
 
 def load_records(path: str | Path) -> list[dict[str, Any]]:
@@ -37,6 +37,15 @@ def load_records(path: str | Path) -> list[dict[str, Any]]:
     if not isinstance(records, list) or not all(isinstance(record, dict) for record in records):
         raise ValueError("input must be a JSON list of objects or JSONL object records")
     return records
+
+
+def parse_resident_fractions(value: str | None) -> list[float] | None:
+    if value is None:
+        return None
+    fractions = [float(part.strip()) for part in value.split(",") if part.strip()]
+    if not fractions:
+        raise ValueError("required resident fractions must not be empty")
+    return fractions
 
 
 def main() -> int:
@@ -55,10 +64,20 @@ def main() -> int:
         action="store_true",
         help="Do not derive route diagnostics from raw router_probs_sequence fields.",
     )
+    parser.add_argument(
+        "--require-paper-metrics",
+        action="store_true",
+        help="Fail unless rollout records contain success, FLOPs, latency, VRAM, and route diagnostics.",
+    )
+    parser.add_argument(
+        "--required-resident-fractions",
+        help="Comma-separated resident fractions required by --require-paper-metrics, for example 0.25,0.5,1.0.",
+    )
     args = parser.parse_args()
+    records = load_records(args.input)
 
     summary = protocol_summary_from_records(
-        load_records(args.input),
+        records,
         benchmark=args.benchmark,
         method=args.method,
         total_experts=args.total_experts,
@@ -68,12 +87,20 @@ def main() -> int:
         resident_fraction_key=args.resident_fraction_key,
         add_route_diagnostics=not args.no_route_sequence_diagnostics,
     )
+    if args.require_paper_metrics:
+        audit = protocol_evidence_audit(
+            records,
+            resident_fraction_key=args.resident_fraction_key,
+            required_fractions=parse_resident_fractions(args.required_resident_fractions),
+            add_route_diagnostics=not args.no_route_sequence_diagnostics,
+        )
+        summary["evidence_audit"] = audit
     payload = json.dumps(summary, indent=2, sort_keys=True)
     if args.output:
         Path(args.output).write_text(payload + "\n", encoding="utf-8")
     else:
         print(payload)
-    return 0
+    return 2 if args.require_paper_metrics and not summary["evidence_audit"]["ok"] else 0
 
 
 if __name__ == "__main__":
