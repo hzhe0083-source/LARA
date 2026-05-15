@@ -20,6 +20,7 @@ from Lara.model.modules.action_model.lara_moe import (
     uniform_balance_loss,
     utility_calibration_objective,
     utility_component_supervision_loss,
+    utility_from_expert_losses,
 )
 
 
@@ -576,6 +577,45 @@ class LatentActionMoETest(unittest.TestCase):
                 value_scores=torch.zeros(2, 3),
                 progress_scores=torch.zeros(2, 4),
             )
+
+    def test_utility_from_expert_losses_prefers_lower_losses(self):
+        losses = torch.tensor([[0.1, 2.0, 1.0]])
+
+        utility = utility_from_expert_losses(losses)
+
+        self.assertEqual(utility.argmax(dim=-1).tolist(), [0])
+        self.assertTrue(torch.allclose(utility.mean(dim=-1), torch.zeros(1), atol=1e-6))
+
+    def test_utility_calibration_defaults_to_pool_candidates(self):
+        torch.manual_seed(0)
+        moe = LatentActionMoE(
+            hidden_size=8,
+            num_experts=4,
+            top_k=1,
+            episode_pool_size=2,
+            expert_hidden_size=16,
+            router_hidden_size=12,
+            utility_loss_weight=1.0,
+        )
+        conditioning_tokens = torch.randn(2, 4, 8)
+        pool_mask = torch.tensor(
+            [
+                [True, True, False, False],
+                [False, True, True, False],
+            ]
+        )
+        utility_scores = torch.tensor(
+            [
+                [1.0, 2.0, 100.0, 100.0],
+                [100.0, -1.0, 1.0, 100.0],
+            ]
+        )
+
+        output = moe(conditioning_tokens, pool_mask=pool_mask, utility_scores=utility_scores)
+
+        self.assertGreater(float(output.utility_loss), 0.0)
+        self.assertTrue(torch.equal(output.pool_mask, pool_mask))
+        self.assertTrue(torch.isfinite(output.loss).item())
 
     def test_sparse_route_budget_reports_active_and_resident_fractions(self):
         metrics = sparse_route_budget(

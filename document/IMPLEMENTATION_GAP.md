@@ -17,7 +17,7 @@ These files exist to make the next implementation steps concrete, but they are n
 
 - Stage-1 latent action head scaffold: posterior encoder, VQ codebook, optional code-usage regularization, context-only prior, and optional execution/prediction boundary-state transition loss (`use_latent_action_head: false`, `lara_use_transition_head: false`).
 - Stage-2 MoE/router scaffold: residual token experts, optional direct action-chunk experts, optional routed direct-expert action output, posterior responsibility from latent tokens or per-expert action reconstruction losses, optional posterior floor/top-r smoothing, episode-level resident pool targets from aggregated chunk responsibility, reusable episode-level resident pool masks, chunk-level top-k routing constrained to the resident pool, posterior-to-router distillation losses, balance/stickiness/expert-diversity/entropy stabilizers, and route collapse diagnostics (`use_lara_moe: false`).
-- Utility calibration scaffold: optional supervised route utility head, candidate value/progress/uncertainty/cost scoring helpers, centered utility regression, and pairwise ranking losses (`lara_utility_loss_weight: 0.0`, `lara_utility_head_loss_weight: 0.0`, `lara_use_utility_head: false`).
+- Utility calibration scaffold: optional action-loss utility labels, optional supervised route utility head, candidate value/progress/uncertainty/cost scoring helpers, centered utility regression, and pairwise ranking losses (`lara_utility_loss_weight: 0.0`, `lara_utility_head_loss_weight: 0.0`, `lara_use_action_loss_utility: false`, `lara_use_utility_head: false`).
 
 ## Missing Paper Components
 
@@ -25,7 +25,7 @@ These files exist to make the next implementation steps concrete, but they are n
 - Validated transition-state training with real SO101 boundary targets.
 - Validated MoE action experts that directly produce or adapt action chunks in full SO101 training.
 - Closed-loop route diagnostics and subset-retention curves.
-- Real counterfactual utility scoring from value/progress/latent-state or closed-loop evaluator signals.
+- Real counterfactual utility scoring from value/progress/latent-state or closed-loop evaluator signals beyond action-loss utility labels.
 - Matched-compute and matched-resident-expert evaluation protocol.
 
 ## Baseline Reliability Fixes Applied
@@ -43,7 +43,7 @@ These files exist to make the next implementation steps concrete, but they are n
 - SO101 and LeRobot v3 batch builders emit execution/prediction boundary state targets with valid masks for the optional transition head.
 - Stage-2 MoE/router code was added behind `use_lara_moe`; it now has torch tests for resident-pool routing, resident-pool mask reuse across chunks, chunk top-k routing, per-expert action-loss posterior responsibility with optional floor/top-r smoothing, routed direct-expert action output, episode-level pool target aggregation, and optional expert-diversity/entropy stabilizers, but it is not yet validated in a full training run.
 - Trajectory ids are now passed from the LeRobot dataloader through `Lara_core` into the action adapter so batch-local episode responsibility can supervise the pool router.
-- Utility calibration loss code, a generic candidate utility scorer, and an optional supervised route utility head were added behind zero default weights; they still need real counterfactual labels or closed-loop evaluator signals before they can be considered the paper's calibration stage.
+- Utility calibration loss code, optional action-loss utility labels, a generic candidate utility scorer, and an optional supervised route utility head were added behind zero default weights; they still need real counterfactual labels or closed-loop evaluator signals before they can be considered the paper's calibration stage.
 - Optional direct action-chunk expert heads and routed direct-expert action output were added behind `lara_use_direct_action_experts: false` and `lara_use_direct_action_output: false`; they still need real SO101 training validation.
 - Route-switch-rate and retained-probability-mass helpers were added for offline route diagnostics; closed-loop subset-retention success curves still need real evaluation rollouts.
 - Sparse active/resident expert budget helpers were added for matched-budget reporting; real FLOPs, latency, VRAM, and success measurements still require benchmark runs.
@@ -55,7 +55,7 @@ These files exist to make the next implementation steps concrete, but they are n
 - Full `Lara` model instantiation with real Qwen/V-JEPA checkpoints and real-component one-step training smoke tests still need to be run; framework glue and fake action-head backprop are covered by checkpoint-free smoke tests.
 - The latent action head is currently a Stage-1 skeleton and still needs empirical validation, loss-weight tuning, and ablation against the token-conditioned flow baseline.
 - The MoE/router path is currently a Stage-2 scaffold and still needs full-train validation of the direct expert and per-expert action-loss posterior paths, resident-pool success evaluation, and closed-loop validation.
-- Utility calibration currently validates generic utility composition, a trainable utility-head interface, and loss surfaces; it does not yet supervise value/progress/uncertainty from latent-state or closed-loop evaluator labels.
+- Utility calibration currently validates action-loss utility labels, generic utility composition, a trainable utility-head interface, and loss surfaces; it does not yet supervise value/progress/uncertainty from latent-state or closed-loop evaluator labels.
 - The optional transition head and dataloader boundary targets are wired, but transition-state training still needs empirical validation and loss-weight tuning.
 - Matched-compute support currently covers expert-budget accounting only; it does not measure real FLOPs, latency, VRAM, or closed-loop success.
 - The new pytest static tests were not run in the system Python because that interpreter lacks `pytest`; run them inside the project environment with `python -m pytest tests/test_baseline_static.py`.

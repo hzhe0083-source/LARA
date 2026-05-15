@@ -15,6 +15,7 @@ from Lara.model.modules.action_model.lara_moe import (
     LatentActionMoE,
     aggregate_episode_responsibilities,
     posterior_from_expert_losses,
+    utility_from_expert_losses,
 )
 
 
@@ -46,6 +47,9 @@ class ActionHeadAdapter(nn.Module):
         self.prediction_transition_loss_weight = action_cfg.get("lara_prediction_transition_loss_weight", 1.0)
         self.use_lara_moe = action_cfg.get("use_lara_moe", False)
         self.use_expert_loss_posterior = action_cfg.get("lara_use_expert_loss_posterior", True)
+        self.use_action_loss_utility = action_cfg.get("lara_use_action_loss_utility", False)
+        self.action_loss_utility_temperature = action_cfg.get("lara_action_loss_utility_temperature", 1.0)
+        self.action_loss_utility_normalize = action_cfg.get("lara_action_loss_utility_normalize", True)
         self.use_direct_action_experts = action_cfg.get("lara_use_direct_action_experts", False)
         self.use_direct_action_output = action_cfg.get("lara_use_direct_action_output", False)
         self.direct_expert_loss_weight = action_cfg.get("lara_direct_expert_loss_weight", 1.0)
@@ -337,6 +341,12 @@ class ActionHeadAdapter(nn.Module):
                 if utility_scores is not None
                 else None
             )
+            if utility_scores is None and self.use_action_loss_utility and expert_action_losses is not None:
+                utility_scores = utility_from_expert_losses(
+                    expert_action_losses,
+                    temperature=self.action_loss_utility_temperature,
+                    normalize=self.action_loss_utility_normalize,
+                ).to(dtype=conditioning_tokens.dtype)
             utility_candidate_mask = (
                 self._as_tensor(utility_candidate_mask, device=conditioning_tokens.device, dtype=torch.bool)
                 if utility_candidate_mask is not None

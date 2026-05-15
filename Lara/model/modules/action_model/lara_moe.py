@@ -306,6 +306,25 @@ def candidate_route_utility(
     return utility
 
 
+def utility_from_expert_losses(
+    expert_losses: torch.Tensor,
+    temperature: float = 1.0,
+    normalize: bool = True,
+) -> torch.Tensor:
+    if expert_losses.ndim != 2:
+        raise ValueError(f"Expected expert_losses [B, M], got {tuple(expert_losses.shape)}")
+    if temperature <= 0:
+        raise ValueError("temperature must be positive")
+
+    utilities = -expert_losses.detach() / temperature
+    if not normalize:
+        return utilities
+
+    mean = utilities.mean(dim=-1, keepdim=True)
+    std = utilities.std(dim=-1, keepdim=True, unbiased=False).clamp_min(1e-6)
+    return (utilities - mean) / std
+
+
 def aggregate_episode_responsibilities(
     posterior_probs: torch.Tensor,
     episode_ids: torch.Tensor,
@@ -930,7 +949,7 @@ class LatentActionMoE(nn.Module):
             utility_loss, utility_rank_loss, utility_calibration_error = utility_calibration_objective(
                 router_logits=router_logits,
                 utility_scores=utility_scores,
-                candidate_mask=utility_candidate_mask,
+                candidate_mask=utility_candidate_mask if utility_candidate_mask is not None else pool_mask,
                 rank_loss_weight=self.utility_rank_loss_weight,
             )
         balance_loss = uniform_balance_loss(router_probs) + uniform_balance_loss(pool_probs)

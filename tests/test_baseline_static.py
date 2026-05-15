@@ -121,6 +121,7 @@ def test_optional_moe_router_stage_two_exists():
     assert "def retained_probability_mass" in moe_src
     assert "def sparse_route_budget" in moe_src
     assert "def candidate_route_utility" in moe_src
+    assert "def utility_from_expert_losses" in moe_src
     assert "def aggregate_episode_responsibilities" in moe_src
     assert "def routed_actions" in moe_src
     assert "def action_chunk_loss" in moe_src
@@ -130,6 +131,7 @@ def test_optional_moe_router_stage_two_exists():
     assert "pool_target_probs" in moe_src
     assert "utility_scores" in moe_src
     assert "lara_use_utility_head" in adapter_src
+    assert "utility_from_expert_losses" in adapter_src
     assert "def expert_conditioning_tokens" in moe_src
     assert "self.direct_action_experts" in adapter_src
     assert "self.use_direct_action_output" in adapter_src
@@ -169,6 +171,7 @@ def test_optional_moe_router_stage_two_exists():
     assert "lara_utility_loss_weight: 0.0" in config_src
     assert "lara_utility_rank_loss_weight: 0.0" in config_src
     assert "lara_utility_head_loss_weight: 0.0" in config_src
+    assert "lara_use_action_loss_utility: false" in config_src
     assert "lara_use_utility_head: false" in config_src
     assert "lara_balance_loss_weight: 0.0" in config_src
     assert "lara_stickiness_loss_weight: 0.0" in config_src
@@ -197,3 +200,4 @@ def test_paper_gap_is_explicit():
     assert "chunk-level top-k routing constrained to the resident pool" in gap
     assert "pool target aggregation" in gap
     assert "per-expert action-loss posterior path" in gap
+    assert "action-loss utility labels" in gap
