@@ -66,13 +66,15 @@ class FakeVJ2:
         return torch.tensor(2.0)
 
 
-class FakeActionHead:
+class FakeActionHead(torch.nn.Module):
     def __init__(self, config, context_hidden_size):
+        super().__init__()
         self.config = config
         self.context_hidden_size = context_hidden_size
+        self.loss_scale = torch.nn.Parameter(torch.tensor(1.0))
         self.calls = []
 
-    def __call__(
+    def forward(
         self,
         embodied_action_tokens,
         latent_action_tokens,
@@ -91,7 +93,7 @@ class FakeActionHead:
                 "return_aux": return_aux,
             }
         )
-        return {"total_action_loss": torch.tensor(3.0)}
+        return {"total_action_loss": self.loss_scale * 3.0}
 
 
 class LaraCoreSmokeTest(unittest.TestCase):
@@ -138,6 +140,36 @@ class LaraCoreSmokeTest(unittest.TestCase):
         self.assertTrue(action_call["return_aux"])
         self.assertTrue(np.all(action_call["actions"][0] == examples[0]["future_actions"]))
         self.assertTrue(np.all(action_call["actions"][1] == examples[1]["future_actions"]))
+
+    def test_fake_batch_loss_can_update_action_head_parameter(self):
+        config = tiny_framework_config()
+        with (
+            patch.object(Lara_core, "QwenActionTokenizer", FakeQwen),
+            patch.object(Lara_core, "VJ2WorldModel", FakeVJ2),
+            patch.object(Lara_core, "ActionHeadAdapter", FakeActionHead),
+        ):
+            model = Lara_core.Lara(config=config)
+
+        examples = [
+            {
+                "image": ["image-0"],
+                "video": np.zeros((1, 2, 2, 2, 3), dtype=np.uint8),
+                "lang": "pick",
+                "future_actions": np.ones((3, 2), dtype=np.float32),
+                "state": np.ones((1, 3), dtype=np.float32),
+                "trajectory_id": 11,
+            }
+        ]
+        optimizer = torch.optim.SGD(model.action_head.parameters(), lr=0.1)
+        before = model.action_head.loss_scale.detach().clone()
+
+        output = model(examples)
+        total_loss = output["action_loss"] + output["wm_loss"]
+        total_loss.backward()
+        optimizer.step()
+
+        self.assertIsNotNone(model.action_head.loss_scale.grad)
+        self.assertFalse(torch.allclose(model.action_head.loss_scale.detach(), before))
 
 
 if __name__ == "__main__":
