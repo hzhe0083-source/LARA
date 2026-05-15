@@ -48,6 +48,8 @@ from Lara.training.trainer_utils.trainer_tools import (
     get_rank,
     is_dist_ready,
     is_main_process,
+    scalarize_metrics,
+    split_loss_and_metric_outputs,
 )
 
 deepspeed_plugin = DeepSpeedPlugin()
@@ -486,8 +488,8 @@ class VLATrainer(TrainerUtils):
             # VLA task forward propagation
             with torch.autocast("cuda", dtype=torch.bfloat16):
                 output_dict = self.model.forward(batch_vla)
-
-                total_loss = sum(output_dict.values())
+                loss_dict, metric_dict = split_loss_and_metric_outputs(output_dict)
+                total_loss = sum(loss_dict.values())
 
             # VLA backward propagation
             self.accelerator.backward(total_loss)
@@ -501,7 +503,8 @@ class VLATrainer(TrainerUtils):
             self.lr_scheduler.step()
             self.optimizer.zero_grad(set_to_none=True)
             
-            result_dict = {k: v.item() for k, v in output_dict.items()}
+            result_dict = {k: v.item() for k, v in loss_dict.items()}
+            result_dict.update(scalarize_metrics(metric_dict))
 
         return result_dict
 

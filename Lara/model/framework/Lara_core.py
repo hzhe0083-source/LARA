@@ -105,10 +105,16 @@ class Lara(baseframework):
             )
 
         if isinstance(action_output, dict):
-            return {
+            output = {
                 "action_loss": action_output["total_action_loss"],
                 "wm_loss": wm_loss * 0.1,
             }
+            for key, value in action_output.items():
+                if key == "total_action_loss":
+                    continue
+                if torch.is_tensor(value) and value.numel() == 1:
+                    output[f"metric/{key}"] = value.detach()
+            return output
 
         return {"action_loss": action_output, "wm_loss": wm_loss * 0.1}
 

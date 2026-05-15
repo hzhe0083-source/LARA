@@ -64,8 +64,13 @@ def test_so101_batches_expose_future_actions():
 
 def test_aux_action_losses_are_not_double_counted_by_trainer():
     core_src = read("Lara/model/framework/Lara_core.py")
+    trainer_src = read("Lara/training/train_lara.py")
+    trainer_tools_src = read("Lara/training/trainer_utils/trainer_tools.py")
     assert '"action_loss": action_output["total_action_loss"]' in core_src
-    assert "for key, value in action_output.items()" not in core_src
+    assert 'output[f"metric/{key}"] = value.detach()' in core_src
+    assert "split_loss_and_metric_outputs(output_dict)" in trainer_src
+    assert "total_loss = sum(loss_dict.values())" in trainer_src
+    assert "def split_loss_and_metric_outputs" in trainer_tools_src
 
 
 def test_optional_latent_action_head_stage_one_exists():

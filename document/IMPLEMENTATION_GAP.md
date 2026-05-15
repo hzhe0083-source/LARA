@@ -47,6 +47,7 @@ These files exist to make the next implementation steps concrete, but they are n
 - Optional direct action-chunk expert heads and routed direct-expert action output were added behind `lara_use_direct_action_experts: false` and `lara_use_direct_action_output: false`; they still need real SO101 training validation.
 - Route-switch-rate and retained-probability-mass helpers were added for offline route diagnostics; closed-loop subset-retention success curves still need real evaluation rollouts.
 - Sparse active/resident expert budget helpers were added for matched-budget reporting; real FLOPs, latency, VRAM, and success measurements still require benchmark runs.
+- Action-head auxiliary diagnostics are now returned as `metric/...` outputs and excluded from the differentiable loss sum by the trainers.
 
 ## Remaining Engineering Risks
 

@@ -36,7 +36,11 @@ from transformers import AutoProcessor, get_scheduler
 from Lara.dataloader import build_dataloader
 from Lara.training.trainer_utils.trainer_tools import normalize_dotlist_args
 from Lara.model.framework import build_framework
-from Lara.training.trainer_utils.trainer_tools import TrainerUtils
+from Lara.training.trainer_utils.trainer_tools import (
+    TrainerUtils,
+    scalarize_metrics,
+    split_loss_and_metric_outputs,
+)
 
 deepspeed_plugin = DeepSpeedPlugin()
 accelerator = Accelerator(deepspeed_plugin=deepspeed_plugin)
@@ -369,7 +373,8 @@ class VLAMTrainer(TrainerUtils):
             # VLA task forward propagation
             with torch.autocast("cuda", dtype=torch.bfloat16):
                 output_dict = self.model.forward(batch_vla)
-                total_loss = sum(output_dict.values())
+                loss_dict, metric_dict = split_loss_and_metric_outputs(output_dict)
+                total_loss = sum(loss_dict.values())
             self.accelerator.backward(total_loss)
 
             if self.config.trainer.gradient_clipping is not None:
@@ -383,7 +388,8 @@ class VLAMTrainer(TrainerUtils):
             # Video world-model propagation
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                 video_output = self.model.forward(batch_video)
-                video_loss = sum(video_output.values())
+                video_loss_dict, video_metric_dict = split_loss_and_metric_outputs(video_output)
+                video_loss = sum(video_loss_dict.values())
 
             self.accelerator.backward(video_loss)
             if self.config.trainer.gradient_clipping is not None:
@@ -392,10 +398,14 @@ class VLAMTrainer(TrainerUtils):
             self.optimizer.step()
             self.lr_scheduler.step()
 
-            for k, v in output_dict.items():
+            for k, v in loss_dict.items():
                 log_dict[f"vla_{k}"] = v.item()
-            for k, v in video_output.items():
+            for k, v in scalarize_metrics(metric_dict).items():
+                log_dict[f"vla_{k}"] = v
+            for k, v in video_loss_dict.items():
                 log_dict[f"video_{k}"] = v.item()
+            for k, v in scalarize_metrics(video_metric_dict).items():
+                log_dict[f"video_{k}"] = v
         return log_dict
 
     def _finalize_training(self):

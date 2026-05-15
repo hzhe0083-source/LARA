@@ -42,7 +42,11 @@ from transformers import AutoProcessor, get_scheduler
 from Lara.training.trainer_utils.trainer_tools import normalize_dotlist_args
 from Lara.model.framework import build_framework
 from Lara.training.trainer_utils.trainer_tools import TrainerUtils
-from Lara.training.trainer_utils.trainer_tools import build_param_lr_groups
+from Lara.training.trainer_utils.trainer_tools import (
+    build_param_lr_groups,
+    scalarize_metrics,
+    split_loss_and_metric_outputs,
+)
 
 deepspeed_plugin = DeepSpeedPlugin()
 accelerator = Accelerator(
@@ -396,8 +400,8 @@ class VLATrainer(TrainerUtils):
             # VLA task forward propagation
             with torch.autocast("cuda", dtype=torch.bfloat16):
                 output_dict = self.model.forward(batch_vla)
-
-                total_loss = sum(output_dict.values())
+                loss_dict, metric_dict = split_loss_and_metric_outputs(output_dict)
+                total_loss = sum(loss_dict.values())
 
             # VLA backward propagation
             self.accelerator.backward(total_loss)
@@ -410,7 +414,8 @@ class VLATrainer(TrainerUtils):
             self.optimizer.step()
             self.lr_scheduler.step()
         
-        result_dict = {k: v.item() for k, v in output_dict.items()}
+        result_dict = {k: v.item() for k, v in loss_dict.items()}
+        result_dict.update(scalarize_metrics(metric_dict))
 
         return result_dict
 

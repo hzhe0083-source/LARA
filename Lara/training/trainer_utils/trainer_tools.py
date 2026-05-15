@@ -48,6 +48,29 @@ def normalize_dotlist_args(args):
     return normalized
 
 
+def split_loss_and_metric_outputs(output_dict: dict) -> tuple[dict, dict]:
+    """Split model outputs into differentiable losses and log-only metrics."""
+    loss_dict = {}
+    metric_dict = {}
+    for key, value in output_dict.items():
+        if key.startswith("metric/"):
+            metric_dict[key.removeprefix("metric/")] = value
+        else:
+            loss_dict[key] = value
+    return loss_dict, metric_dict
+
+
+def scalarize_metrics(metrics: dict) -> dict:
+    """Convert tensor metrics to Python scalars for logging."""
+    scalar_metrics = {}
+    for key, value in metrics.items():
+        if torch.is_tensor(value):
+            scalar_metrics[key] = value.detach().float().mean().item()
+        else:
+            scalar_metrics[key] = float(value)
+    return scalar_metrics
+
+
 def build_param_lr_groups(model, cfg):
     """
     build multiple param groups based on cfg.trainer.learning_rate.

@@ -101,7 +101,11 @@ class FakeActionHead(torch.nn.Module):
                 "return_aux": return_aux,
             }
         )
-        return {"total_action_loss": self.loss_scale * 3.0}
+        return {
+            "total_action_loss": self.loss_scale * 3.0,
+            "moe_route_regret": torch.tensor(0.5),
+            "moe_utility_scores": torch.ones(2, 3),
+        }
 
 
 class LaraCoreSmokeTest(unittest.TestCase):
@@ -149,6 +153,8 @@ class LaraCoreSmokeTest(unittest.TestCase):
 
         self.assertTrue(torch.allclose(output["action_loss"], torch.tensor(3.0)))
         self.assertTrue(torch.allclose(output["wm_loss"], torch.tensor(0.2)))
+        self.assertTrue(torch.allclose(output["metric/moe_route_regret"], torch.tensor(0.5)))
+        self.assertNotIn("metric/moe_utility_scores", output)
         self.assertEqual(model.qwen.num_prediction_steps, 2)
         self.assertTrue(model.qwen.encode_calls[0]["include_embodied_tokens"])
         self.assertEqual(model.qwen.encode_calls[0]["prompt_template"], "act {actions} {e_actions}")
