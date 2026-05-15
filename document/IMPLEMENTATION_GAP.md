@@ -33,6 +33,9 @@ These files exist to make the next implementation steps concrete, but they are n
 - Training loop no longer zeroes gradients at the start of every `accelerator.accumulate` block.
 - Distributed barriers and rank checks are guarded for single-process execution.
 - Qwen latent/embodied special token counts are checked per sample before hidden-state reshaping and covered by a lightweight unit test.
+- Qwen3/Qwen2.5 wrappers now respect `framework.qwenvl.attn_implementation`, and the real-component smoke script can temporarily override it for non-FlashAttention environments.
+- V-JEPA world-model view count is explicit through `num_world_model_views`; SO101 single-camera batches and smoke dummy batches duplicate to two view streams before the predictor.
+- Real-component `--run-step` smoke checks now mirror trainer/server device placement for V-JEPA and the action head instead of leaving them on CPU beside a CUDA Qwen model.
 - Flow-matching timestep buckets are clamped to the valid range.
 - `ActionHeadAdapter` has a dummy-batch forward/predict smoke test for basic loss and output shape.
 - SO101 batches now expose `future_actions` and `current_state` explicitly, with `action` and `state` retained as compatibility aliases.
@@ -57,7 +60,7 @@ These files exist to make the next implementation steps concrete, but they are n
 ## Remaining Engineering Risks
 
 - Action target alignment is explicit for the current SO101 dataloader via strict `future_actions`. Future datasets that return past/current/future actions together must split out an `action_horizon`-length `future_actions` window before calling the action adapter.
-- Full `Lara` model instantiation with real Qwen/V-JEPA checkpoints and real-component one-step training smoke tests now have a script entry point but still need to be run successfully in the full training environment. The current local `--instantiate` check reaches dependency loading and reports missing `qwen_vl_utils`.
+- Full `Lara` model instantiation with real Qwen/V-JEPA checkpoints and real-component one-step training smoke tests now have a script entry point. The current local `--run-step --attn-implementation sdpa` check completes a dummy forward/backward through the VLA baseline; the default FlashAttention path still reports missing `flash_attn`.
 - The latent action head is currently a Stage-1 skeleton and still needs empirical validation, loss-weight tuning, and ablation against the token-conditioned flow baseline.
 - The MoE/router path is currently a Stage-2 scaffold and still needs full-train validation of the direct expert and per-expert action-loss posterior paths, resident-pool success evaluation, and closed-loop validation beyond server-side pool reuse.
 - Utility calibration currently validates action-loss utility labels, generic utility composition, a trainable utility-head interface, and loss surfaces; it does not yet supervise value/progress/uncertainty from latent-state or closed-loop evaluator labels.

@@ -10,11 +10,20 @@ def read(path: str) -> str:
 
 def test_qwen_checks_special_token_counts_before_view():
     src = read("Lara/model/framework/qwen.py")
+    qwen3_src = read("Lara/model/modules/vlm/QWen3.py")
+    qwen25_src = read("Lara/model/modules/vlm/QWen2_5.py")
+    vj2_src = read("Lara/model/framework/vj2.py")
     assert "def _validate_token_mask" in src
     assert "Unexpected {stream_name} token count per sample" in src
     assert "expected_action_token_count" in src
     assert "expected_embodied_action_token_count" in src
     assert "last_hidden[action_mask].view(batch_size, expected_action_count, hidden_size)" in src
+    assert 'self.config.framework.vj2_model.get("num_world_model_views", 2)' in vj2_src
+    assert "VJ2WorldModel expected {self.num_world_model_views} video views" in vj2_src
+    assert 'attn_implementation = qwenvl_config.get("attn_implementation", "flash_attention_2")' in qwen3_src
+    assert "attn_implementation=attn_implementation" in qwen3_src
+    assert 'attn_implementation = qwenvl_config.get("attn_implementation", "flash_attention_2")' in qwen25_src
+    assert "attn_implementation=attn_implementation" in qwen25_src
 
 
 def test_flow_matching_timestep_buckets_are_clamped():
@@ -157,8 +166,12 @@ def test_optional_moe_router_stage_two_exists():
     assert "def pareto_frontier_flags" in protocol_src
     assert "def smoke_lara_real_components" in smoke_src
     assert "def _exception_status" in smoke_src
+    assert "def apply_smoke_overrides" in smoke_src
+    assert "def place_smoke_trainable_components" in smoke_src
+    assert 'for attr in ("vj2", "action_head")' in smoke_src
     assert "--instantiate" in smoke_src
     assert "--run-step" in smoke_src
+    assert "--attn-implementation" in smoke_src
     assert "def candidate_route_utility" in moe_src
     assert "def utility_from_expert_losses" in moe_src
     assert "def aggregate_episode_responsibilities" in moe_src

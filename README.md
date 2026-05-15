@@ -112,7 +112,7 @@ Run the lightweight real-component smoke preflight before a heavy training job:
 python scripts/smoke_lara_real_components.py --config scripts/config/lara_so101_ft.yaml
 ```
 
-When the local Qwen/V-JEPA checkpoints and runtime dependencies are available, add `--instantiate` or `--run-step` to load the actual `Lara` framework and execute a one-step dummy forward/backward check.
+When the local Qwen/V-JEPA checkpoints and runtime dependencies are available, add `--instantiate` or `--run-step` to load the actual `Lara` framework and execute a one-step dummy forward/backward check. Use `--attn-implementation sdpa` or `--attn-implementation eager` to smoke-test environments that do not have FlashAttention2 installed. The `--run-step` path mirrors trainer/server device placement for V-JEPA and the action head. The smoke dummy follows the SO101 dataloader convention of two V-JEPA view streams; single-camera SO101 data is duplicated before entering the world model.
 Those modes return structured JSON errors if dependency import or model loading fails, which makes missing runtime packages easier to diagnose before launching training.
 
 ## SO101 Dataset

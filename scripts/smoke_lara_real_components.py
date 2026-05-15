@@ -36,6 +36,16 @@ def load_config(config_path: str | Path) -> Any:
     return OmegaConf.load(_resolve_repo_path(config_path))
 
 
+def apply_smoke_overrides(
+    cfg: Any,
+    *,
+    attn_implementation: str | None = None,
+) -> Any:
+    if attn_implementation is not None:
+        cfg.framework.qwenvl.attn_implementation = attn_implementation
+    return cfg
+
+
 def required_component_paths(cfg: Any, repo_root: Path = REPO_ROOT, require_data: bool = False) -> dict[str, Path]:
     paths = {
         "qwen_base_vlm": _resolve_repo_path(cfg.framework.qwenvl.base_vlm, repo_root),
@@ -60,9 +70,11 @@ def smoke_config_summary(cfg: Any) -> dict[str, Any]:
         "framework": cfg.framework.name,
         "action_horizon": int(action_cfg.action_horizon),
         "execution_horizon": int(action_cfg.execution_horizon),
+        "num_world_model_views": int(cfg.framework.vj2_model.get("num_world_model_views", 2)),
         "use_latent_action_head": bool(action_cfg.use_latent_action_head),
         "use_lara_moe": bool(action_cfg.use_lara_moe),
         "use_lara_moe_default_safe": not bool(action_cfg.use_lara_moe),
+        "attn_implementation": cfg.framework.qwenvl.get("attn_implementation", None),
         "reload_modules": cfg.trainer.get("reload_modules", None),
     }
 
@@ -72,11 +84,12 @@ def build_dummy_examples(cfg: Any, batch_size: int = 1) -> list[dict[str, Any]]:
     image_size = int(cfg.datasets.vla_data.get("resolution_size", 224))
     video_size = int(cfg.datasets.vla_data.get("video_resolution_size", 256))
     num_frames = int(cfg.framework.vj2_model.num_frames)
+    num_world_model_views = int(cfg.framework.vj2_model.get("num_world_model_views", 2))
     action_horizon = int(action_cfg.action_horizon)
     action_dim = int(action_cfg.action_dim)
     state_dim = int(action_cfg.state_dim)
     image = Image.new("RGB", (image_size, image_size), color=0)
-    video = np.zeros((1, num_frames, video_size, video_size, 3), dtype=np.uint8)
+    video = np.zeros((num_world_model_views, num_frames, video_size, video_size, 3), dtype=np.uint8)
     examples = []
     for idx in range(batch_size):
         examples.append(
@@ -99,6 +112,28 @@ def instantiate_lara(cfg: Any):
     return model
 
 
+def _module_device(module: Any) -> torch.device:
+    model = getattr(module, "model", module)
+    device = getattr(model, "device", None)
+    if device is not None:
+        return torch.device(device)
+    try:
+        return next(model.parameters()).device
+    except StopIteration:
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def place_smoke_trainable_components(model: Any) -> Any:
+    """Mirror trainer/server device placement for standalone run-step smoke checks."""
+    qwen_interface = getattr(model, "qwen_vl_interface", None)
+    device = _module_device(qwen_interface) if qwen_interface is not None else _module_device(model)
+    for attr in ("vj2", "action_head"):
+        component = getattr(model, attr, None)
+        if component is not None:
+            component.to(device)
+    return model
+
+
 def _exception_status(exc: Exception) -> dict[str, str]:
     return {
         "status": "error",
@@ -108,6 +143,7 @@ def _exception_status(exc: Exception) -> dict[str, str]:
 
 
 def run_one_step(model, cfg: Any) -> dict[str, float]:
+    model = place_smoke_trainable_components(model)
     model.train()
     examples = build_dummy_examples(cfg, batch_size=1)
     output = model(examples)
@@ -125,8 +161,10 @@ def smoke_lara_real_components(
     require_data: bool = False,
     instantiate: bool = False,
     run_step: bool = False,
+    attn_implementation: str | None = None,
 ) -> dict[str, Any]:
     cfg = load_config(config_path)
+    cfg = apply_smoke_overrides(cfg, attn_implementation=attn_implementation)
     summary = smoke_config_summary(cfg)
     path_status = check_required_paths(required_component_paths(cfg, require_data=require_data))
     result = {"summary": summary, "paths": path_status}
@@ -155,6 +193,11 @@ def main() -> int:
     parser.add_argument("--require-data", action="store_true")
     parser.add_argument("--instantiate", action="store_true")
     parser.add_argument("--run-step", action="store_true")
+    parser.add_argument(
+        "--attn-implementation",
+        choices=["flash_attention_2", "sdpa", "eager"],
+        help="Temporarily override framework.qwenvl.attn_implementation for smoke checks.",
+    )
     args = parser.parse_args()
 
     result = smoke_lara_real_components(
@@ -162,6 +205,7 @@ def main() -> int:
         require_data=args.require_data,
         instantiate=args.instantiate,
         run_step=args.run_step,
+        attn_implementation=args.attn_implementation,
     )
     print(json.dumps(result, indent=2, sort_keys=True))
     if result["paths"]["status"] != "ok":

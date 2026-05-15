@@ -100,6 +100,8 @@ framework:
     base_encoder: ./models/vjepa2-vitl-fpc64-256
     depth: 12
     num_heads: 8
+    # V-JEPA predictor/checkpoint is built for two view streams; SO101 single-camera batches duplicate the view.
+    num_world_model_views: 2
     special_action_token: <|action_{}|>
     num_action_tokens_per_timestep: 8
     embodied_action_token: <|embodied_action|>

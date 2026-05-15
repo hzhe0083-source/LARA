@@ -21,13 +21,14 @@ class VJ2WorldModel(nn.Module):
 
         self.tubelet_size = self.vj_encoder.config.tubelet_size
         self.num_prediction_steps = self.config.framework.vj2_model.num_frames // self.tubelet_size - 1
+        self.num_world_model_views = int(self.config.framework.vj2_model.get("num_world_model_views", 2))
         self.vj_predictor = VisionTransformerPredictorAC(
             num_frames=self.config.framework.vj2_model.num_frames // self.tubelet_size,
             img_size=(self.vj_encoder.config.image_size, self.vj_encoder.config.image_size),
             tubelet_size=1,
             depth=self.config.framework.vj2_model.depth,
             num_heads=self.config.framework.vj2_model.num_heads,
-            embed_dim=self.vj_encoder.config.hidden_size * 2,
+            embed_dim=self.vj_encoder.config.hidden_size * self.num_world_model_views,
             action_embed_dim=action_embed_dim,
             num_add_tokens=self.config.framework.vj2_model.num_action_tokens_per_timestep,
         )
@@ -36,6 +37,11 @@ class VJ2WorldModel(nn.Module):
         videos = np.stack(batch_videos)  # [B, V, T, H, W, 3]
         videos = videos.transpose(0, 1, 2, 5, 3, 4)  # [B, V, T, 3, H, W]
         batch_size, num_views, num_frames, channels, height, width = videos.shape
+        if num_views != self.num_world_model_views:
+            raise ValueError(
+                f"VJ2WorldModel expected {self.num_world_model_views} video views, got {num_views}. "
+                "SO101 single-camera batches should duplicate the view before this forward path."
+            )
         videos = videos.reshape(batch_size * num_views, num_frames, channels, height, width)
 
         input_videos = []
