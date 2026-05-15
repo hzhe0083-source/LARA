@@ -203,6 +203,9 @@ def test_optional_moe_router_stage_two_exists():
     assert "def pareto_frontier_flags" in protocol_src
     assert "def protocol_summary_from_records" in protocol_src
     assert "def protocol_evidence_audit" in protocol_src
+    assert "def counterfactual_utility_matrix_from_records" in protocol_src
+    assert '"utility_candidate_mask"' in protocol_src
+    assert "min_candidates_per_context" in protocol_src
     assert "PAPER_REQUIRED_METRIC_KEYS" in protocol_src
     assert "def route_sequence_diagnostics" in protocol_src
     assert "def rollout_record_with_route_diagnostics" in protocol_src

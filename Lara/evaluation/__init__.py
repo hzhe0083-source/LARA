@@ -1,4 +1,5 @@
 from Lara.evaluation.lara_protocol import (
+    counterfactual_utility_matrix_from_records,
     matched_budget_flags,
     matched_compute_row,
     matched_expert_budget_flags,
@@ -14,6 +15,7 @@ from Lara.evaluation.lara_protocol import (
 )
 
 __all__ = [
+    "counterfactual_utility_matrix_from_records",
     "matched_budget_flags",
     "matched_compute_row",
     "matched_expert_budget_flags",

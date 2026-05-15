@@ -65,6 +65,180 @@ def _metric_value(record: Mapping[str, object], metric_key: str):
     return _record_value(record, *METRIC_KEY_ALIASES.get(metric_key, (metric_key,)))
 
 
+def _key_aliases(keys: str | Sequence[str], name: str) -> tuple[str, ...]:
+    if isinstance(keys, str):
+        aliases = (keys,)
+    else:
+        aliases = tuple(keys)
+    if not aliases:
+        raise ValueError(f"{name} must not be empty")
+    return aliases
+
+
+def _finite_record_float(
+    record: Mapping[str, object],
+    *,
+    record_index: int,
+    keys: Sequence[str],
+    label: str,
+    required: bool,
+) -> Optional[float]:
+    value = _record_value(record, *keys)
+    if value is None:
+        if required:
+            raise ValueError(f"record {record_index} must define {label}")
+        return None
+    try:
+        scalar = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"record {record_index} has non-numeric {label}: {value!r}") from exc
+    if not math.isfinite(scalar):
+        raise ValueError(f"record {record_index} must define finite {label}")
+    return scalar
+
+
+def _record_expert_id(
+    record: Mapping[str, object],
+    *,
+    record_index: int,
+    expert_keys: Sequence[str],
+    num_experts: int,
+) -> int:
+    value = _record_value(record, *expert_keys)
+    if value is None:
+        raise ValueError(f"record {record_index} must define expert_id")
+    try:
+        expert_float = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"record {record_index} has non-numeric expert_id: {value!r}") from exc
+    if not math.isfinite(expert_float) or not expert_float.is_integer():
+        raise ValueError(f"record {record_index} expert_id must be an integer, got {value!r}")
+    expert_id = int(expert_float)
+    if expert_id < 0 or expert_id >= num_experts:
+        raise ValueError(f"record {record_index} expert_id must be in [0, {num_experts}), got {expert_id}")
+    return expert_id
+
+
+def counterfactual_utility_matrix_from_records(
+    records: Sequence[Mapping[str, object]],
+    *,
+    num_experts: int,
+    context_key: str = "context_id",
+    expert_keys: str | Sequence[str] = ("expert_id", "candidate_expert_id"),
+    value_keys: str | Sequence[str] = (
+        "utility_score",
+        "utility",
+        "return_score",
+        "return",
+        "success",
+        "success_rate",
+    ),
+    cost_keys: str | Sequence[str] = ("utility_cost", "cost", "flops", "latency_ms"),
+    cost_weight: float = 0.0,
+    require_all_experts: bool = False,
+    min_candidates_per_context: int = 2,
+) -> dict[str, object]:
+    """Build route-utility supervision tensors from counterfactual rollout records.
+
+    Each record must describe one candidate expert evaluated for one fixed
+    context. Records with the same `(context_id, expert_id)` are averaged, which
+    lets repeated rollouts reduce label noise. Missing experts are marked false
+    in `utility_candidate_mask`; they are not silently treated as zero utility.
+    """
+
+    if not records:
+        raise ValueError("records must not be empty")
+    if num_experts <= 0:
+        raise ValueError("num_experts must be positive")
+    if cost_weight < 0:
+        raise ValueError("cost_weight must be non-negative")
+    if min_candidates_per_context <= 0:
+        raise ValueError("min_candidates_per_context must be positive")
+
+    expert_keys = _key_aliases(expert_keys, "expert_keys")
+    value_keys = _key_aliases(value_keys, "value_keys")
+    cost_keys = _key_aliases(cost_keys, "cost_keys")
+    context_ids = []
+    context_to_row = {}
+    utility_sums = []
+    candidate_counts = []
+
+    for record_index, record in enumerate(records):
+        if not isinstance(record, Mapping):
+            raise ValueError("records must contain mapping objects")
+        context_id = _record_value(record, context_key)
+        if context_id is None:
+            raise ValueError(f"record {record_index} must define {context_key}")
+        try:
+            row_index = context_to_row.get(context_id)
+        except TypeError as exc:
+            raise ValueError(f"record {record_index} {context_key} must be hashable") from exc
+        if row_index is None:
+            row_index = len(context_ids)
+            context_to_row[context_id] = row_index
+            context_ids.append(context_id)
+            utility_sums.append(torch.zeros(num_experts, dtype=torch.float32))
+            candidate_counts.append(torch.zeros(num_experts, dtype=torch.long))
+
+        expert_id = _record_expert_id(
+            record,
+            record_index=record_index,
+            expert_keys=expert_keys,
+            num_experts=num_experts,
+        )
+        value = _finite_record_float(
+            record,
+            record_index=record_index,
+            keys=value_keys,
+            label="utility value",
+            required=True,
+        )
+        cost = _finite_record_float(
+            record,
+            record_index=record_index,
+            keys=cost_keys,
+            label="utility cost",
+            required=cost_weight > 0,
+        )
+        utility = value - cost_weight * (0.0 if cost is None else cost)
+        utility_sums[row_index][expert_id] += float(utility)
+        candidate_counts[row_index][expert_id] += 1
+
+    counts = torch.stack(candidate_counts)
+    candidate_mask = counts > 0
+    candidates_per_context = candidate_mask.sum(dim=-1)
+    sparse_context_rows = torch.nonzero(candidates_per_context < min_candidates_per_context, as_tuple=False).view(-1)
+    if sparse_context_rows.numel() > 0:
+        sparse_contexts = [context_ids[int(index)] for index in sparse_context_rows.tolist()]
+        raise ValueError(
+            "counterfactual utility records must evaluate at least "
+            f"{min_candidates_per_context} candidates per context; sparse contexts: {sparse_contexts}"
+        )
+
+    missing_candidates = {
+        str(context_ids[row_index]): torch.nonzero(~candidate_mask[row_index], as_tuple=False).view(-1).tolist()
+        for row_index in range(len(context_ids))
+        if not bool(candidate_mask[row_index].all().item())
+    }
+    if require_all_experts and missing_candidates:
+        raise ValueError(f"missing counterfactual candidates: {missing_candidates}")
+
+    utility_scores = torch.stack(utility_sums)
+    utility_scores[candidate_mask] = (
+        utility_scores[candidate_mask] / counts.to(dtype=utility_scores.dtype)[candidate_mask]
+    )
+    utility_scores[~candidate_mask] = 0.0
+    return {
+        "context_ids": context_ids,
+        "utility_scores": utility_scores,
+        "utility_candidate_mask": candidate_mask,
+        "candidate_counts": counts,
+        "num_contexts": len(context_ids),
+        "num_candidates": int(candidate_mask.sum().item()),
+        "missing_candidates": missing_candidates,
+    }
+
+
 def _group_record_values_by_fraction(
     records: Sequence[Mapping[str, object]],
     *,

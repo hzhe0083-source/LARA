@@ -3,6 +3,7 @@ import unittest
 import torch
 
 from Lara.evaluation.lara_protocol import (
+    counterfactual_utility_matrix_from_records,
     matched_budget_flags,
     matched_compute_row,
     matched_expert_budget_flags,
@@ -361,6 +362,52 @@ class LARAProtocolTest(unittest.TestCase):
                 method="LARA",
                 total_experts=8,
                 active_experts=2,
+            )
+
+    def test_counterfactual_utility_matrix_groups_context_candidate_records(self):
+        labels = counterfactual_utility_matrix_from_records(
+            [
+                {"context_id": "ep0:0", "expert_id": 0, "success": 1.0, "latency_ms": 10.0},
+                {"context_id": "ep0:0", "candidate_expert_id": 1, "success": 0.5, "latency_ms": 20.0},
+                {"context_id": "ep0:0", "expert_id": 1, "success": 1.0, "latency_ms": 10.0},
+                {"context_id": "ep0:10", "expert_id": 1, "return_score": 0.6, "latency_ms": 5.0},
+                {"context_id": "ep0:10", "expert_id": 2, "return_score": 0.4, "latency_ms": 5.0},
+            ],
+            num_experts=3,
+            cost_weight=0.01,
+        )
+
+        self.assertEqual(labels["context_ids"], ["ep0:0", "ep0:10"])
+        self.assertEqual(labels["utility_scores"].shape, (2, 3))
+        self.assertTrue(torch.equal(labels["utility_candidate_mask"][0], torch.tensor([True, True, False])))
+        self.assertTrue(torch.equal(labels["utility_candidate_mask"][1], torch.tensor([False, True, True])))
+        self.assertTrue(torch.equal(labels["candidate_counts"][0], torch.tensor([1, 2, 0])))
+        self.assertAlmostEqual(float(labels["utility_scores"][0, 0]), 0.9, places=6)
+        self.assertAlmostEqual(float(labels["utility_scores"][0, 1]), 0.6, places=6)
+        self.assertAlmostEqual(float(labels["utility_scores"][1, 1]), 0.55, places=6)
+        self.assertEqual(labels["missing_candidates"], {"ep0:0": [2], "ep0:10": [0]})
+
+    def test_counterfactual_utility_matrix_rejects_single_route_labels(self):
+        with self.assertRaisesRegex(ValueError, "at least 2 candidates per context"):
+            counterfactual_utility_matrix_from_records(
+                [{"context_id": "ep0:0", "expert_id": 0, "success": 1.0}],
+                num_experts=3,
+            )
+
+        with self.assertRaisesRegex(ValueError, "missing counterfactual candidates"):
+            counterfactual_utility_matrix_from_records(
+                [
+                    {"context_id": "ep0:0", "expert_id": 0, "success": 1.0},
+                    {"context_id": "ep0:0", "expert_id": 1, "success": 0.0},
+                ],
+                num_experts=3,
+                require_all_experts=True,
+            )
+
+        with self.assertRaisesRegex(ValueError, "expert_id"):
+            counterfactual_utility_matrix_from_records(
+                [{"context_id": "ep0:0", "success": 1.0}],
+                num_experts=3,
             )
 
 
