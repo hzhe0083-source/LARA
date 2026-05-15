@@ -30,7 +30,7 @@ These files exist to make the next implementation steps concrete, but they are n
 
 ## Baseline Reliability Fixes Applied
 
-- Training loop no longer zeroes gradients at the start of every `accelerator.accumulate` block.
+- VLA, video-only, and VLA/video co-training loops no longer zero gradients at the start of every `accelerator.accumulate` block; gradient clipping is gated on `accelerator.sync_gradients`, and checkpoint waits now use the trainer's accelerator instance.
 - Distributed barriers and rank checks are guarded for single-process execution.
 - Qwen latent/embodied special token counts are checked per sample before hidden-state reshaping and covered by a lightweight unit test.
 - Qwen3/Qwen2.5 wrappers now respect `framework.qwenvl.attn_implementation`, and the real-component smoke script can temporarily override it for non-FlashAttention environments.

@@ -201,7 +201,7 @@ class VLAMTrainer(TrainerUtils):
     def _save_checkpoint(self):
         """save current training state"""
 
-        if accelerator.is_main_process:
+        if self.accelerator.is_main_process:
 
             checkpoint_path = os.path.join(self.checkpoint_dir, f"steps_{self.completed_steps}")
             # save model state
@@ -215,14 +215,14 @@ class VLAMTrainer(TrainerUtils):
             with open(os.path.join(self.config.output_dir, "summary.jsonl"), "a") as f:
                 f.write(json.dumps(summary_data) + "\n")
             self.accelerator.print(f"✅ Checkpoint saved at {checkpoint_path}")
-        accelerator.wait_for_everyone()
+        self.accelerator.wait_for_everyone()
 
     def _log_metrics(self, metrics):
         """record training metrics"""
         if (
             self.completed_steps % self.config.trainer.logging_frequency == 0
         ):  # some parameters should be initialized for the class
-            if dist.get_rank() == 0:
+            if self.accelerator.is_main_process:
                 # calculate gradient norm
                 # total_norm = 0.0
                 # for p in self.model.parameters():
@@ -368,8 +368,6 @@ class VLAMTrainer(TrainerUtils):
         """execute single training step"""
         log_dict = {}
         with self.accelerator.accumulate(self.model):
-            self.optimizer.zero_grad()
-
             # VLA task forward propagation
             with torch.autocast("cuda", dtype=torch.bfloat16):
                 output_dict = self.model.forward(batch_vla)
@@ -377,13 +375,13 @@ class VLAMTrainer(TrainerUtils):
                 total_loss = sum(loss_dict.values())
             self.accelerator.backward(total_loss)
 
-            if self.config.trainer.gradient_clipping is not None:
+            if self.accelerator.sync_gradients and self.config.trainer.gradient_clipping is not None:
                 self.accelerator.clip_grad_norm_(self.model.parameters(), self.config.trainer.gradient_clipping)
 
             self.optimizer.step()
             self.lr_scheduler.step()
 
-            self.optimizer.zero_grad()
+            self.optimizer.zero_grad(set_to_none=True)
 
             # Video world-model propagation
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
@@ -392,11 +390,12 @@ class VLAMTrainer(TrainerUtils):
                 video_loss = sum(video_loss_dict.values())
 
             self.accelerator.backward(video_loss)
-            if self.config.trainer.gradient_clipping is not None:
+            if self.accelerator.sync_gradients and self.config.trainer.gradient_clipping is not None:
                 self.accelerator.clip_grad_norm_(self.model.parameters(), self.config.trainer.gradient_clipping)
 
             self.optimizer.step()
             self.lr_scheduler.step()
+            self.optimizer.zero_grad(set_to_none=True)
 
             for k, v in loss_dict.items():
                 log_dict[f"vla_{k}"] = v.item()

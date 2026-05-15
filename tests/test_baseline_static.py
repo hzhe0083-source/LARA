@@ -37,11 +37,18 @@ def test_flow_matching_timestep_buckets_are_clamped():
         assert "self.discretize_time(t[:, 0, 0])" in src
 
 
-def test_train_lara_gradient_accumulation_pattern():
-    src = read("Lara/training/train_lara.py")
-    assert "with self.accelerator.accumulate(self.model):\n            self.optimizer.zero_grad()" not in src
-    assert "if self.accelerator.sync_gradients and self.config.trainer.gradient_clipping is not None:" in src
-    assert "self.optimizer.zero_grad(set_to_none=True)" in src
+def test_training_entrypoints_share_safe_gradient_accumulation_pattern():
+    for path in [
+        "Lara/training/train_lara.py",
+        "Lara/training/train_lara_video.py",
+        "Lara/training/train_lara_cotrain.py",
+    ]:
+        src = read(path)
+        assert "with self.accelerator.accumulate(self.model):\n            self.optimizer.zero_grad()" not in src
+        assert "if self.accelerator.sync_gradients and self.config.trainer.gradient_clipping is not None:" in src
+        assert "self.optimizer.zero_grad(set_to_none=True)" in src
+        assert "\n        if accelerator.is_main_process:" not in src
+        assert "\n        accelerator.wait_for_everyone()" not in src
 
 
 def test_so101_batches_expose_future_actions():
