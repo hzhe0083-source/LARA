@@ -17,6 +17,8 @@ from scripts.smoke_lara_real_components import (
     check_required_paths,
     place_smoke_trainable_components,
     required_component_paths,
+    run_one_step,
+    smoke_optimizer_parameters,
     smoke_lara_real_components,
     smoke_config_summary,
     summarize_examples,
@@ -233,6 +235,34 @@ class SmokeLaraRealComponentsTest(unittest.TestCase):
 
         self.assertEqual(next(policy.vj2.parameters()).device, expected_device)
         self.assertEqual(next(policy.action_head.parameters()).device, expected_device)
+
+    def test_optimizer_step_smoke_updates_action_head_parameter_sample(self):
+        class FakePolicy(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.qwen_vl_interface = torch.nn.Linear(1, 1)
+                self.vj2 = torch.nn.Linear(1, 1)
+                self.action_head = torch.nn.Linear(2, 1)
+
+            def forward(self, examples):
+                return {"action_loss": self.action_head.weight.pow(2).sum()}
+
+        model = FakePolicy()
+        params = smoke_optimizer_parameters(model)
+
+        self.assertEqual([id(param) for param in params], [id(param) for param in model.action_head.parameters()])
+
+        losses = run_one_step(
+            model,
+            cfg=None,
+            examples=[{}],
+            optimizer_step=True,
+            optimizer_lr=0.1,
+        )
+
+        self.assertEqual(losses["optimizer/stepped"], 1.0)
+        self.assertGreater(losses["optimizer/grad_param_count"], 0.0)
+        self.assertEqual(losses["optimizer/changed_param_samples"], 1.0)
 
     def test_instantiate_failure_is_reported_as_structured_status(self):
         with tempfile.TemporaryDirectory() as tmp:

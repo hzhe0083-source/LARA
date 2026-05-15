@@ -177,9 +177,12 @@ def test_optional_moe_router_stage_two_exists():
     assert "def build_real_examples" in smoke_src
     assert "def summarize_examples" in smoke_src
     assert "def place_smoke_trainable_components" in smoke_src
+    assert "def smoke_optimizer_parameters" in smoke_src
     assert 'for attr in ("vj2", "action_head")' in smoke_src
     assert "--instantiate" in smoke_src
     assert "--run-step" in smoke_src
+    assert "--optimizer-step" in smoke_src
+    assert "--optimizer-lr" in smoke_src
     assert "--use-real-batch" in smoke_src
     assert "--real-batch-size" in smoke_src
     assert "--attn-implementation" in smoke_src

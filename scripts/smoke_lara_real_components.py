@@ -219,6 +219,28 @@ def place_smoke_trainable_components(model: Any) -> Any:
     return model
 
 
+def smoke_optimizer_parameters(model: Any) -> list[torch.nn.Parameter]:
+    target_module = getattr(model, "action_head", model)
+    params = [param for param in target_module.parameters() if param.requires_grad]
+    if not params:
+        raise RuntimeError("No trainable action-head parameters available for optimizer-step smoke")
+    return params
+
+
+def _parameter_update_probe(params: list[torch.nn.Parameter]) -> tuple[torch.Tensor, int, torch.Tensor] | None:
+    for param in params:
+        grad = param.grad
+        if grad is None or grad.numel() == 0:
+            continue
+        flat_grad = grad.detach().flatten()
+        grad_max = flat_grad.abs().max()
+        if float(grad_max.detach().cpu()) == 0.0:
+            continue
+        index = int(flat_grad.abs().argmax().detach().cpu())
+        return param, index, param.detach().flatten()[index].clone()
+    return None
+
+
 def _exception_status(exc: Exception) -> dict[str, str]:
     return {
         "status": "error",
@@ -227,18 +249,51 @@ def _exception_status(exc: Exception) -> dict[str, str]:
     }
 
 
-def run_one_step(model, cfg: Any, examples: list[dict[str, Any]] | None = None) -> dict[str, float]:
+def run_one_step(
+    model,
+    cfg: Any,
+    examples: list[dict[str, Any]] | None = None,
+    *,
+    optimizer_step: bool = False,
+    optimizer_lr: float = 1e-4,
+) -> dict[str, float]:
     model = place_smoke_trainable_components(model)
     model.train()
     if examples is None:
         examples = build_dummy_examples(cfg, batch_size=1)
+    model.zero_grad(set_to_none=True)
     output = model(examples)
     scalar_losses = {key: value for key, value in output.items() if torch.is_tensor(value) and value.numel() == 1}
     if not scalar_losses:
         raise RuntimeError("Model forward did not return scalar losses")
     total_loss = sum(scalar_losses.values())
     total_loss.backward()
-    return {key: float(value.detach().cpu()) for key, value in scalar_losses.items()}
+    result = {key: float(value.detach().cpu()) for key, value in scalar_losses.items()}
+    if optimizer_step:
+        params = smoke_optimizer_parameters(model)
+        grad_params = [param for param in params if param.grad is not None]
+        if not grad_params:
+            raise RuntimeError("Optimizer-step smoke found no action-head gradients")
+        grad_norm_sq = sum(float(param.grad.detach().float().norm().cpu()) ** 2 for param in grad_params)
+        update_probe = _parameter_update_probe(grad_params)
+        optimizer = torch.optim.SGD(params, lr=optimizer_lr)
+        optimizer.step()
+        optimizer.zero_grad(set_to_none=True)
+        changed_samples = 0
+        if update_probe is not None:
+            param, index, before = update_probe
+            after = param.detach().flatten()[index]
+            changed_samples = int(not torch.equal(before.cpu(), after.detach().cpu()))
+        result.update(
+            {
+                "optimizer/stepped": 1.0,
+                "optimizer/param_count": float(sum(param.numel() for param in params)),
+                "optimizer/grad_param_count": float(len(grad_params)),
+                "optimizer/grad_l2_norm": grad_norm_sq**0.5,
+                "optimizer/changed_param_samples": float(changed_samples),
+            }
+        )
+    return result
 
 
 def smoke_lara_real_components(
@@ -257,6 +312,8 @@ def smoke_lara_real_components(
     use_real_batch: bool = False,
     real_batch_size: int = 1,
     real_batch_start_index: int = 0,
+    optimizer_step: bool = False,
+    optimizer_lr: float = 1e-4,
 ) -> dict[str, Any]:
     cfg = load_config(config_path)
     cfg = apply_smoke_overrides(
@@ -295,7 +352,13 @@ def smoke_lara_real_components(
         result["instantiate"] = {"status": "ok", "class": model.__class__.__name__}
         if run_step:
             try:
-                losses = run_one_step(model, cfg, examples=examples)
+                losses = run_one_step(
+                    model,
+                    cfg,
+                    examples=examples,
+                    optimizer_step=optimizer_step,
+                    optimizer_lr=optimizer_lr,
+                )
             except Exception as exc:
                 result["one_step"] = _exception_status(exc)
                 return result
@@ -309,6 +372,12 @@ def main() -> int:
     parser.add_argument("--require-data", action="store_true")
     parser.add_argument("--instantiate", action="store_true")
     parser.add_argument("--run-step", action="store_true")
+    parser.add_argument(
+        "--optimizer-step",
+        action="store_true",
+        help="After the one-step backward smoke, run one lightweight SGD step over action_head parameters.",
+    )
+    parser.add_argument("--optimizer-lr", type=float, default=1e-4)
     parser.add_argument(
         "--use-real-batch",
         action="store_true",
@@ -364,7 +433,7 @@ def main() -> int:
         args.config,
         require_data=args.require_data,
         instantiate=args.instantiate,
-        run_step=args.run_step,
+        run_step=args.run_step or args.optimizer_step,
         attn_implementation=args.attn_implementation,
         use_latent_action_head=args.use_latent_action_head or None,
         use_transition_head=args.use_transition_head or None,
@@ -375,6 +444,8 @@ def main() -> int:
         use_real_batch=args.use_real_batch,
         real_batch_size=args.real_batch_size,
         real_batch_start_index=args.real_batch_start_index,
+        optimizer_step=args.optimizer_step,
+        optimizer_lr=args.optimizer_lr,
     )
     print(json.dumps(result, indent=2, sort_keys=True))
     if result["paths"]["status"] != "ok":
