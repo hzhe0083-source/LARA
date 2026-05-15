@@ -62,6 +62,8 @@ framework:
     lara_direct_expert_hidden_dim: 1024
     lara_direct_expert_loss_weight: 1.0
     lara_posterior_temperature: 1.0
+    lara_posterior_uniform_floor: 0.0
+    lara_posterior_top_r:
     lara_use_expert_loss_posterior: true
     lara_expert_residual_scale: 0.1
     noise_beta_alpha: 1.5

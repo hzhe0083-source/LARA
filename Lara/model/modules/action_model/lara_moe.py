@@ -109,13 +109,31 @@ def posterior_from_expert_losses(
     expert_losses: torch.Tensor,
     temperature: float = 1.0,
     mask: Optional[torch.Tensor] = None,
+    uniform_floor: float = 0.0,
+    top_r: Optional[int] = None,
 ) -> torch.Tensor:
     if expert_losses.ndim != 2:
         raise ValueError(f"Expected expert_losses [B, M], got {tuple(expert_losses.shape)}")
     if temperature <= 0:
         raise ValueError("temperature must be positive")
+    if uniform_floor < 0 or uniform_floor >= 1:
+        raise ValueError("uniform_floor must be in [0, 1)")
+    if top_r is not None and top_r <= 0:
+        raise ValueError("top_r must be positive")
     logits = -expert_losses / temperature
-    return masked_softmax(logits, mask)
+    if top_r is not None:
+        top_r_mask = topk_mask(logits, top_k=top_r, allowed_mask=mask)
+        probs = masked_softmax(logits, top_r_mask)
+        support_mask = top_r_mask
+    else:
+        probs = masked_softmax(logits, mask)
+        support_mask = torch.ones_like(probs, dtype=torch.bool) if mask is None else _validate_expert_mask(mask, probs, "mask")
+    if uniform_floor == 0:
+        return probs
+
+    uniform = support_mask.to(dtype=probs.dtype)
+    uniform = uniform / uniform.sum(dim=-1, keepdim=True).clamp_min(1.0)
+    return (1.0 - uniform_floor) * probs + uniform_floor * uniform
 
 
 def entropy(probs: torch.Tensor) -> torch.Tensor:
@@ -666,6 +684,8 @@ class LatentActionMoE(nn.Module):
         utility_uncertainty_weight: float = 1.0,
         utility_cost_weight: float = 1.0,
         posterior_temperature: float = 1.0,
+        posterior_uniform_floor: float = 0.0,
+        posterior_top_r: Optional[int] = None,
         residual_scale: float = 0.1,
     ):
         super().__init__()
@@ -682,6 +702,8 @@ class LatentActionMoE(nn.Module):
         self.balance_loss_weight = balance_loss_weight
         self.stickiness_loss_weight = stickiness_loss_weight
         self.posterior_temperature = posterior_temperature
+        self.posterior_uniform_floor = posterior_uniform_floor
+        self.posterior_top_r = posterior_top_r
         self.utility_head = (
             RouteUtilityHead(
                 hidden_size=hidden_size,
@@ -829,6 +851,8 @@ class LatentActionMoE(nn.Module):
             posterior_probs = posterior_from_expert_losses(
                 expert_action_losses,
                 temperature=self.posterior_temperature,
+                uniform_floor=self.posterior_uniform_floor,
+                top_r=self.posterior_top_r,
             )
             route_loss = masked_kl_div(router_logits, posterior_probs, pool_mask)
             pool_teacher = pool_target_probs if pool_target_probs is not None else posterior_probs

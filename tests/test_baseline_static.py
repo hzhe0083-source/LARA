@@ -126,6 +126,8 @@ def test_optional_moe_router_stage_two_exists():
     assert "active_mask = topk_mask(router_logits, top_k=self.top_k, allowed_mask=pool_mask)" in moe_src
     assert "pool_loss_weight" in moe_src
     assert "posterior_temperature" in moe_src
+    assert "posterior_uniform_floor" in moe_src
+    assert "posterior_top_r" in moe_src
     assert "reduction: str = \"mean\"" in flow_src
     assert "reduction=\"none\"" in adapter_src
     assert "def _expert_action_losses" in adapter_src
@@ -149,6 +151,8 @@ def test_optional_moe_router_stage_two_exists():
     assert "lara_use_direct_action_output: false" in config_src
     assert "lara_direct_expert_loss_weight: 1.0" in config_src
     assert "lara_posterior_temperature: 1.0" in config_src
+    assert "lara_posterior_uniform_floor: 0.0" in config_src
+    assert "lara_posterior_top_r:" in config_src
     assert "lara_use_expert_loss_posterior: true" in config_src
     assert "Stage-2 MoE/router scaffold" in gap
 

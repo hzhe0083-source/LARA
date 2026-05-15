@@ -94,6 +94,8 @@ class ActionHeadAdapter(nn.Module):
                 utility_uncertainty_weight=action_cfg.get("lara_utility_uncertainty_weight", 1.0),
                 utility_cost_weight=action_cfg.get("lara_utility_cost_weight", 1.0),
                 posterior_temperature=action_cfg.get("lara_posterior_temperature", 1.0),
+                posterior_uniform_floor=action_cfg.get("lara_posterior_uniform_floor", 0.0),
+                posterior_top_r=action_cfg.get("lara_posterior_top_r", None),
                 residual_scale=action_cfg.get("lara_expert_residual_scale", 0.1),
             )
             if self.use_lara_moe
@@ -261,6 +263,8 @@ class ActionHeadAdapter(nn.Module):
                 direct_posterior = posterior_from_expert_losses(
                     direct_expert_losses.detach(),
                     temperature=self.lara_moe.posterior_temperature,
+                    uniform_floor=self.lara_moe.posterior_uniform_floor,
+                    top_r=self.lara_moe.posterior_top_r,
                 )
                 direct_expert_loss = (direct_expert_losses * direct_posterior).sum(dim=-1).mean()
             with torch.no_grad():
@@ -425,6 +429,8 @@ class ActionHeadAdapter(nn.Module):
         posterior_probs = posterior_from_expert_losses(
             expert_action_losses,
             temperature=self.lara_moe.posterior_temperature,
+            uniform_floor=self.lara_moe.posterior_uniform_floor,
+            top_r=self.lara_moe.posterior_top_r,
         )
         trajectory_tensor = self._trajectory_ids_to_tensor(trajectory_ids, device=expert_action_losses.device)
         return aggregate_episode_responsibilities(posterior_probs, trajectory_tensor)

@@ -126,6 +126,23 @@ class LatentActionMoETest(unittest.TestCase):
         self.assertEqual(posterior.argmax(dim=-1).tolist(), [0, 1])
         self.assertTrue(torch.allclose(posterior.sum(dim=-1), torch.ones(2)))
 
+    def test_posterior_responsibility_supports_floor_and_top_r(self):
+        losses = torch.tensor([[0.1, 0.2, 3.0, 4.0]])
+
+        posterior = posterior_from_expert_losses(
+            losses,
+            temperature=0.5,
+            uniform_floor=0.2,
+            top_r=2,
+        )
+
+        self.assertTrue(torch.allclose(posterior.sum(dim=-1), torch.ones(1)))
+        self.assertGreater(float(posterior[0, 0]), 0.0)
+        self.assertGreater(float(posterior[0, 1]), 0.0)
+        self.assertEqual(float(posterior[0, 2]), 0.0)
+        self.assertEqual(float(posterior[0, 3]), 0.0)
+        self.assertGreaterEqual(float(posterior.min()), 0.0)
+
     def test_forward_uses_expert_action_losses_as_posterior_teacher(self):
         torch.manual_seed(0)
         moe = LatentActionMoE(
