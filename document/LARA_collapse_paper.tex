@@ -511,6 +511,10 @@ supervise action, latent, transition, utility-proxy, or direct-expert losses.
 For the optional MoE path, the dataloader can also return the episode's first
 image so the episode-level pool router can condition on an encoded initial
 context $h_1$ rather than reusing the current chunk context as a proxy.
+Protocol tooling can summarize rollout JSON/JSONL records into matched-budget
+rows, subset-retention curves, and compute-success Pareto flags, but it does
+not itself produce real FLOP, latency, memory, or closed-loop success
+measurements.
 This is not yet the full LARA algorithm in this manuscript. In particular,
 production-ready latent-action training, validated MoE action experts,
 posterior-responsibility training, the episode-level pool router, the

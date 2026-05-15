@@ -33,7 +33,7 @@ Experimental scaffolding exists but is not complete or validated:
 - Stage-2 MoE/router scaffold with residual token experts, optional direct action-chunk experts, optional routed direct-expert action output, posterior responsibility from latent tokens or per-expert action reconstruction losses, optional posterior floor/top-r smoothing, LeRobot trajectory ids for episode-level resident pool targets, optional episode-start image encoding for the resident pool router, reusable episode-level resident pool masks, budget-conditioned episode pool routing, optional training-time randomized resident-pool size, chunk-level top-k routing inside the resident pool, optional inference stickiness, optional balance/stickiness/expert-diversity/entropy stabilizers, and route-quality aggregation metrics (`use_lara_moe: false` by default). This is code scaffolding only; the MoE experts and two-level router have not been validated as the LARA paper method.
 - Utility calibration scaffold with optional action-loss utility labels, optional transition-state consistency utility labels, optional direct-expert action reconstruction or transition-state component labels for value/progress/uncertainty targets, optional dataset-provided utility/candidate/cost/component targets, an optional supervised route utility head, candidate value/progress/uncertainty/cost scoring helpers, centered utility regression, and pairwise ranking losses (`lara_utility_loss_weight: 0.0`, `lara_utility_head_loss_weight: 0.0`, `lara_use_action_loss_utility: false`, `lara_use_state_utility: false`, `lara_use_utility_head: false` by default). These labels are proxies or pass-through hooks, not true closed-loop counterfactual utility calibration.
 - Action-head MoE diagnostics include `metric/moe_route_quality_*` scalars for posterior/utility ranking, top-k consistency, route regret, and retained probability mass when MoE is enabled.
-- Matched-compute and matched-resident protocol helpers for subset-retention success aggregation, active/resident budget checks, result-table rows, and compute-success Pareto flags.
+- Matched-compute and matched-resident protocol helpers for subset-retention success aggregation, active/resident budget checks, result-table rows, compute-success Pareto flags, and JSON/JSONL rollout-record summarization via `scripts/summarize_lara_protocol.py`.
 - Minimal dummy-batch smoke coverage exists for `ActionHeadAdapter` forward and prediction shapes.
 - The real-component smoke script can temporarily enable the default-off Stage-1/Stage-2 scaffolds to prove they instantiate and complete a dummy forward/backward with local Qwen/V-JEPA checkpoints. This is an integration smoke check only; it is not full SO101 training or closed-loop validation.
 
@@ -45,7 +45,7 @@ Described in the paper but not implemented yet:
 - real counterfactual utility scoring from latent-state or closed-loop evaluator signals beyond action reconstruction labels
 - validated transition-state training with real SO101 boundary targets
 - full resident-pool training/evaluation and closed-loop success/retention curves beyond static and unit tests
-- matched-compute and matched-resident-expert experiments
+- matched-compute and matched-resident-expert experiments from real rollout records with measured FLOPs, latency, VRAM, and closed-loop success
 
 In other words, the current code path is:
 
@@ -69,6 +69,7 @@ Lara/
   training/                   Accelerate/DeepSpeed training loops
 scripts/
   config/lara_so101_ft.yaml   SO101 fine-tuning config
+  summarize_lara_protocol.py  Summarize rollout JSON/JSONL into paper protocol rows
 models/                       local checkpoints, ignored by git
 ```
 

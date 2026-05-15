@@ -29,6 +29,52 @@ def _optional_mean_by_fraction(values_by_fraction, fraction: float, name: str) -
     raise ValueError(f"{name} must define resident fraction {fraction:g}")
 
 
+def _record_value(record: Mapping[str, object], *keys: str):
+    for key in keys:
+        if key in record and record[key] is not None:
+            return record[key]
+    return None
+
+
+def _group_record_values_by_fraction(
+    records: Sequence[Mapping[str, object]],
+    *,
+    resident_fraction_key: str,
+    value_keys: Sequence[str],
+    required: bool,
+    metric_name: str,
+) -> dict[float, list[float]]:
+    grouped: dict[float, list[float]] = {}
+    for index, record in enumerate(records):
+        raw_fraction = _record_value(record, resident_fraction_key, "resident_fraction_requested")
+        if raw_fraction is None:
+            raise ValueError(f"record {index} must define {resident_fraction_key}")
+        fraction = float(raw_fraction)
+        if fraction <= 0 or fraction > 1:
+            raise ValueError(f"resident fraction must be in (0, 1], got {fraction}")
+        value = _record_value(record, *value_keys)
+        if value is None:
+            if required:
+                raise ValueError(f"record {index} must define {metric_name}")
+            continue
+        grouped.setdefault(fraction, []).append(float(value))
+    if required and not grouped:
+        raise ValueError(f"{metric_name} values must not be empty")
+    return grouped
+
+
+def _complete_optional_group(
+    values_by_fraction: dict[float, list[float]],
+    required_fractions: Sequence[float],
+) -> Optional[dict[float, list[float]]]:
+    if not values_by_fraction:
+        return None
+    missing = [fraction for fraction in required_fractions if fraction not in values_by_fraction]
+    if missing:
+        return None
+    return values_by_fraction
+
+
 def resident_experts_for_fraction(total_experts: int, resident_fraction: float) -> int:
     if total_experts <= 0:
         raise ValueError("total_experts must be positive")
@@ -182,6 +228,105 @@ def subset_retention_rows(
         row["resident_fraction_requested"] = fraction
         rows.append(row)
     return rows
+
+
+def protocol_summary_from_records(
+    records: Sequence[Mapping[str, object]],
+    *,
+    benchmark: str,
+    method: str,
+    total_experts: int,
+    active_experts: int,
+    shared_params: int = 0,
+    params_per_expert: int = 0,
+    resident_fraction_key: str = "resident_fraction",
+    success_keys: Sequence[str] = ("success", "success_rate"),
+) -> dict[str, object]:
+    if not records:
+        raise ValueError("records must not be empty")
+
+    success_by_fraction = _group_record_values_by_fraction(
+        records,
+        resident_fraction_key=resident_fraction_key,
+        value_keys=success_keys,
+        required=True,
+        metric_name="success",
+    )
+    fractions = sorted(success_by_fraction)
+    optional_groups = {
+        "return_by_fraction": _complete_optional_group(
+            _group_record_values_by_fraction(
+                records,
+                resident_fraction_key=resident_fraction_key,
+                value_keys=("return_score", "return"),
+                required=False,
+                metric_name="return_score",
+            ),
+            fractions,
+        ),
+        "route_regret_by_fraction": _complete_optional_group(
+            _group_record_values_by_fraction(
+                records,
+                resident_fraction_key=resident_fraction_key,
+                value_keys=("route_regret",),
+                required=False,
+                metric_name="route_regret",
+            ),
+            fractions,
+        ),
+        "flops_by_fraction": _complete_optional_group(
+            _group_record_values_by_fraction(
+                records,
+                resident_fraction_key=resident_fraction_key,
+                value_keys=("flops",),
+                required=False,
+                metric_name="flops",
+            ),
+            fractions,
+        ),
+        "latency_ms_by_fraction": _complete_optional_group(
+            _group_record_values_by_fraction(
+                records,
+                resident_fraction_key=resident_fraction_key,
+                value_keys=("latency_ms",),
+                required=False,
+                metric_name="latency_ms",
+            ),
+            fractions,
+        ),
+        "vram_mb_by_fraction": _complete_optional_group(
+            _group_record_values_by_fraction(
+                records,
+                resident_fraction_key=resident_fraction_key,
+                value_keys=("vram_mb",),
+                required=False,
+                metric_name="vram_mb",
+            ),
+            fractions,
+        ),
+    }
+    rows = subset_retention_rows(
+        benchmark=benchmark,
+        method=method,
+        success_by_fraction=success_by_fraction,
+        total_experts=total_experts,
+        active_experts=active_experts,
+        shared_params=shared_params,
+        params_per_expert=params_per_expert,
+        **optional_groups,
+    )
+    if all(row.get("flops") is not None for row in rows):
+        for row, frontier in zip(rows, pareto_frontier_flags(rows), strict=True):
+            row["compute_success_pareto"] = frontier
+    curve = subset_retention_success_curve(success_by_fraction)
+    return {
+        "benchmark": benchmark,
+        "method": method,
+        "num_records": len(records),
+        "num_records_by_fraction": {f"{fraction:g}": len(success_by_fraction[fraction]) for fraction in fractions},
+        "curve": curve,
+        "rows": rows,
+    }
 
 
 def _relative_match(reference: float, candidate: float, tolerance: float) -> bool:

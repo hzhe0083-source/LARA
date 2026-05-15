@@ -5,6 +5,7 @@ from Lara.evaluation.lara_protocol import (
     matched_compute_row,
     matched_expert_budget_flags,
     pareto_frontier_flags,
+    protocol_summary_from_records,
     resident_experts_for_fraction,
     subset_retention_rows,
     subset_retention_success_curve,
@@ -135,6 +136,74 @@ class LARAProtocolTest(unittest.TestCase):
         flags = pareto_frontier_flags(rows)
 
         self.assertEqual(flags, [True, False, True])
+
+    def test_protocol_summary_from_records_builds_rows_curve_and_pareto_flags(self):
+        records = [
+            {
+                "resident_fraction": 0.25,
+                "success": 1,
+                "return_score": 0.8,
+                "route_regret": 0.2,
+                "flops": 4.0,
+                "latency_ms": 20.0,
+                "vram_mb": 1000.0,
+            },
+            {
+                "resident_fraction": 0.25,
+                "success": 0,
+                "return_score": 0.2,
+                "route_regret": 0.4,
+                "flops": 4.2,
+                "latency_ms": 22.0,
+                "vram_mb": 1020.0,
+            },
+            {
+                "resident_fraction": 1.0,
+                "success": 1,
+                "return_score": 0.9,
+                "route_regret": 0.0,
+                "flops": 8.0,
+                "latency_ms": 30.0,
+                "vram_mb": 1400.0,
+            },
+        ]
+
+        summary = protocol_summary_from_records(
+            records,
+            benchmark="SO101",
+            method="LARA",
+            total_experts=8,
+            active_experts=2,
+            shared_params=100,
+            params_per_expert=10,
+        )
+
+        self.assertEqual(summary["num_records"], 3)
+        self.assertEqual(summary["num_records_by_fraction"], {"0.25": 2, "1": 1})
+        self.assertAlmostEqual(summary["curve"]["success_at_resident_0.25"], 0.5)
+        self.assertAlmostEqual(summary["curve"]["success_at_resident_1"], 1.0)
+        self.assertEqual(len(summary["rows"]), 2)
+        self.assertEqual(summary["rows"][0]["resident_experts"], 2)
+        self.assertAlmostEqual(summary["rows"][0]["flops"], 4.1, places=6)
+        self.assertIn("compute_success_pareto", summary["rows"][0])
+
+    def test_protocol_summary_from_records_requires_success_and_fraction(self):
+        with self.assertRaisesRegex(ValueError, "resident_fraction"):
+            protocol_summary_from_records(
+                [{"success": 1}],
+                benchmark="SO101",
+                method="LARA",
+                total_experts=8,
+                active_experts=2,
+            )
+        with self.assertRaisesRegex(ValueError, "success"):
+            protocol_summary_from_records(
+                [{"resident_fraction": 0.5}],
+                benchmark="SO101",
+                method="LARA",
+                total_experts=8,
+                active_experts=2,
+            )
 
 
 if __name__ == "__main__":

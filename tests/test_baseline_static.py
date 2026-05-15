@@ -165,6 +165,7 @@ def test_optional_moe_router_stage_two_exists():
     core_src = read("Lara/model/framework/Lara_core.py")
     server_src = read("deployment/model_server/tools/websocket_policy_server.py")
     protocol_src = read("Lara/evaluation/lara_protocol.py")
+    protocol_cli_src = read("scripts/summarize_lara_protocol.py")
     smoke_src = read("scripts/smoke_lara_real_components.py")
     config_src = read("scripts/config/lara_so101_ft.yaml")
     flow_src = read("Lara/model/modules/action_model/GR00T_ActionHeader.py")
@@ -199,6 +200,10 @@ def test_optional_moe_router_stage_two_exists():
     assert "def matched_budget_flags" in protocol_src
     assert "def matched_expert_budget_flags" in protocol_src
     assert "def pareto_frontier_flags" in protocol_src
+    assert "def protocol_summary_from_records" in protocol_src
+    assert "from Lara.evaluation import protocol_summary_from_records" in protocol_cli_src
+    assert "--resident-fraction-key" in protocol_cli_src
+    assert "JSON or JSONL rollout records" in protocol_cli_src
     assert "def smoke_lara_real_components" in smoke_src
     assert "def _exception_status" in smoke_src
     assert "def apply_smoke_overrides" in smoke_src
@@ -335,6 +340,7 @@ def test_optional_moe_router_stage_two_exists():
     assert "route-quality aggregation metrics" in gap
     assert "Action-head route-quality metrics are emitted" in gap
     assert "matched-compute rows, matched-resident rows, budget-match flags, Pareto frontier flags" in gap
+    assert "scripts/summarize_lara_protocol.py" in gap
     assert "training-time randomized resident-pool size" in gap
     assert "scripts/smoke_lara_real_components.py" in gap
     assert "structured error reporting" in gap
@@ -349,6 +355,7 @@ def test_paper_gap_is_explicit():
     assert "not the final latent-action MoE/router implementation" in readme
     assert "Experimental scaffolding exists but is not complete or validated" in readme
     assert "padded future action steps do not supervise" in readme
+    assert "scripts/summarize_lara_protocol.py" in readme
     assert "Missing Paper Components" in gap
     assert "MoE action experts" in gap
     assert "Do not describe it as the completed LARA MoE or completed two-level router yet" in gap
@@ -359,3 +366,4 @@ def test_paper_gap_is_explicit():
     assert "per-expert action-loss posterior path" in gap
     assert "action-loss utility labels" in gap
     assert "transition-state consistency utility labels" in gap
+    assert "rollout-record summarization" in gap
