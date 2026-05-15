@@ -69,6 +69,7 @@ class ActionHeadAdapter(nn.Module):
                 router_hidden_size=action_cfg.get("lara_router_hidden_dim", action_cfg.get("hidden_size", 1024)),
                 router_loss_weight=action_cfg.get("lara_router_loss_weight", 1.0),
                 pool_loss_weight=action_cfg.get("lara_pool_loss_weight", 1.0),
+                posterior_temperature=action_cfg.get("lara_posterior_temperature", 1.0),
                 residual_scale=action_cfg.get("lara_expert_residual_scale", 0.1),
             )
             if self.use_lara_moe

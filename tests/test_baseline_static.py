@@ -73,14 +73,18 @@ def test_optional_moe_router_stage_two_exists():
     assert "def masked_topk_softmax" in moe_src
     assert "def topk_mask" in moe_src
     assert "def masked_kl_div" in moe_src
+    assert "def posterior_from_expert_losses" in moe_src
+    assert "expert_action_losses" in moe_src
     assert "episode_pool_size" in moe_src
     assert "active_mask = topk_mask(router_logits, top_k=self.top_k, allowed_mask=pool_mask)" in moe_src
     assert "pool_loss_weight" in moe_src
+    assert "posterior_temperature" in moe_src
     assert "use_lara_moe" in adapter_src
     assert "moe_router_loss" in adapter_src
     assert "moe_pool_distill_loss" in adapter_src
     assert "use_lara_moe: false" in config_src
     assert "lara_episode_pool_size: 4" in config_src
+    assert "lara_posterior_temperature: 1.0" in config_src
     assert "Stage-2 MoE/router scaffold" in gap
 
 
@@ -95,4 +99,4 @@ def test_paper_gap_is_explicit():
     assert "Episode-level pool router" in gap
     assert "chunk-level top-k routing constrained to the resident pool" in gap
     assert "Episode-level pool router" in gap
-    assert "likelihood-based expert responsibility" in gap
+    assert "real per-expert action losses" in gap

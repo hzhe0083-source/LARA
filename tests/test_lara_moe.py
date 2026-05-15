@@ -2,7 +2,11 @@ import unittest
 
 import torch
 
-from Lara.model.modules.action_model.lara_moe import LatentActionMoE, masked_topk_softmax
+from Lara.model.modules.action_model.lara_moe import (
+    LatentActionMoE,
+    masked_topk_softmax,
+    posterior_from_expert_losses,
+)
 
 
 class LatentActionMoETest(unittest.TestCase):
@@ -65,6 +69,19 @@ class LatentActionMoETest(unittest.TestCase):
         self.assertTrue(torch.equal(output.pool_mask, pool_mask))
         self.assertTrue(torch.all(output.active_mask <= pool_mask))
         self.assertTrue(torch.all(output.router_probs[~pool_mask] == 0))
+
+    def test_posterior_responsibility_prefers_low_expert_loss(self):
+        losses = torch.tensor(
+            [
+                [0.1, 2.0, 3.0],
+                [4.0, 0.2, 2.0],
+            ]
+        )
+
+        posterior = posterior_from_expert_losses(losses, temperature=0.5)
+
+        self.assertEqual(posterior.argmax(dim=-1).tolist(), [0, 1])
+        self.assertTrue(torch.allclose(posterior.sum(dim=-1), torch.ones(2)))
 
 
 if __name__ == "__main__":

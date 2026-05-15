@@ -82,6 +82,19 @@ def masked_kl_div(student_logits: torch.Tensor, teacher_probs: torch.Tensor, mas
     )
 
 
+def posterior_from_expert_losses(
+    expert_losses: torch.Tensor,
+    temperature: float = 1.0,
+    mask: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    if expert_losses.ndim != 2:
+        raise ValueError(f"Expected expert_losses [B, M], got {tuple(expert_losses.shape)}")
+    if temperature <= 0:
+        raise ValueError("temperature must be positive")
+    logits = -expert_losses / temperature
+    return masked_softmax(logits, mask)
+
+
 def entropy(probs: torch.Tensor) -> torch.Tensor:
     return -(probs * torch.log(probs.clamp_min(1e-8))).sum(dim=-1).mean()
 
@@ -175,6 +188,7 @@ class LatentActionMoE(nn.Module):
         router_hidden_size: int = 1024,
         router_loss_weight: float = 1.0,
         pool_loss_weight: float = 1.0,
+        posterior_temperature: float = 1.0,
         residual_scale: float = 0.1,
     ):
         super().__init__()
@@ -185,6 +199,7 @@ class LatentActionMoE(nn.Module):
         self.episode_pool_size = episode_pool_size if episode_pool_size is not None else num_experts
         self.router_loss_weight = router_loss_weight
         self.pool_loss_weight = pool_loss_weight
+        self.posterior_temperature = posterior_temperature
         self.experts = nn.ModuleList(
             [
                 ResidualActionExpert(
@@ -258,6 +273,7 @@ class LatentActionMoE(nn.Module):
         latent_action_tokens: Optional[torch.Tensor] = None,
         initial_context_tokens: Optional[torch.Tensor] = None,
         pool_mask: Optional[torch.Tensor] = None,
+        expert_action_losses: Optional[torch.Tensor] = None,
     ) -> MoEConditionerOutput:
         self._validate_inputs(conditioning_tokens, latent_action_tokens)
         if initial_context_tokens is not None and initial_context_tokens.shape[0] != conditioning_tokens.shape[0]:
@@ -275,7 +291,24 @@ class LatentActionMoE(nn.Module):
         active_mask = topk_mask(router_logits, top_k=self.top_k, allowed_mask=pool_mask)
         router_probs = masked_softmax(router_logits, active_mask)
 
-        if latent_action_tokens is not None:
+        if expert_action_losses is not None:
+            if expert_action_losses.shape != router_logits.shape:
+                raise ValueError(
+                    f"expert_action_losses must have shape {tuple(router_logits.shape)}, "
+                    f"got {tuple(expert_action_losses.shape)}"
+                )
+            posterior_probs = posterior_from_expert_losses(
+                expert_action_losses,
+                temperature=self.posterior_temperature,
+            )
+            route_loss = masked_kl_div(router_logits, posterior_probs, pool_mask)
+            pool_loss = F.kl_div(
+                F.log_softmax(pool_logits, dim=-1),
+                posterior_probs.detach(),
+                reduction="batchmean",
+            )
+            train_weights = posterior_probs
+        elif latent_action_tokens is not None:
             posterior_logits = self.posterior(conditioning_tokens, latent_action_tokens)
             posterior_probs = torch.softmax(posterior_logits, dim=-1)
             route_loss = masked_kl_div(router_logits, posterior_probs, pool_mask)
