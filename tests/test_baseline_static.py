@@ -81,6 +81,7 @@ def test_optional_moe_router_stage_two_exists():
     gap = read("document/IMPLEMENTATION_GAP.md")
     assert "class LatentActionMoE" in moe_src
     assert "class ActionChunkExpertBank" in moe_src
+    assert "class RouteUtilityHead" in moe_src
     assert "class PosteriorResponsibilityHead" in moe_src
     assert "class ChunkRouter" in moe_src
     assert "class EpisodePoolRouter" in moe_src
@@ -100,6 +101,7 @@ def test_optional_moe_router_stage_two_exists():
     assert "expert_action_losses" in moe_src
     assert "pool_target_probs" in moe_src
     assert "utility_scores" in moe_src
+    assert "lara_use_utility_head" in adapter_src
     assert "def expert_conditioning_tokens" in moe_src
     assert "self.direct_action_experts" in adapter_src
     assert "moe_direct_expert_loss" in adapter_src
@@ -125,6 +127,7 @@ def test_optional_moe_router_stage_two_exists():
     assert "lara_episode_pool_size: 4" in config_src
     assert "lara_utility_loss_weight: 0.0" in config_src
     assert "lara_utility_rank_loss_weight: 0.0" in config_src
+    assert "lara_use_utility_head: false" in config_src
     assert "lara_balance_loss_weight: 0.0" in config_src
     assert "lara_stickiness_loss_weight: 0.0" in config_src
     assert "lara_use_direct_action_experts: false" in config_src

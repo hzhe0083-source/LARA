@@ -81,6 +81,11 @@ class ActionHeadAdapter(nn.Module):
                 utility_rank_loss_weight=action_cfg.get("lara_utility_rank_loss_weight", 0.0),
                 balance_loss_weight=action_cfg.get("lara_balance_loss_weight", 0.0),
                 stickiness_loss_weight=action_cfg.get("lara_stickiness_loss_weight", 0.0),
+                use_utility_head=action_cfg.get("lara_use_utility_head", False),
+                utility_hidden_size=action_cfg.get("lara_utility_hidden_dim", action_cfg.get("hidden_size", 1024)),
+                utility_progress_weight=action_cfg.get("lara_utility_progress_weight", 1.0),
+                utility_uncertainty_weight=action_cfg.get("lara_utility_uncertainty_weight", 1.0),
+                utility_cost_weight=action_cfg.get("lara_utility_cost_weight", 1.0),
                 posterior_temperature=action_cfg.get("lara_posterior_temperature", 1.0),
                 residual_scale=action_cfg.get("lara_expert_residual_scale", 0.1),
             )
@@ -199,6 +204,7 @@ class ActionHeadAdapter(nn.Module):
         trajectory_ids=None,
         utility_scores=None,
         utility_candidate_mask=None,
+        utility_cost_scores=None,
         previous_router_probs=None,
         latent_action_tokens: Optional[torch.Tensor] = None,
         return_aux: bool = False,
@@ -258,6 +264,11 @@ class ActionHeadAdapter(nn.Module):
                 if utility_candidate_mask is not None
                 else None
             )
+            utility_cost_scores = (
+                self._as_tensor(utility_cost_scores, device=conditioning_tokens.device, dtype=conditioning_tokens.dtype)
+                if utility_cost_scores is not None
+                else None
+            )
             previous_router_probs = (
                 self._as_tensor(previous_router_probs, device=conditioning_tokens.device, dtype=conditioning_tokens.dtype)
                 if previous_router_probs is not None
@@ -270,6 +281,7 @@ class ActionHeadAdapter(nn.Module):
                 pool_target_probs=self._pool_target_probs(expert_action_losses, trajectory_ids),
                 utility_scores=utility_scores,
                 utility_candidate_mask=utility_candidate_mask,
+                utility_cost_scores=utility_cost_scores,
                 previous_router_probs=previous_router_probs,
             )
             conditioning_tokens = moe_output.tokens
@@ -292,6 +304,15 @@ class ActionHeadAdapter(nn.Module):
                     "moe_route_regret": moe_output.route_regret,
                 }
             )
+            if moe_output.utility_scores is not None:
+                aux_losses.update(
+                    {
+                        "moe_utility_scores": moe_output.utility_scores,
+                        "moe_utility_value_scores": moe_output.utility_value_scores,
+                        "moe_utility_progress_scores": moe_output.utility_progress_scores,
+                        "moe_utility_uncertainty_scores": moe_output.utility_uncertainty_scores,
+                    }
+                )
             if direct_expert_loss is not None:
                 aux_losses["moe_direct_expert_loss"] = self.direct_expert_loss_weight * direct_expert_loss
         context_repeated = conditioning_tokens.repeat_interleave(self.repeated_diffusion_steps, dim=0)

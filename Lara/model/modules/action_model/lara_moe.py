@@ -17,6 +17,10 @@ class MoEConditionerOutput:
     balance_loss: torch.Tensor
     stickiness_loss: torch.Tensor
     utility_calibration_error: torch.Tensor
+    utility_scores: Optional[torch.Tensor]
+    utility_value_scores: Optional[torch.Tensor]
+    utility_progress_scores: Optional[torch.Tensor]
+    utility_uncertainty_scores: Optional[torch.Tensor]
     router_entropy: torch.Tensor
     posterior_entropy: torch.Tensor
     pool_entropy: torch.Tensor
@@ -478,6 +482,59 @@ class EpisodePoolRouter(nn.Module):
         return self.net(context_summary)
 
 
+class RouteUtilityHead(nn.Module):
+    """Context-only producer for candidate route utility components."""
+
+    def __init__(
+        self,
+        hidden_size: int,
+        num_experts: int,
+        utility_hidden_size: int,
+        progress_weight: float = 1.0,
+        uncertainty_weight: float = 1.0,
+        cost_weight: float = 1.0,
+    ):
+        super().__init__()
+        self.num_experts = num_experts
+        self.progress_weight = progress_weight
+        self.uncertainty_weight = uncertainty_weight
+        self.cost_weight = cost_weight
+        self.context_norm = nn.LayerNorm(hidden_size)
+        self.net = nn.Sequential(
+            nn.Linear(hidden_size, utility_hidden_size),
+            nn.GELU(),
+            nn.Linear(utility_hidden_size, num_experts * 3),
+        )
+
+    def forward(
+        self,
+        conditioning_tokens: torch.Tensor,
+        cost_scores: Optional[torch.Tensor] = None,
+    ) -> dict[str, torch.Tensor]:
+        if conditioning_tokens.ndim != 3:
+            raise ValueError(f"Expected conditioning_tokens [B, T, D], got {tuple(conditioning_tokens.shape)}")
+        context_summary = self.context_norm(conditioning_tokens).mean(dim=1)
+        raw = self.net(context_summary).view(conditioning_tokens.shape[0], 3, self.num_experts)
+        value_scores = raw[:, 0, :]
+        progress_scores = raw[:, 1, :]
+        uncertainty_scores = F.softplus(raw[:, 2, :])
+        utility_scores = candidate_route_utility(
+            value_scores=value_scores,
+            progress_scores=progress_scores,
+            uncertainty_scores=uncertainty_scores,
+            cost_scores=cost_scores,
+            progress_weight=self.progress_weight,
+            uncertainty_weight=self.uncertainty_weight,
+            cost_weight=self.cost_weight,
+        )
+        return {
+            "utility_scores": utility_scores,
+            "value_scores": value_scores,
+            "progress_scores": progress_scores,
+            "uncertainty_scores": uncertainty_scores,
+        }
+
+
 class LatentActionMoE(nn.Module):
     """Optional Stage-2 MoE conditioner for latent-action routed action decoding.
 
@@ -501,6 +558,11 @@ class LatentActionMoE(nn.Module):
         utility_rank_loss_weight: float = 0.0,
         balance_loss_weight: float = 0.0,
         stickiness_loss_weight: float = 0.0,
+        use_utility_head: bool = False,
+        utility_hidden_size: Optional[int] = None,
+        utility_progress_weight: float = 1.0,
+        utility_uncertainty_weight: float = 1.0,
+        utility_cost_weight: float = 1.0,
         posterior_temperature: float = 1.0,
         residual_scale: float = 0.1,
     ):
@@ -517,6 +579,18 @@ class LatentActionMoE(nn.Module):
         self.balance_loss_weight = balance_loss_weight
         self.stickiness_loss_weight = stickiness_loss_weight
         self.posterior_temperature = posterior_temperature
+        self.utility_head = (
+            RouteUtilityHead(
+                hidden_size=hidden_size,
+                num_experts=num_experts,
+                utility_hidden_size=utility_hidden_size if utility_hidden_size is not None else router_hidden_size,
+                progress_weight=utility_progress_weight,
+                uncertainty_weight=utility_uncertainty_weight,
+                cost_weight=utility_cost_weight,
+            )
+            if use_utility_head
+            else None
+        )
         self.experts = nn.ModuleList(
             [
                 ResidualActionExpert(
@@ -599,6 +673,7 @@ class LatentActionMoE(nn.Module):
         pool_target_probs: Optional[torch.Tensor] = None,
         utility_scores: Optional[torch.Tensor] = None,
         utility_candidate_mask: Optional[torch.Tensor] = None,
+        utility_cost_scores: Optional[torch.Tensor] = None,
         previous_router_probs: Optional[torch.Tensor] = None,
     ) -> MoEConditionerOutput:
         self._validate_inputs(conditioning_tokens, latent_action_tokens)
@@ -647,6 +722,15 @@ class LatentActionMoE(nn.Module):
         has_training_teacher = expert_action_losses is not None or latent_action_tokens is not None
         weights = train_weights if self.training and has_training_teacher else router_probs
         tokens = conditioning_tokens + self._expert_residual(conditioning_tokens, weights)
+        utility_value_scores = None
+        utility_progress_scores = None
+        utility_uncertainty_scores = None
+        if utility_scores is None and self.utility_head is not None:
+            utility_output = self.utility_head(conditioning_tokens, cost_scores=utility_cost_scores)
+            utility_scores = utility_output["utility_scores"]
+            utility_value_scores = utility_output["value_scores"]
+            utility_progress_scores = utility_output["progress_scores"]
+            utility_uncertainty_scores = utility_output["uncertainty_scores"]
         if utility_scores is None:
             utility_loss = router_logits.new_zeros(())
             utility_rank_loss = router_logits.new_zeros(())
@@ -687,6 +771,12 @@ class LatentActionMoE(nn.Module):
             balance_loss=balance_loss.detach(),
             stickiness_loss=stickiness_loss.detach(),
             utility_calibration_error=utility_calibration_error.detach(),
+            utility_scores=utility_scores.detach() if utility_scores is not None else None,
+            utility_value_scores=utility_value_scores.detach() if utility_value_scores is not None else None,
+            utility_progress_scores=utility_progress_scores.detach() if utility_progress_scores is not None else None,
+            utility_uncertainty_scores=utility_uncertainty_scores.detach()
+            if utility_uncertainty_scores is not None
+            else None,
             router_entropy=entropy(router_probs).detach(),
             posterior_entropy=entropy(posterior_probs).detach(),
             pool_entropy=entropy(pool_probs).detach(),

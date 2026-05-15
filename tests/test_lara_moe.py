@@ -5,6 +5,7 @@ import torch
 from Lara.model.modules.action_model.lara_moe import (
     ActionChunkExpertBank,
     LatentActionMoE,
+    RouteUtilityHead,
     aggregate_episode_responsibilities,
     candidate_route_utility,
     centered_utility_targets,
@@ -233,6 +234,49 @@ class LatentActionMoETest(unittest.TestCase):
         self.assertGreater(float(output.utility_loss), 0.0)
         self.assertGreaterEqual(float(output.utility_rank_loss), 0.0)
         self.assertGreaterEqual(float(output.utility_calibration_error), 0.0)
+        self.assertTrue(torch.allclose(output.loss, output.utility_loss))
+
+    def test_route_utility_head_produces_components_and_scores(self):
+        torch.manual_seed(0)
+        head = RouteUtilityHead(
+            hidden_size=8,
+            num_experts=3,
+            utility_hidden_size=16,
+            progress_weight=2.0,
+            uncertainty_weight=0.5,
+            cost_weight=3.0,
+        )
+        tokens = torch.randn(2, 4, 8)
+        cost = torch.ones(2, 3) * 0.1
+
+        output = head(tokens, cost_scores=cost)
+
+        self.assertEqual(output["utility_scores"].shape, (2, 3))
+        self.assertEqual(output["value_scores"].shape, (2, 3))
+        self.assertEqual(output["progress_scores"].shape, (2, 3))
+        self.assertEqual(output["uncertainty_scores"].shape, (2, 3))
+        self.assertTrue(torch.all(output["uncertainty_scores"] >= 0))
+
+    def test_forward_can_generate_utility_scores_from_head(self):
+        torch.manual_seed(0)
+        moe = LatentActionMoE(
+            hidden_size=8,
+            num_experts=3,
+            top_k=2,
+            episode_pool_size=3,
+            expert_hidden_size=16,
+            router_hidden_size=12,
+            utility_loss_weight=1.0,
+            use_utility_head=True,
+            utility_hidden_size=12,
+        )
+        conditioning_tokens = torch.randn(2, 4, 8)
+
+        output = moe(conditioning_tokens)
+
+        self.assertIsNotNone(output.utility_scores)
+        self.assertEqual(output.utility_scores.shape, (2, 3))
+        self.assertGreater(float(output.utility_loss), 0.0)
         self.assertTrue(torch.allclose(output.loss, output.utility_loss))
 
     def test_action_chunk_expert_bank_produces_per_expert_losses(self):
