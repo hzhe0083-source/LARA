@@ -164,6 +164,8 @@ def test_optional_moe_router_stage_two_exists():
     assert 'mtype == "reset"' in server_src
     assert "has_training_teacher = expert_action_losses is not None or latent_action_tokens is not None" in moe_src
     assert "episode_pool_size" in moe_src
+    assert "episode_pool_size_min" in moe_src
+    assert "def _episode_pool_top_k" in moe_src
     assert "active_mask = topk_mask(router_logits, top_k=self.top_k, allowed_mask=pool_mask)" in moe_src
     assert "pool_loss_weight" in moe_src
     assert "posterior_temperature" in moe_src
@@ -184,6 +186,7 @@ def test_optional_moe_router_stage_two_exists():
     assert "moe_route_regret" in adapter_src
     assert "use_lara_moe: false" in config_src
     assert "lara_episode_pool_size: 4" in config_src
+    assert "lara_episode_pool_size_min:" in config_src
     assert "lara_utility_loss_weight: 0.0" in config_src
     assert "lara_utility_rank_loss_weight: 0.0" in config_src
     assert "lara_utility_head_loss_weight: 0.0" in config_src
@@ -206,6 +209,7 @@ def test_optional_moe_router_stage_two_exists():
     assert "route-quality aggregation metrics" in gap
     assert "Action-head route-quality metrics are emitted" in gap
     assert "matched-compute rows, budget-match flags, Pareto frontier flags" in gap
+    assert "training-time randomized resident-pool size" in gap
     assert "caches MoE `resident_pool_mask` values per `session_id`" in gap
 
 

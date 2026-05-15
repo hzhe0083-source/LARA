@@ -49,6 +49,7 @@ framework:
     use_lara_moe: false
     lara_num_experts: 8
     lara_episode_pool_size: 4
+    lara_episode_pool_size_min:
     lara_top_k: 2
     lara_expert_hidden_dim: 1024
     lara_router_hidden_dim: 1024

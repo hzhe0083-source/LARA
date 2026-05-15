@@ -104,6 +104,7 @@ class ActionHeadAdapter(nn.Module):
                 num_experts=action_cfg.get("lara_num_experts", 8),
                 top_k=action_cfg.get("lara_top_k", 2),
                 episode_pool_size=action_cfg.get("lara_episode_pool_size", None),
+                episode_pool_size_min=action_cfg.get("lara_episode_pool_size_min", None),
                 expert_hidden_size=action_cfg.get("lara_expert_hidden_dim", action_cfg.get("hidden_size", 1024)),
                 router_hidden_size=action_cfg.get("lara_router_hidden_dim", action_cfg.get("hidden_size", 1024)),
                 router_loss_weight=action_cfg.get("lara_router_loss_weight", 1.0),

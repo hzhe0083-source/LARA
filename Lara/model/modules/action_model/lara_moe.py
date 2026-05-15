@@ -889,6 +889,7 @@ class LatentActionMoE(nn.Module):
         num_experts: int = 8,
         top_k: int = 2,
         episode_pool_size: Optional[int] = None,
+        episode_pool_size_min: Optional[int] = None,
         expert_hidden_size: int = 1024,
         router_hidden_size: int = 1024,
         router_loss_weight: float = 1.0,
@@ -916,6 +917,13 @@ class LatentActionMoE(nn.Module):
         self.num_experts = num_experts
         self.top_k = top_k
         self.episode_pool_size = episode_pool_size if episode_pool_size is not None else num_experts
+        if self.episode_pool_size <= 0 or self.episode_pool_size > num_experts:
+            raise ValueError("episode_pool_size must be in [1, num_experts]")
+        self.episode_pool_size_min = (
+            episode_pool_size_min if episode_pool_size_min is not None else self.episode_pool_size
+        )
+        if self.episode_pool_size_min <= 0 or self.episode_pool_size_min > self.episode_pool_size:
+            raise ValueError("episode_pool_size_min must be in [1, episode_pool_size]")
         self.router_loss_weight = router_loss_weight
         self.pool_loss_weight = pool_loss_weight
         self.utility_loss_weight = utility_loss_weight
@@ -966,6 +974,18 @@ class LatentActionMoE(nn.Module):
             router_hidden_size=router_hidden_size,
         )
 
+    def _episode_pool_top_k(self, device: torch.device) -> int:
+        if self.training and self.episode_pool_size_min < self.episode_pool_size:
+            return int(
+                torch.randint(
+                    low=self.episode_pool_size_min,
+                    high=self.episode_pool_size + 1,
+                    size=(1,),
+                    device=device,
+                ).item()
+            )
+        return self.episode_pool_size
+
     def _expert_outputs(self, tokens: torch.Tensor) -> torch.Tensor:
         return torch.stack([expert(tokens) for expert in self.experts], dim=1)
 
@@ -1008,7 +1028,7 @@ class LatentActionMoE(nn.Module):
         pool_context = initial_context_tokens if initial_context_tokens is not None else conditioning_tokens
         pool_logits = self.pool_router(pool_context)
         if pool_mask is None:
-            pool_mask = topk_mask(pool_logits, top_k=self.episode_pool_size)
+            pool_mask = topk_mask(pool_logits, top_k=self._episode_pool_top_k(pool_logits.device))
         else:
             pool_mask = _validate_expert_mask(pool_mask, pool_logits, "pool_mask")
         pool_probs = masked_softmax(pool_logits, pool_mask)

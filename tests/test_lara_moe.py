@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 import torch
 
@@ -120,6 +121,44 @@ class LatentActionMoETest(unittest.TestCase):
         self.assertTrue(torch.all(resident_pool.mask.sum(dim=-1) == 2))
         self.assertTrue(torch.equal(output.pool_mask, resident_pool.mask))
         self.assertTrue(torch.all(output.active_mask <= resident_pool.mask))
+
+    def test_training_can_sample_smaller_episode_pool_for_budget_robustness(self):
+        torch.manual_seed(0)
+        moe = LatentActionMoE(
+            hidden_size=8,
+            num_experts=5,
+            top_k=1,
+            episode_pool_size=4,
+            episode_pool_size_min=2,
+            expert_hidden_size=16,
+            router_hidden_size=12,
+        )
+        moe.train()
+        conditioning_tokens = torch.randn(2, 3, 8)
+
+        with patch("Lara.model.modules.action_model.lara_moe.torch.randint", return_value=torch.tensor([2])):
+            output = moe(conditioning_tokens)
+
+        self.assertTrue(torch.all(output.pool_mask.sum(dim=-1) == 2))
+        self.assertTrue(torch.all(output.active_mask <= output.pool_mask))
+
+    def test_eval_uses_max_episode_pool_size_even_when_training_range_exists(self):
+        torch.manual_seed(0)
+        moe = LatentActionMoE(
+            hidden_size=8,
+            num_experts=5,
+            top_k=1,
+            episode_pool_size=4,
+            episode_pool_size_min=2,
+            expert_hidden_size=16,
+            router_hidden_size=12,
+        )
+        moe.eval()
+        conditioning_tokens = torch.randn(2, 3, 8)
+
+        output = moe(conditioning_tokens)
+
+        self.assertTrue(torch.all(output.pool_mask.sum(dim=-1) == 4))
 
     def test_posterior_responsibility_prefers_low_expert_loss(self):
         losses = torch.tensor(
