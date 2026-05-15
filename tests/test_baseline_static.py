@@ -258,6 +258,9 @@ def test_optional_moe_router_stage_two_exists():
     assert "--use-action-loss-utility-components" in smoke_src
     assert "--use-state-utility" in smoke_src
     assert "--use-state-utility-components" in smoke_src
+    assert "--counterfactual-utility-labels-path" in smoke_src
+    assert "counterfactual_utility_sample_labeled_only" in smoke_src
+    assert "num_utility_experts=cfg.framework.action_model.get(\"lara_num_experts\", None)" in smoke_src
     assert "lara_use_direct_action_experts" in smoke_src
     assert "lara_use_direct_action_output" in smoke_src
     assert "lara_use_action_loss_utility_components" in smoke_src

@@ -67,6 +67,7 @@ These files exist to make the next implementation steps concrete, but they are n
 - The real-component smoke script can temporarily enable the default-off Stage-1 latent-action head and Stage-2 MoE/direct action expert scaffolds. Local `--run-step --attn-implementation sdpa` checks now complete dummy forward/backward for the latent-only path, the MoE/direct-output path, and the combined latent+MoE/direct-output path.
 - The same smoke script can now use `--use-real-batch` to load examples from the configured SO101 LeRobot dataset, report real sample shapes, and run the model path on real SO101 batch contents instead of synthetic zeros. Passing this smoke only proves integration wiring; it is not evidence that the paper's latent-action MoE or two-level routing algorithm is trained or complete.
 - The smoke script can also temporarily enable `--use-transition-head`; dummy smoke now supplies execution/prediction boundary state targets, and real SO101 batch smoke uses the dataloader-provided boundary targets to exercise the transition-state loss path.
+- The smoke script can point `--counterfactual-utility-labels-path` at a generated sidecar, enable the MoE utility loss, and sample only labeled SO101 steps for real-batch wiring checks.
 - The smoke script can optionally run `--optimizer-step`, which performs one lightweight SGD update over `action_head` parameters after backward and reports gradient/update diagnostics. This validates a minimal parameter-update path, not a full trainer run.
 
 ## Remaining Engineering Risks

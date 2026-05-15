@@ -51,6 +51,8 @@ def apply_smoke_overrides(
     use_state_utility: bool | None = None,
     use_state_utility_components: bool | None = None,
     include_episode_start: bool | None = None,
+    counterfactual_utility_labels_path: str | Path | None = None,
+    counterfactual_utility_sample_labeled_only: bool | None = None,
 ) -> Any:
     if attn_implementation is not None:
         cfg.framework.qwenvl.attn_implementation = attn_implementation
@@ -107,6 +109,16 @@ def apply_smoke_overrides(
                 action_cfg.lara_utility_head_loss_weight = 1.0
     if include_episode_start is not None:
         cfg.datasets.vla_data.include_episode_start = bool(include_episode_start)
+    if counterfactual_utility_labels_path is not None:
+        cfg.datasets.vla_data.counterfactual_utility_labels_path = str(counterfactual_utility_labels_path)
+        cfg.datasets.vla_data.counterfactual_utility_sample_labeled_only = True
+        action_cfg.use_lara_moe = True
+        if float(action_cfg.get("lara_utility_loss_weight", 0.0)) == 0.0:
+            action_cfg.lara_utility_loss_weight = 1.0
+    if counterfactual_utility_sample_labeled_only is not None:
+        cfg.datasets.vla_data.counterfactual_utility_sample_labeled_only = bool(
+            counterfactual_utility_sample_labeled_only
+        )
     return cfg
 
 
@@ -118,6 +130,9 @@ def required_component_paths(cfg: Any, repo_root: Path = REPO_ROOT, require_data
     }
     if require_data:
         paths["so101_data_root"] = _resolve_repo_path(cfg.datasets.vla_data.data_root_dir, repo_root)
+    sidecar_path = cfg.datasets.vla_data.get("counterfactual_utility_labels_path", None)
+    if sidecar_path:
+        paths["counterfactual_utility_labels"] = _resolve_repo_path(sidecar_path, repo_root)
     return paths
 
 
@@ -148,8 +163,13 @@ def smoke_config_summary(cfg: Any) -> dict[str, Any]:
         "lara_use_state_utility": bool(action_cfg.get("lara_use_state_utility", False)),
         "lara_use_state_utility_components": bool(action_cfg.get("lara_use_state_utility_components", False)),
         "lara_use_utility_head": bool(action_cfg.get("lara_use_utility_head", False)),
+        "lara_utility_loss_weight": float(action_cfg.get("lara_utility_loss_weight", 0.0)),
         "lara_use_transition_head": bool(action_cfg.get("lara_use_transition_head", False)),
         "include_episode_start": bool(cfg.datasets.vla_data.get("include_episode_start", False)),
+        "counterfactual_utility_labels_path": cfg.datasets.vla_data.get("counterfactual_utility_labels_path", None),
+        "counterfactual_utility_sample_labeled_only": bool(
+            cfg.datasets.vla_data.get("counterfactual_utility_sample_labeled_only", False)
+        ),
         "use_lara_moe_default_safe": not bool(action_cfg.use_lara_moe),
         "attn_implementation": cfg.framework.qwenvl.get("attn_implementation", None),
         "reload_modules": cfg.trainer.get("reload_modules", None),
@@ -200,6 +220,7 @@ def build_real_examples(cfg: Any, batch_size: int = 1, start_index: int = 0) -> 
         action_horizon=cfg.framework.action_model.action_horizon,
         video_horizon=cfg.framework.vj2_model.num_frames,
         execution_horizon=cfg.framework.action_model.get("execution_horizon", None),
+        num_utility_experts=cfg.framework.action_model.get("lara_num_experts", None),
     )
     if len(dataset) == 0:
         raise RuntimeError("Configured SO101 dataset produced zero examples")
@@ -226,6 +247,8 @@ def summarize_examples(examples: list[dict[str, Any]]) -> dict[str, Any]:
         "video",
         "execution_state_target",
         "prediction_state_target",
+        "utility_scores",
+        "utility_candidate_mask",
     ]:
         value = examples[0].get(key)
         if hasattr(value, "shape"):
@@ -235,6 +258,8 @@ def summarize_examples(examples: list[dict[str, Any]]) -> dict[str, Any]:
         "keys": keys,
         "fields": fields,
         "has_episode_start_image": "episode_start_image" in examples[0],
+        "has_counterfactual_utility_labels": "utility_scores" in examples[0]
+        and "utility_candidate_mask" in examples[0],
         "trajectory_ids": [_json_safe_scalar(example.get("trajectory_id")) for example in examples],
         "base_indices": [_json_safe_scalar(example.get("base_index")) for example in examples],
     }
@@ -363,6 +388,8 @@ def smoke_lara_real_components(
     use_state_utility: bool | None = None,
     use_state_utility_components: bool | None = None,
     include_episode_start: bool | None = None,
+    counterfactual_utility_labels_path: str | Path | None = None,
+    counterfactual_utility_sample_labeled_only: bool | None = None,
     use_real_batch: bool = False,
     real_batch_size: int = 1,
     real_batch_start_index: int = 0,
@@ -383,6 +410,8 @@ def smoke_lara_real_components(
         use_state_utility=use_state_utility,
         use_state_utility_components=use_state_utility_components,
         include_episode_start=include_episode_start,
+        counterfactual_utility_labels_path=counterfactual_utility_labels_path,
+        counterfactual_utility_sample_labeled_only=counterfactual_utility_sample_labeled_only,
     )
     summary = smoke_config_summary(cfg)
     path_status = check_required_paths(required_component_paths(cfg, require_data=require_data or use_real_batch))
@@ -517,6 +546,18 @@ def main() -> int:
             "the episode-level pool router can condition on the first observation."
         ),
     )
+    parser.add_argument(
+        "--counterfactual-utility-labels-path",
+        help=(
+            "Temporarily load a counterfactual utility sidecar; this enables MoE "
+            "utility loss and labeled-only sampling for real-batch smoke checks."
+        ),
+    )
+    parser.add_argument(
+        "--counterfactual-utility-all-steps",
+        action="store_true",
+        help="Do not restrict real-batch smoke sampling to sidecar-labeled steps.",
+    )
     args = parser.parse_args()
 
     result = smoke_lara_real_components(
@@ -535,6 +576,10 @@ def main() -> int:
         use_state_utility=args.use_state_utility or None,
         use_state_utility_components=args.use_state_utility_components or None,
         include_episode_start=args.include_episode_start or None,
+        counterfactual_utility_labels_path=args.counterfactual_utility_labels_path,
+        counterfactual_utility_sample_labeled_only=False
+        if args.counterfactual_utility_all_steps
+        else None,
         use_real_batch=args.use_real_batch,
         real_batch_size=args.real_batch_size,
         real_batch_start_index=args.real_batch_start_index,

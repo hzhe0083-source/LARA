@@ -48,11 +48,13 @@ def tiny_smoke_config(tmpdir: Path):
                     "state_dim": 4,
                     "use_latent_action_head": False,
                     "use_lara_moe": False,
+                    "lara_num_experts": 3,
                     "lara_use_transition_head": False,
                     "lara_transition_loss_weight": 0.0,
                     "lara_use_direct_action_experts": False,
                     "lara_use_direct_action_output": False,
                     "lara_use_action_loss_utility_components": False,
+                    "lara_utility_loss_weight": 0.0,
                     "lara_use_utility_head": False,
                     "lara_utility_head_loss_weight": 0.0,
                 },
@@ -93,8 +95,11 @@ class SmokeLaraRealComponentsTest(unittest.TestCase):
             self.assertFalse(summary["lara_use_direct_action_output"])
             self.assertFalse(summary["lara_use_action_loss_utility_components"])
             self.assertFalse(summary["lara_use_utility_head"])
+            self.assertEqual(summary["lara_utility_loss_weight"], 0.0)
             self.assertFalse(summary["lara_use_transition_head"])
             self.assertFalse(summary["include_episode_start"])
+            self.assertIsNone(summary["counterfactual_utility_labels_path"])
+            self.assertFalse(summary["counterfactual_utility_sample_labeled_only"])
 
     def test_attention_override_updates_smoke_summary(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -115,6 +120,27 @@ class SmokeLaraRealComponentsTest(unittest.TestCase):
 
             self.assertTrue(cfg.datasets.vla_data.include_episode_start)
             self.assertTrue(summary["include_episode_start"])
+
+    def test_counterfactual_utility_sidecar_override_enables_moe_utility_smoke(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = tiny_smoke_config(Path(tmp))
+            sidecar = Path(tmp) / "utility.jsonl"
+            sidecar.write_text(
+                '{"context_id": "3:5", "expert_id": 0, "utility_score": 1.0}\n',
+                encoding="utf-8",
+            )
+
+            apply_smoke_overrides(cfg, counterfactual_utility_labels_path=sidecar)
+            summary = smoke_config_summary(cfg)
+            paths = required_component_paths(cfg)
+
+            self.assertTrue(cfg.framework.action_model.use_lara_moe)
+            self.assertEqual(cfg.framework.action_model.lara_utility_loss_weight, 1.0)
+            self.assertEqual(cfg.datasets.vla_data.counterfactual_utility_labels_path, str(sidecar))
+            self.assertTrue(cfg.datasets.vla_data.counterfactual_utility_sample_labeled_only)
+            self.assertEqual(summary["counterfactual_utility_labels_path"], str(sidecar))
+            self.assertTrue(summary["counterfactual_utility_sample_labeled_only"])
+            self.assertIn("counterfactual_utility_labels", paths)
 
     def test_stage_scaffold_overrides_update_config_and_summary(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -248,6 +274,7 @@ class SmokeLaraRealComponentsTest(unittest.TestCase):
             self.assertEqual(get_vla_dataset_calls[0]["action_horizon"], 3)
             self.assertEqual(get_vla_dataset_calls[0]["video_horizon"], 8)
             self.assertEqual(get_vla_dataset_calls[0]["execution_horizon"], 1)
+            self.assertEqual(get_vla_dataset_calls[0]["num_utility_experts"], 3)
             self.assertEqual(get_vla_dataset_calls[0]["mode"], "val")
 
     def test_summarize_examples_reports_real_batch_shapes(self):
@@ -257,6 +284,8 @@ class SmokeLaraRealComponentsTest(unittest.TestCase):
                 "future_action_mask": np.array([True, True, False], dtype=bool),
                 "current_state": np.zeros((1, 4), dtype=np.float16),
                 "video": np.zeros((2, 8, 16, 16, 3), dtype=np.uint8),
+                "utility_scores": np.array([1.0, 0.0, -1.0], dtype=np.float32),
+                "utility_candidate_mask": np.array([True, True, False], dtype=bool),
                 "episode_start_image": ["start"],
                 "trajectory_id": np.int64(7),
                 "base_index": np.int64(9),
@@ -269,7 +298,10 @@ class SmokeLaraRealComponentsTest(unittest.TestCase):
         self.assertEqual(summary["fields"]["future_actions"]["shape"], [3, 2])
         self.assertEqual(summary["fields"]["future_action_mask"]["shape"], [3])
         self.assertEqual(summary["fields"]["video"]["dtype"], "uint8")
+        self.assertEqual(summary["fields"]["utility_scores"]["shape"], [3])
+        self.assertEqual(summary["fields"]["utility_candidate_mask"]["shape"], [3])
         self.assertTrue(summary["has_episode_start_image"])
+        self.assertTrue(summary["has_counterfactual_utility_labels"])
         self.assertEqual(summary["trajectory_ids"], [7])
         self.assertEqual(summary["base_indices"], [9])
 
@@ -335,6 +367,8 @@ class SmokeLaraRealComponentsTest(unittest.TestCase):
     def test_smoke_entrypoint_passes_stage_scaffold_overrides_to_instantiate(self):
         with tempfile.TemporaryDirectory() as tmp:
             cfg_path = Path(tmp) / "config.yaml"
+            sidecar_path = Path(tmp) / "utility.jsonl"
+            sidecar_path.write_text('{"context_id": "3:5", "expert_id": 0, "utility_score": 1.0}\n', encoding="utf-8")
             OmegaConf.save(tiny_smoke_config(Path(tmp)), cfg_path)
 
             with patch(
@@ -349,6 +383,7 @@ class SmokeLaraRealComponentsTest(unittest.TestCase):
                     transition_loss_weight=0.5,
                     use_direct_action_output=True,
                     include_episode_start=True,
+                    counterfactual_utility_labels_path=sidecar_path,
                 )
 
             action_cfg = instantiate.call_args.args[0].framework.action_model
@@ -360,7 +395,9 @@ class SmokeLaraRealComponentsTest(unittest.TestCase):
             self.assertTrue(action_cfg.use_lara_moe)
             self.assertTrue(action_cfg.lara_use_direct_action_experts)
             self.assertTrue(action_cfg.lara_use_direct_action_output)
+            self.assertEqual(action_cfg.lara_utility_loss_weight, 1.0)
             self.assertTrue(data_cfg.include_episode_start)
+            self.assertEqual(data_cfg.counterfactual_utility_labels_path, str(sidecar_path))
 
     def test_smoke_entrypoint_can_report_real_batch_without_instantiating_model(self):
         with tempfile.TemporaryDirectory() as tmp:
