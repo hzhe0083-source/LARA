@@ -33,6 +33,7 @@ These files exist to make the next implementation steps concrete, but they are n
 - Distributed barriers and rank checks are guarded for single-process execution.
 - Qwen latent/embodied special token counts are checked per sample before hidden-state reshaping.
 - Flow-matching timestep buckets are clamped to the valid range.
+- `ActionHeadAdapter` has a dummy-batch forward/predict smoke test for basic loss and output shape.
 - SO101 batches now expose `future_actions` explicitly, with `action` retained as a compatibility alias.
 - Action labels remain fp32 in the adapter.
 - Static pytest coverage was added for the baseline guardrails in `tests/test_baseline_static.py`.
@@ -44,7 +45,7 @@ These files exist to make the next implementation steps concrete, but they are n
 ## Remaining Engineering Risks
 
 - Action target alignment is explicit for the current SO101 dataloader via `future_actions`. Future datasets that return past/current/future actions together must split out `future_actions` before calling the action adapter.
-- Full model instantiation and one-step training smoke tests still need to be run in a Python environment with `torch`, `transformers`, `diffusers`, `omegaconf`, and local checkpoints.
+- Full `Lara` model instantiation and one-step training smoke tests still need to be run with local Qwen/V-JEPA checkpoints.
 - The latent action head is currently a Stage-1 skeleton and still needs empirical validation, loss-weight tuning, and ablation against the token-conditioned flow baseline.
 - The MoE/router path is currently a Stage-2 scaffold and still needs full-train validation of the per-expert action-loss posterior path, resident-pool evaluation, and closed-loop validation.
 - Utility calibration currently validates only the loss surface; it does not yet compute candidate route utility from value/progress/latent-state or closed-loop evaluator signals.
@@ -54,7 +55,7 @@ These files exist to make the next implementation steps concrete, but they are n
 
 ## Suggested Implementation Order
 
-1. Add smoke tests for tokenizer token counts, action-head forward shape, flow-head inference shape, and one fake-batch train step.
+1. Add full-framework smoke tests for tokenizer integration and one fake-batch train step.
 2. Make action batches explicit: `future_actions`, optional `past_actions`, and `current_state`.
 3. Validate and tune the optional latent-action posterior/codebook/prior path.
 4. Validate the optional MoE/router path with real trajectory-id batches and route-quality diagnostics.

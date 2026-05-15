@@ -31,6 +31,7 @@ Experimental scaffolding exists but is not complete or validated:
 - Stage-1 latent action head scaffold with posterior encoder, VQ codebook, and context-only prior (`use_latent_action_head: false` by default).
 - Stage-2 MoE/router scaffold with residual experts, posterior responsibility from latent tokens or per-expert action reconstruction losses, LeRobot trajectory ids for episode-level resident pool targets, chunk-level top-k routing inside the resident pool, and route collapse diagnostics (`use_lara_moe: false` by default).
 - Utility calibration scaffold with centered utility regression and pairwise ranking losses for externally supplied candidate route utilities (`lara_utility_loss_weight: 0.0` by default).
+- Minimal dummy-batch smoke coverage exists for `ActionHeadAdapter` forward and prediction shapes.
 
 Described in the paper but not implemented yet:
 
