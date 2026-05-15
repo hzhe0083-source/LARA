@@ -233,6 +233,187 @@ def retained_probability_mass(probs: torch.Tensor, retention_fractions: list[flo
     return results
 
 
+def _validate_score_pair(
+    predicted_scores: torch.Tensor,
+    target_scores: torch.Tensor,
+    candidate_mask: Optional[torch.Tensor],
+) -> torch.Tensor:
+    if predicted_scores.ndim != 2:
+        raise ValueError(f"Expected predicted_scores [B, M], got {tuple(predicted_scores.shape)}")
+    if target_scores.shape != predicted_scores.shape:
+        raise ValueError(
+            f"target_scores must have shape {tuple(predicted_scores.shape)}, got {tuple(target_scores.shape)}"
+        )
+    if candidate_mask is None:
+        return torch.ones_like(predicted_scores, dtype=torch.bool)
+    return _validate_expert_mask(candidate_mask, predicted_scores, "candidate_mask")
+
+
+def _rank_vector(values: torch.Tensor) -> torch.Tensor:
+    order = torch.argsort(values)
+    ranks = torch.empty_like(values, dtype=torch.float32)
+    ranks[order] = torch.arange(values.numel(), device=values.device, dtype=torch.float32)
+    return ranks
+
+
+def _pearson_correlation(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+    x = x.float() - x.float().mean()
+    y = y.float() - y.float().mean()
+    denom = torch.linalg.vector_norm(x) * torch.linalg.vector_norm(y)
+    if float(denom.detach()) <= 1e-8:
+        return x.new_zeros(())
+    return (x * y).sum() / denom
+
+
+def spearman_rank_correlation(
+    predicted_scores: torch.Tensor,
+    target_scores: torch.Tensor,
+    candidate_mask: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    candidate_mask = _validate_score_pair(predicted_scores, target_scores, candidate_mask)
+    correlations = []
+    for pred_row, target_row, mask_row in zip(predicted_scores, target_scores, candidate_mask):
+        if int(mask_row.sum().item()) < 2:
+            continue
+        correlations.append(_pearson_correlation(_rank_vector(pred_row[mask_row]), _rank_vector(target_row[mask_row])))
+    if not correlations:
+        return predicted_scores.new_zeros(())
+    return torch.stack(correlations).mean().to(dtype=predicted_scores.dtype)
+
+
+def kendall_rank_correlation(
+    predicted_scores: torch.Tensor,
+    target_scores: torch.Tensor,
+    candidate_mask: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    candidate_mask = _validate_score_pair(predicted_scores, target_scores, candidate_mask)
+    correlations = []
+    for pred_row, target_row, mask_row in zip(predicted_scores, target_scores, candidate_mask):
+        if int(mask_row.sum().item()) < 2:
+            continue
+        pred_values = pred_row[mask_row].float()
+        target_values = target_row[mask_row].float()
+        pred_diff = pred_values[:, None] - pred_values[None, :]
+        target_diff = target_values[:, None] - target_values[None, :]
+        pair_mask = torch.triu(
+            torch.ones_like(pred_diff, dtype=torch.bool),
+            diagonal=1,
+        ) & (pred_diff != 0) & (target_diff != 0)
+        if not torch.any(pair_mask):
+            continue
+        correlations.append(torch.sign(pred_diff[pair_mask] * target_diff[pair_mask]).mean())
+    if not correlations:
+        return predicted_scores.new_zeros(())
+    return torch.stack(correlations).mean().to(dtype=predicted_scores.dtype)
+
+
+def topk_route_consistency(
+    router_scores: torch.Tensor,
+    target_scores: torch.Tensor,
+    top_k: int,
+    candidate_mask: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    if top_k <= 0:
+        raise ValueError("top_k must be positive")
+    candidate_mask = _validate_score_pair(router_scores, target_scores, candidate_mask)
+    overlaps = []
+    for router_row, target_row, mask_row in zip(router_scores, target_scores, candidate_mask):
+        candidate_indices = torch.where(mask_row)[0]
+        if candidate_indices.numel() == 0:
+            continue
+        k = min(top_k, int(candidate_indices.numel()))
+        router_top = candidate_indices[torch.topk(router_row[candidate_indices], k=k).indices]
+        target_top = candidate_indices[torch.topk(target_row[candidate_indices], k=k).indices]
+        overlaps.append(torch.isin(router_top, target_top).to(dtype=router_scores.dtype).mean())
+    if not overlaps:
+        return router_scores.new_zeros(())
+    return torch.stack(overlaps).mean()
+
+
+def route_regret_from_scores(
+    target_scores: torch.Tensor,
+    active_mask: torch.Tensor,
+    candidate_mask: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    if target_scores.ndim != 2:
+        raise ValueError(f"Expected target_scores [B, M], got {tuple(target_scores.shape)}")
+    active_mask = _validate_expert_mask(active_mask, target_scores, "active_mask")
+    if candidate_mask is None:
+        candidate_mask = torch.ones_like(active_mask, dtype=torch.bool)
+    else:
+        candidate_mask = _validate_expert_mask(candidate_mask, target_scores, "candidate_mask")
+    if torch.any(active_mask & ~candidate_mask):
+        raise ValueError("active_mask cannot select experts outside candidate_mask")
+
+    min_value = torch.finfo(target_scores.dtype).min
+    best_score = target_scores.masked_fill(~candidate_mask, min_value).max(dim=-1).values
+    selected_score = target_scores.masked_fill(~active_mask, min_value).max(dim=-1).values
+    return (best_score - selected_score).clamp_min(0.0).mean()
+
+
+def route_quality_metrics(
+    router_probs: torch.Tensor,
+    posterior_probs: Optional[torch.Tensor] = None,
+    utility_scores: Optional[torch.Tensor] = None,
+    pool_mask: Optional[torch.Tensor] = None,
+    active_mask: Optional[torch.Tensor] = None,
+    route_ids: Optional[torch.Tensor] = None,
+    valid_mask: Optional[torch.Tensor] = None,
+    retention_fractions: Optional[list[float]] = None,
+    top_k: Optional[int] = None,
+) -> dict[str, torch.Tensor]:
+    if router_probs.ndim != 2:
+        raise ValueError(f"Expected router_probs [B, M], got {tuple(router_probs.shape)}")
+    candidate_mask = (
+        torch.ones_like(router_probs, dtype=torch.bool)
+        if pool_mask is None
+        else _validate_expert_mask(pool_mask, router_probs, "pool_mask")
+    )
+    metrics = {"router_entropy": entropy(router_probs)}
+    if active_mask is not None:
+        active_mask = _validate_expert_mask(active_mask, router_probs, "active_mask")
+        if torch.any(active_mask & ~candidate_mask):
+            raise ValueError("active_mask cannot select experts outside pool_mask")
+        inferred_top_k = int(active_mask.sum(dim=-1).max().item())
+        top_k = inferred_top_k if top_k is None else top_k
+
+    if posterior_probs is not None:
+        _validate_score_pair(router_probs, posterior_probs, candidate_mask)
+        metrics["posterior_spearman"] = spearman_rank_correlation(router_probs, posterior_probs, candidate_mask)
+        metrics["posterior_kendall"] = kendall_rank_correlation(router_probs, posterior_probs, candidate_mask)
+        if top_k is not None:
+            metrics["posterior_topk_consistency"] = topk_route_consistency(
+                router_probs,
+                posterior_probs,
+                top_k=top_k,
+                candidate_mask=candidate_mask,
+            )
+        if active_mask is not None:
+            metrics["posterior_route_regret"] = route_regret_from_scores(posterior_probs, active_mask, candidate_mask)
+
+    if utility_scores is not None:
+        _validate_score_pair(router_probs, utility_scores, candidate_mask)
+        metrics["utility_spearman"] = spearman_rank_correlation(router_probs, utility_scores, candidate_mask)
+        metrics["utility_kendall"] = kendall_rank_correlation(router_probs, utility_scores, candidate_mask)
+        if top_k is not None:
+            metrics["utility_topk_consistency"] = topk_route_consistency(
+                router_probs,
+                utility_scores,
+                top_k=top_k,
+                candidate_mask=candidate_mask,
+            )
+        if active_mask is not None:
+            metrics["utility_route_regret"] = route_regret_from_scores(utility_scores, active_mask, candidate_mask)
+
+    if route_ids is not None:
+        metrics["route_switch_rate"] = route_switch_rate(route_ids, valid_mask)
+    if retention_fractions is not None:
+        retention_source = posterior_probs if posterior_probs is not None else router_probs
+        for fraction, retained_mass in retained_probability_mass(retention_source, retention_fractions).items():
+            metrics[f"retained_probability_mass/{fraction:g}"] = retained_mass
+    return metrics
+
+
 def sparse_route_budget(
     total_experts: int,
     active_experts: int,

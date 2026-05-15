@@ -120,6 +120,11 @@ def test_optional_moe_router_stage_two_exists():
     assert "def route_entropy_regularization_loss" in moe_src
     assert "def route_switch_rate" in moe_src
     assert "def retained_probability_mass" in moe_src
+    assert "def spearman_rank_correlation" in moe_src
+    assert "def kendall_rank_correlation" in moe_src
+    assert "def topk_route_consistency" in moe_src
+    assert "def route_regret_from_scores" in moe_src
+    assert "def route_quality_metrics" in moe_src
     assert "def sparse_route_budget" in moe_src
     assert "def candidate_route_utility" in moe_src
     assert "def utility_from_expert_losses" in moe_src
@@ -190,6 +195,7 @@ def test_optional_moe_router_stage_two_exists():
     assert "lara_use_expert_loss_posterior: true" in config_src
     assert "Stage-2 MoE/router scaffold" in gap
     assert "expert-diversity/entropy stabilizers" in gap
+    assert "route-quality aggregation metrics" in gap
     assert "caches MoE `resident_pool_mask` values per `session_id`" in gap
 
 

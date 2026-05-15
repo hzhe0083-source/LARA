@@ -13,10 +13,15 @@ from Lara.model.modules.action_model.lara_moe import (
     masked_topk_softmax,
     posterior_from_expert_losses,
     retained_probability_mass,
+    route_quality_metrics,
+    route_regret_from_scores,
     route_entropy_regularization_loss,
     route_switch_rate,
     route_stickiness_loss,
     sparse_route_budget,
+    spearman_rank_correlation,
+    kendall_rank_correlation,
+    topk_route_consistency,
     uniform_balance_loss,
     utility_calibration_objective,
     utility_component_supervision_loss,
@@ -551,6 +556,74 @@ class LatentActionMoETest(unittest.TestCase):
         self.assertLessEqual(float(curve[0.25]), float(curve[0.5]))
         self.assertLessEqual(float(curve[0.5]), float(curve[1.0]))
         self.assertTrue(torch.allclose(curve[1.0], torch.tensor(1.0)))
+
+    def test_rank_correlation_metrics_identify_order_quality(self):
+        target = torch.tensor([[1.0, 2.0, 3.0]])
+        same = torch.tensor([[0.1, 0.2, 0.3]])
+        reversed_scores = torch.tensor([[0.3, 0.2, 0.1]])
+
+        self.assertTrue(torch.allclose(spearman_rank_correlation(same, target), torch.tensor(1.0)))
+        self.assertTrue(torch.allclose(kendall_rank_correlation(same, target), torch.tensor(1.0)))
+        self.assertTrue(torch.allclose(spearman_rank_correlation(reversed_scores, target), torch.tensor(-1.0)))
+        self.assertTrue(torch.allclose(kendall_rank_correlation(reversed_scores, target), torch.tensor(-1.0)))
+
+    def test_topk_consistency_and_score_regret_respect_candidate_mask(self):
+        router = torch.tensor([[0.1, 0.9, 0.8]])
+        target = torch.tensor([[3.0, 2.0, 1.0]])
+        active_mask = torch.tensor([[False, True, True]])
+        candidate_mask = torch.tensor([[True, True, True]])
+
+        consistency = topk_route_consistency(router, target, top_k=2, candidate_mask=candidate_mask)
+        regret = route_regret_from_scores(target, active_mask, candidate_mask)
+
+        self.assertTrue(torch.allclose(consistency, torch.tensor(0.5)))
+        self.assertTrue(torch.allclose(regret, torch.tensor(1.0)))
+
+    def test_route_quality_metrics_aggregates_paper_diagnostics(self):
+        router = torch.tensor(
+            [
+                [0.1, 0.8, 0.1],
+                [0.7, 0.2, 0.1],
+            ]
+        )
+        posterior = torch.tensor(
+            [
+                [0.2, 0.7, 0.1],
+                [0.6, 0.3, 0.1],
+            ]
+        )
+        utility = torch.tensor(
+            [
+                [0.0, 2.0, -1.0],
+                [1.0, 0.0, -2.0],
+            ]
+        )
+        active_mask = torch.tensor(
+            [
+                [False, True, False],
+                [True, False, False],
+            ]
+        )
+        pool_mask = torch.ones_like(active_mask, dtype=torch.bool)
+        route_ids = torch.tensor([[1, 1, 2], [0, 1, 1]])
+
+        metrics = route_quality_metrics(
+            router,
+            posterior_probs=posterior,
+            utility_scores=utility,
+            pool_mask=pool_mask,
+            active_mask=active_mask,
+            route_ids=route_ids,
+            retention_fractions=[0.5, 1.0],
+        )
+
+        self.assertIn("posterior_spearman", metrics)
+        self.assertIn("utility_kendall", metrics)
+        self.assertIn("posterior_route_regret", metrics)
+        self.assertIn("utility_topk_consistency", metrics)
+        self.assertIn("route_switch_rate", metrics)
+        self.assertIn("retained_probability_mass/0.5", metrics)
+        self.assertLessEqual(float(metrics["retained_probability_mass/0.5"]), 1.0)
 
     def test_candidate_route_utility_combines_value_progress_uncertainty_and_cost(self):
         value = torch.tensor([[1.0, 2.0]])

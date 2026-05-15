@@ -16,7 +16,7 @@ This repository currently implements the SO101 VLA-JEPA action baseline, not the
 These files exist to make the next implementation steps concrete, but they are not complete LARA components and are disabled by default:
 
 - Stage-1 latent action head scaffold: posterior encoder, VQ codebook, optional code-usage regularization, context-only prior, and optional execution/prediction boundary-state transition loss (`use_latent_action_head: false`, `lara_use_transition_head: false`).
-- Stage-2 MoE/router scaffold: residual token experts, optional direct action-chunk experts, optional routed direct-expert action output, posterior responsibility from latent tokens or per-expert action reconstruction losses, optional posterior floor/top-r smoothing, episode-level resident pool targets from aggregated chunk responsibility, reusable episode-level resident pool masks, chunk-level top-k routing constrained to the resident pool, posterior-to-router distillation losses, balance/stickiness/expert-diversity/entropy stabilizers, and route collapse diagnostics (`use_lara_moe: false`).
+- Stage-2 MoE/router scaffold: residual token experts, optional direct action-chunk experts, optional routed direct-expert action output, posterior responsibility from latent tokens or per-expert action reconstruction losses, optional posterior floor/top-r smoothing, episode-level resident pool targets from aggregated chunk responsibility, reusable episode-level resident pool masks, chunk-level top-k routing constrained to the resident pool, posterior-to-router distillation losses, balance/stickiness/expert-diversity/entropy stabilizers, and route-quality aggregation metrics (`use_lara_moe: false`).
 - Utility calibration scaffold: optional action-loss utility labels, optional supervised route utility head, candidate value/progress/uncertainty/cost scoring helpers, centered utility regression, and pairwise ranking losses (`lara_utility_loss_weight: 0.0`, `lara_utility_head_loss_weight: 0.0`, `lara_use_action_loss_utility: false`, `lara_use_utility_head: false`).
 
 ## Missing Paper Components
@@ -24,7 +24,7 @@ These files exist to make the next implementation steps concrete, but they are n
 - Production-ready latent action training and validation.
 - Validated transition-state training with real SO101 boundary targets.
 - Validated MoE action experts that directly produce or adapt action chunks in full SO101 training.
-- Closed-loop route diagnostics and subset-retention curves.
+- Closed-loop route diagnostics and subset-retention success curves.
 - Real counterfactual utility scoring from value/progress/latent-state or closed-loop evaluator signals beyond action-loss utility labels.
 - Matched-compute and matched-resident-expert evaluation protocol.
 
@@ -45,7 +45,7 @@ These files exist to make the next implementation steps concrete, but they are n
 - Trajectory ids are now passed from the LeRobot dataloader through `Lara_core` into the action adapter so batch-local episode responsibility can supervise the pool router.
 - Utility calibration loss code, optional action-loss utility labels, a generic candidate utility scorer, and an optional supervised route utility head were added behind zero default weights; they still need real counterfactual labels or closed-loop evaluator signals before they can be considered the paper's calibration stage.
 - Optional direct action-chunk expert heads and routed direct-expert action output were added behind `lara_use_direct_action_experts: false` and `lara_use_direct_action_output: false`; they still need real SO101 training validation.
-- Route-switch-rate and retained-probability-mass helpers were added for offline route diagnostics; closed-loop subset-retention success curves still need real evaluation rollouts.
+- Route-quality aggregation metrics were added for offline diagnostics: Spearman/Kendall ranking fidelity, top-k consistency, route regret, route-switch-rate, and retained probability mass; closed-loop subset-retention success curves still need real evaluation rollouts.
 - Sparse active/resident expert budget helpers were added for matched-budget reporting; real FLOPs, latency, VRAM, and success measurements still require benchmark runs.
 - Action-head auxiliary diagnostics are now returned as `metric/...` outputs and excluded from the differentiable loss sum by the trainers.
 - The websocket deployment server caches MoE `resident_pool_mask` values per `session_id` and supports `reset`, allowing closed-loop clients to reuse an episode-level expert pool across receding-horizon chunks.
