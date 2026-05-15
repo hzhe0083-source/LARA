@@ -175,6 +175,7 @@ def preflight_dataset(dataset: BenchmarkDataset) -> dict[str, object]:
     stats_path = dataset.local_dir / "meta/stats.json"
     data_dir = dataset.local_dir / "data"
     videos_dir = dataset.local_dir / "videos"
+    chunk_parquet_files = sorted(data_dir.glob("chunk-*/*.parquet")) if data_dir.exists() else []
     parquet_files = sorted(data_dir.glob("**/*.parquet")) if data_dir.exists() else []
     video_files = (
         sorted(videos_dir.glob("**/*.mp4"))
@@ -189,6 +190,7 @@ def preflight_dataset(dataset: BenchmarkDataset) -> dict[str, object]:
         "local_dir": str(dataset.local_dir),
         "meta_info_exists": info_path.exists(),
         "meta_stats_exists": stats_path.exists(),
+        "chunk_parquet_files": len(chunk_parquet_files),
         "parquet_files": len(parquet_files),
         "video_files": len(video_files),
         "local_size": _format_size(total_local_bytes),
@@ -200,11 +202,12 @@ def preflight_dataset(dataset: BenchmarkDataset) -> dict[str, object]:
         problems.append("missing meta/info.json")
     if not stats_path.exists():
         problems.append("missing meta/stats.json")
-    if not parquet_files:
-        problems.append("missing data/**/*.parquet")
-    elif len(parquet_files) < dataset.expected_data_parquet_files:
+    if not chunk_parquet_files:
+        problems.append("missing data/chunk-*/*.parquet")
+    elif len(chunk_parquet_files) < dataset.expected_data_parquet_files:
         problems.append(
-            f"expected {dataset.expected_data_parquet_files} data parquet files, found {len(parquet_files)}"
+            f"expected {dataset.expected_data_parquet_files} data chunk parquet files, "
+            f"found {len(chunk_parquet_files)}"
         )
 
     if info_path.exists():
@@ -252,6 +255,7 @@ def print_preflight(report: dict[str, object]) -> None:
         "image_keys",
         "state_keys",
         "action_shape",
+        "chunk_parquet_files",
         "parquet_files",
         "video_files",
         "local_size",

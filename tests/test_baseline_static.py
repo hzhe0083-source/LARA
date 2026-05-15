@@ -130,9 +130,10 @@ def test_benchmark_dataset_entrypoints_are_explicit():
     assert 'DEFAULT_INCLUDE_PATTERNS = ["meta/**", "data/chunk-*/*.parquet"]' in downloader_src
     assert "expected_data_parquet_files=279" in downloader_src
     assert "expected_data_parquet_files=492" in downloader_src
-    assert "expected {dataset.expected_data_parquet_files} data parquet files" in downloader_src
+    assert "expected {dataset.expected_data_parquet_files} data chunk parquet files" in downloader_src
     assert "HF_HUB_DISABLE_XET" in downloader_src
-    assert "missing data/**/*.parquet" in downloader_src
+    assert "chunk_parquet_files" in downloader_src
+    assert "missing data/chunk-*/*.parquet" in downloader_src
     assert "dataset_py: lerobot_v3_datasets" in libero_cfg
     assert "data_mix: libero100" in libero_cfg
     assert "state_dim: 9" in libero_cfg
