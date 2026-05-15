@@ -274,9 +274,19 @@ class LayerwiseFlowmatchingActionHead(nn.Module):
     def prepare_input(self, batch: dict) -> BatchFeature:
         return BatchFeature(data=batch)
 
-    def action_loss(self, pred_actions: torch.Tensor, velocity: torch.Tensor) -> torch.Tensor:
+    def action_loss(
+        self,
+        pred_actions: torch.Tensor,
+        velocity: torch.Tensor,
+        reduction: str = "mean",
+    ) -> torch.Tensor:
         loss = (pred_actions - velocity) ** 2
+        if reduction != "mean":
+            if reduction != "none":
+                raise ValueError(f"Unsupported action_loss reduction: {reduction}")
         if self.execution_loss_weight == self.prediction_loss_weight:
+            if reduction == "none":
+                return loss.mean(dim=(1, 2))
             return loss.mean()
 
         execution_horizon = min(self.execution_horizon, loss.shape[1])
@@ -287,9 +297,19 @@ class LayerwiseFlowmatchingActionHead(nn.Module):
             dtype=loss.dtype,
         )
         weights[:, :execution_horizon, :] = self.execution_loss_weight
+        if reduction == "none":
+            return (loss * weights).sum(dim=(1, 2)) / (weights.sum() * loss.shape[-1])
         return (loss * weights).sum() / (weights.sum() * loss.shape[0] * loss.shape[-1])
 
-    def forward(self, vl_embs_list: list, actions: torch.Tensor, state: torch.Tensor = None):
+    def forward(
+        self,
+        vl_embs_list: list,
+        actions: torch.Tensor,
+        state: torch.Tensor = None,
+        noise: torch.Tensor = None,
+        t: torch.Tensor = None,
+        reduction: str = "mean",
+    ):
         """
         vl_embs: list of torch.Tensor, each shape (B, seq_length, feature_dim)
         actions: shape (B, future_action_window_size, D_action)
@@ -298,9 +318,16 @@ class LayerwiseFlowmatchingActionHead(nn.Module):
         num_layers = len(vl_embs_list)
         B, L, D = vl_embs_list[0].shape
         # Embed noised action trajectory.
-        noise = torch.randn(actions.shape, device=actions.device, dtype=actions.dtype)
-        t = self.sample_time(actions.shape[0], device=actions.device, dtype=actions.dtype)
-        t = t[:, None, None]  # shape (B,1,1) for broadcast
+        noise = torch.randn(actions.shape, device=actions.device, dtype=actions.dtype) if noise is None else noise
+        noise = noise.to(device=actions.device, dtype=actions.dtype)
+        if noise.shape != actions.shape:
+            raise ValueError(f"Expected noise shape {tuple(actions.shape)}, got {tuple(noise.shape)}")
+        t = self.sample_time(actions.shape[0], device=actions.device, dtype=actions.dtype) if t is None else t
+        t = t.to(device=actions.device, dtype=actions.dtype)
+        if t.ndim == 1:
+            t = t[:, None, None]
+        if t.shape != (actions.shape[0], 1, 1):
+            raise ValueError(f"Expected t shape {(actions.shape[0], 1, 1)}, got {tuple(t.shape)}")
 
         noisy_trajectory = (1 - t) * noise + t * actions
         velocity = actions - noise
@@ -347,7 +374,7 @@ class LayerwiseFlowmatchingActionHead(nn.Module):
         pred_actions = pred[:, -actions.shape[1] :]
 
         # Slice out only the action portion of pred and target.
-        return self.action_loss(pred_actions, velocity)
+        return self.action_loss(pred_actions, velocity, reduction=reduction)
 
     @torch.no_grad()
     def predict_action(self, vl_embs_list: list, state: torch.Tensor = None) -> torch.Tensor:

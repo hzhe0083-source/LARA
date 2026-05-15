@@ -230,6 +230,11 @@ class LatentActionMoE(nn.Module):
         expert_outputs = torch.stack([expert(tokens) for expert in self.experts], dim=1)
         return torch.sum(expert_outputs * weights[:, :, None, None], dim=1)
 
+    def expert_conditioning_tokens(self, conditioning_tokens: torch.Tensor) -> torch.Tensor:
+        self._validate_inputs(conditioning_tokens, latent_action_tokens=None)
+        expert_outputs = torch.stack([expert(conditioning_tokens) for expert in self.experts], dim=1)
+        return conditioning_tokens[:, None, :, :] + expert_outputs
+
     def _validate_inputs(
         self,
         conditioning_tokens: torch.Tensor,

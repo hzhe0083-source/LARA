@@ -65,6 +65,7 @@ def test_optional_moe_router_stage_two_exists():
     moe_src = read("Lara/model/modules/action_model/lara_moe.py")
     adapter_src = read("Lara/model/framework/act.py")
     config_src = read("scripts/config/lara_so101_ft.yaml")
+    flow_src = read("Lara/model/modules/action_model/GR00T_ActionHeader.py")
     gap = read("document/IMPLEMENTATION_GAP.md")
     assert "class LatentActionMoE" in moe_src
     assert "class PosteriorResponsibilityHead" in moe_src
@@ -75,16 +76,22 @@ def test_optional_moe_router_stage_two_exists():
     assert "def masked_kl_div" in moe_src
     assert "def posterior_from_expert_losses" in moe_src
     assert "expert_action_losses" in moe_src
+    assert "def expert_conditioning_tokens" in moe_src
     assert "episode_pool_size" in moe_src
     assert "active_mask = topk_mask(router_logits, top_k=self.top_k, allowed_mask=pool_mask)" in moe_src
     assert "pool_loss_weight" in moe_src
     assert "posterior_temperature" in moe_src
+    assert "reduction: str = \"mean\"" in flow_src
+    assert "reduction=\"none\"" in adapter_src
+    assert "def _expert_action_losses" in adapter_src
+    assert "with torch.no_grad()" in adapter_src
     assert "use_lara_moe" in adapter_src
     assert "moe_router_loss" in adapter_src
     assert "moe_pool_distill_loss" in adapter_src
     assert "use_lara_moe: false" in config_src
     assert "lara_episode_pool_size: 4" in config_src
     assert "lara_posterior_temperature: 1.0" in config_src
+    assert "lara_use_expert_loss_posterior: true" in config_src
     assert "Stage-2 MoE/router scaffold" in gap
 
 
@@ -99,4 +106,4 @@ def test_paper_gap_is_explicit():
     assert "Episode-level pool router" in gap
     assert "chunk-level top-k routing constrained to the resident pool" in gap
     assert "Episode-level pool router" in gap
-    assert "real per-expert action losses" in gap
+    assert "per-expert action-loss posterior path" in gap

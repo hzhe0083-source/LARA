@@ -29,13 +29,12 @@ Completed in code:
 Experimental scaffolding exists but is not complete or validated:
 
 - Stage-1 latent action head scaffold with posterior encoder, VQ codebook, and context-only prior (`use_latent_action_head: false` by default).
-- Stage-2 MoE/router scaffold with residual experts, posterior responsibility from latent tokens or expert reconstruction losses, episode-level resident pool selection, and chunk-level top-k routing inside the resident pool (`use_lara_moe: false` by default).
+- Stage-2 MoE/router scaffold with residual experts, posterior responsibility from latent tokens or per-expert action reconstruction losses, episode-level resident pool selection, and chunk-level top-k routing inside the resident pool (`use_lara_moe: false` by default).
 
 Described in the paper but not implemented yet:
 
 - production-ready latent action training
 - MoE action experts
-- wiring per-expert action reconstruction losses into the full action decoder training path
 - trajectory-level pool-router training from aggregated posterior responsibility
 - utility calibration
 - matched-compute and matched-resident-expert experiments

@@ -83,6 +83,31 @@ class LatentActionMoETest(unittest.TestCase):
         self.assertEqual(posterior.argmax(dim=-1).tolist(), [0, 1])
         self.assertTrue(torch.allclose(posterior.sum(dim=-1), torch.ones(2)))
 
+    def test_forward_uses_expert_action_losses_as_posterior_teacher(self):
+        torch.manual_seed(0)
+        moe = LatentActionMoE(
+            hidden_size=8,
+            num_experts=3,
+            top_k=2,
+            episode_pool_size=3,
+            expert_hidden_size=16,
+            router_hidden_size=12,
+            posterior_temperature=0.5,
+        )
+
+        conditioning_tokens = torch.randn(2, 4, 8)
+        expert_losses = torch.tensor(
+            [
+                [0.1, 3.0, 2.0],
+                [2.0, 0.2, 4.0],
+            ]
+        )
+        output = moe(conditioning_tokens, expert_action_losses=expert_losses)
+
+        self.assertEqual(output.posterior_probs.argmax(dim=-1).tolist(), [0, 1])
+        self.assertTrue(torch.allclose(output.posterior_probs.sum(dim=-1), torch.ones(2)))
+        self.assertGreaterEqual(float(output.loss.detach()), 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()

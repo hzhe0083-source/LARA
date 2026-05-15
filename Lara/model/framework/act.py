@@ -36,6 +36,7 @@ class ActionHeadAdapter(nn.Module):
         self.max_latent_action_tokens = action_cfg.get("max_latent_action_tokens", None)
         self.use_latent_action_head = action_cfg.get("use_latent_action_head", False)
         self.use_lara_moe = action_cfg.get("use_lara_moe", False)
+        self.use_expert_loss_posterior = action_cfg.get("lara_use_expert_loss_posterior", True)
         self.repeated_diffusion_steps = action_cfg.get(
             "repeated_diffusion_steps",
             self.config.trainer.get("repeated_diffusion_steps", 4) if self.config and self.config.trainer else 4,
@@ -175,7 +176,17 @@ class ActionHeadAdapter(nn.Module):
         actions_target_repeated = actions_target.repeat_interleave(self.repeated_diffusion_steps, dim=0)
         conditioning_tokens = self._conditioning_tokens(embodied_action_tokens, latent_action_tokens)
         if self.lara_moe is not None:
-            moe_output = self.lara_moe(conditioning_tokens, latent_action_tokens=latent_action_tokens)
+            with torch.no_grad():
+                expert_action_losses = (
+                    self._expert_action_losses(conditioning_tokens, actions_target, state)
+                    if self.use_expert_loss_posterior
+                    else None
+                )
+            moe_output = self.lara_moe(
+                conditioning_tokens,
+                latent_action_tokens=latent_action_tokens,
+                expert_action_losses=expert_action_losses,
+            )
             conditioning_tokens = moe_output.tokens
             aux_losses.update(
                 {
@@ -210,6 +221,36 @@ class ActionHeadAdapter(nn.Module):
             + aux_losses.get("moe_router_loss", 0.0)
         )
         return aux_losses
+
+    def _expert_action_losses(self, conditioning_tokens, actions_target, state=None) -> torch.Tensor:
+        if self.lara_moe is None:
+            raise RuntimeError("_expert_action_losses requires lara_moe")
+        expert_tokens = self.lara_moe.expert_conditioning_tokens(conditioning_tokens)
+        batch_size, num_experts, token_count, hidden_size = expert_tokens.shape
+        flat_tokens = expert_tokens.reshape(batch_size * num_experts, token_count, hidden_size)
+        flat_actions = actions_target[:, None, :, :].expand(-1, num_experts, -1, -1)
+        flat_actions = flat_actions.reshape(batch_size * num_experts, actions_target.shape[1], actions_target.shape[2])
+
+        noise = torch.randn(actions_target.shape, device=actions_target.device, dtype=actions_target.dtype)
+        t = self.action_model.sample_time(actions_target.shape[0], device=actions_target.device, dtype=actions_target.dtype)
+        noise = noise[:, None, :, :].expand(-1, num_experts, -1, -1).reshape_as(flat_actions)
+        t = t[:, None].expand(-1, num_experts).reshape(batch_size * num_experts)
+
+        state_tensor = self._state_to_tensor(state, conditioning_tokens)
+        flat_state = None
+        if state_tensor is not None:
+            flat_state = state_tensor[:, None, :, :].expand(-1, num_experts, -1, -1)
+            flat_state = flat_state.reshape(batch_size * num_experts, state_tensor.shape[1], state_tensor.shape[2])
+
+        losses = self.action_model(
+            flat_tokens,
+            flat_actions,
+            flat_state,
+            noise=noise,
+            t=t,
+            reduction="none",
+        )
+        return losses.view(batch_size, num_experts)
 
     @torch.no_grad()
     def predict_action(
