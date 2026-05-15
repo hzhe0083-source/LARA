@@ -33,8 +33,26 @@ class SummarizeLARAProtocolTest(unittest.TestCase):
             input_path.write_text(
                 "\n".join(
                     [
-                        json.dumps({"resident_fraction": 0.5, "success": 1, "flops": 4.0}),
-                        json.dumps({"resident_fraction": 1.0, "success": 1, "flops": 8.0}),
+                        json.dumps(
+                            {
+                                "resident_fraction": 0.5,
+                                "success": 1,
+                                "flops": 4.0,
+                                "router_probs_sequence": [[0.9, 0.1], [0.8, 0.2]],
+                                "active_mask_sequence": [[True, False], [True, False]],
+                                "pool_mask_sequence": [[True, True], [True, True]],
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "resident_fraction": 1.0,
+                                "success": 1,
+                                "flops": 8.0,
+                                "router_probs_sequence": [[0.9, 0.1], [0.2, 0.8]],
+                                "active_mask_sequence": [[True, False], [False, True]],
+                                "pool_mask_sequence": [[True, True], [True, True]],
+                            }
+                        ),
                     ]
                 ),
                 encoding="utf-8",
@@ -68,6 +86,7 @@ class SummarizeLARAProtocolTest(unittest.TestCase):
             self.assertEqual(summary["benchmark"], "SO101")
             self.assertEqual(summary["num_records_by_fraction"], {"0.5": 1, "1": 1})
             self.assertEqual(summary["rows"][0]["active_experts"], 2)
+            self.assertAlmostEqual(summary["route_diagnostics_by_fraction"]["route_switch_rate"]["1"], 1.0)
 
 
 if __name__ == "__main__":

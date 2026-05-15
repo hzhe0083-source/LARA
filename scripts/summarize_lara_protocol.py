@@ -2,7 +2,10 @@
 """Summarize LARA rollout records into paper protocol rows.
 
 Input can be either a JSON list of records or newline-delimited JSON. Each
-record must contain a resident fraction plus a success value, for example:
+record must contain a resident fraction plus a success value. If a record
+contains `router_probs_sequence`, `active_mask_sequence`, `pool_mask_sequence`,
+or `valid_mask_sequence`, route-sequence diagnostics are computed before
+aggregation.
 
 {"resident_fraction": 0.5, "success": 1, "flops": 2.1, "latency_ms": 18.4}
 """
@@ -47,6 +50,11 @@ def main() -> int:
     parser.add_argument("--shared-params", type=int, default=0)
     parser.add_argument("--params-per-expert", type=int, default=0)
     parser.add_argument("--resident-fraction-key", default="resident_fraction")
+    parser.add_argument(
+        "--no-route-sequence-diagnostics",
+        action="store_true",
+        help="Do not derive route diagnostics from raw router_probs_sequence fields.",
+    )
     args = parser.parse_args()
 
     summary = protocol_summary_from_records(
@@ -58,6 +66,7 @@ def main() -> int:
         shared_params=args.shared_params,
         params_per_expert=args.params_per_expert,
         resident_fraction_key=args.resident_fraction_key,
+        add_route_diagnostics=not args.no_route_sequence_diagnostics,
     )
     payload = json.dumps(summary, indent=2, sort_keys=True)
     if args.output:

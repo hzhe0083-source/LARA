@@ -6,9 +6,11 @@ from Lara.evaluation.lara_protocol import (
     matched_budget_flags,
     matched_compute_row,
     matched_expert_budget_flags,
+    normalize_protocol_records,
     pareto_frontier_flags,
     protocol_summary_from_records,
     resident_experts_for_fraction,
+    rollout_record_with_route_diagnostics,
     route_sequence_diagnostics,
     subset_retention_rows,
     subset_retention_success_curve,
@@ -184,6 +186,47 @@ class LARAProtocolTest(unittest.TestCase):
         self.assertAlmostEqual(diagnostics["pool_reuse_rate"], 0.5)
         self.assertAlmostEqual(diagnostics["pool_jaccard"], (1.0 + 1.0 / 3.0) / 2.0)
         self.assertAlmostEqual(diagnostics["resident_expert_fraction_mean"], 2.0 / 3.0)
+
+    def test_rollout_record_with_route_diagnostics_accepts_single_episode_sequences(self):
+        record = {
+            "resident_fraction": 0.5,
+            "success": 1,
+            "router_probs_sequence": [
+                [0.9, 0.1, 0.0],
+                [0.2, 0.7, 0.1],
+            ],
+            "active_mask_sequence": [
+                [True, False, False],
+                [False, True, False],
+            ],
+            "pool_mask_sequence": [
+                [True, True, False],
+                [True, True, False],
+            ],
+        }
+
+        enriched = rollout_record_with_route_diagnostics(record)
+
+        self.assertAlmostEqual(enriched["route_switch_rate"], 1.0)
+        self.assertAlmostEqual(enriched["active_set_switch_rate"], 1.0)
+        self.assertAlmostEqual(enriched["pool_reuse_rate"], 1.0)
+        self.assertAlmostEqual(enriched["pool_jaccard"], 1.0)
+        self.assertIn("router_probs_sequence", enriched)
+
+    def test_normalize_protocol_records_can_skip_route_diagnostics(self):
+        records = [
+            {
+                "resident_fraction": 1.0,
+                "success": 1,
+                "router_probs_sequence": [[0.1, 0.9]],
+            }
+        ]
+
+        self.assertIn("mean_router_entropy", normalize_protocol_records(records)[0])
+        self.assertNotIn(
+            "mean_router_entropy",
+            normalize_protocol_records(records, add_route_diagnostics=False)[0],
+        )
 
     def test_protocol_summary_from_records_builds_rows_curve_and_pareto_flags(self):
         records = [

@@ -516,7 +516,8 @@ rows, subset-retention curves, and compute-success Pareto flags, but it does
 not itself produce real FLOP, latency, memory, or closed-loop success
 measurements. It also includes route-sequence diagnostics for resident-pool
 reuse across receding-horizon chunks, but those diagnostics are only meaningful
-once attached to real closed-loop rollouts.
+once attached to raw router-probability and route-mask traces from real
+closed-loop rollouts.
 This is not yet the full LARA algorithm in this manuscript. In particular,
 production-ready latent-action training, validated MoE action experts,
 posterior-responsibility training, the episode-level pool router, the

@@ -123,6 +123,18 @@ def _validate_route_sequence_tensor(tensor: torch.Tensor, name: str) -> torch.Te
     return tensor
 
 
+def _route_record_sequence(record: Mapping[str, object], key: str, *, has_expert_dim: bool) -> Optional[torch.Tensor]:
+    value = record.get(key)
+    if value is None:
+        return None
+    tensor = torch.as_tensor(value)
+    if has_expert_dim and tensor.ndim == 2:
+        tensor = tensor.unsqueeze(0)
+    if not has_expert_dim and tensor.ndim == 1:
+        tensor = tensor.unsqueeze(0)
+    return tensor
+
+
 def _sequence_valid_mask(
     valid_mask: Optional[torch.Tensor],
     *,
@@ -232,6 +244,57 @@ def route_sequence_diagnostics(
         )
 
     return diagnostics
+
+
+def rollout_record_with_route_diagnostics(
+    record: Mapping[str, object],
+    *,
+    router_probs_key: str = "router_probs_sequence",
+    active_mask_key: str = "active_mask_sequence",
+    pool_mask_key: str = "pool_mask_sequence",
+    valid_mask_key: str = "valid_mask_sequence",
+    overwrite: bool = False,
+) -> dict[str, object]:
+    """Return a JSON-style rollout record with route-sequence diagnostics added.
+
+    A single record may store one episode as `[T, M]` route arrays or a batched
+    collection as `[B, T, M]`. Existing scalar diagnostic fields are preserved by
+    default so hand-verified rollout logs are not silently rewritten.
+    """
+
+    enriched = dict(record)
+    router_probs = _route_record_sequence(record, router_probs_key, has_expert_dim=True)
+    if router_probs is None:
+        return enriched
+
+    diagnostics = route_sequence_diagnostics(
+        router_probs,
+        active_mask=_route_record_sequence(record, active_mask_key, has_expert_dim=True),
+        pool_mask=_route_record_sequence(record, pool_mask_key, has_expert_dim=True),
+        valid_mask=_route_record_sequence(record, valid_mask_key, has_expert_dim=False),
+    )
+    for key, value in diagnostics.items():
+        if overwrite or key not in enriched:
+            enriched[key] = value
+    return enriched
+
+
+def normalize_protocol_records(
+    records: Sequence[Mapping[str, object]],
+    *,
+    add_route_diagnostics: bool = True,
+) -> list[dict[str, object]]:
+    """Normalize raw rollout records before paper-protocol summarization."""
+
+    normalized = []
+    for record in records:
+        if not isinstance(record, Mapping):
+            raise ValueError("records must contain mapping objects")
+        if add_route_diagnostics:
+            normalized.append(rollout_record_with_route_diagnostics(record))
+        else:
+            normalized.append(dict(record))
+    return normalized
 
 
 def resident_experts_for_fraction(total_experts: int, resident_fraction: float) -> int:
@@ -400,10 +463,12 @@ def protocol_summary_from_records(
     params_per_expert: int = 0,
     resident_fraction_key: str = "resident_fraction",
     success_keys: Sequence[str] = ("success", "success_rate"),
+    add_route_diagnostics: bool = True,
 ) -> dict[str, object]:
     if not records:
         raise ValueError("records must not be empty")
 
+    records = normalize_protocol_records(records, add_route_diagnostics=add_route_diagnostics)
     success_by_fraction = _group_record_values_by_fraction(
         records,
         resident_fraction_key=resident_fraction_key,
