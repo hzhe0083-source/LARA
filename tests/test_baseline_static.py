@@ -54,14 +54,21 @@ def test_so101_batches_expose_future_actions():
     assert "base_index=step" in dataset_src
     assert '"future_actions" if "future_actions" in examples[0] else "action"' in core_src
     assert 'actions_are_future = action_key == "future_actions"' in core_src
-    assert 'past_actions = (' in core_src
+    assert 'past_actions = optional_batch_field("past_actions")' in core_src
     assert "actions_are_future=actions_are_future" in core_src
     assert "past_actions=past_actions" in core_src
     assert '"current_state" if "current_state" in examples[0] else "state"' in core_src
     assert '"future_actions" if "future_actions" in examples[0] else "action"' in trainer_src
     assert '"current_state" if "current_state" in examples[0] else "state"' in trainer_src
-    assert 'trajectory_ids = [example["trajectory_id"] for example in examples] if "trajectory_id" in examples[0] else None' in core_src
+    assert "def optional_batch_field" in core_src
+    assert 'trajectory_ids = optional_batch_field("trajectory_id")' in core_src
     assert "trajectory_ids=trajectory_ids" in core_src
+    assert 'utility_scores = optional_batch_field("utility_scores")' in core_src
+    assert 'utility_value_targets = optional_batch_field("utility_value_targets")' in core_src
+    assert 'previous_router_probs = optional_batch_field("previous_router_probs")' in core_src
+    assert "utility_scores=utility_scores" in core_src
+    assert "utility_value_targets=utility_value_targets" in core_src
+    assert "previous_router_probs=previous_router_probs" in core_src
     assert "execution_state_target=execution_state_target" in core_src
     assert "prediction_state_target=prediction_state_target" in core_src
 

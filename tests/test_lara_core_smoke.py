@@ -84,10 +84,19 @@ class FakeActionHead(torch.nn.Module):
         past_actions=None,
         state=None,
         trajectory_ids=None,
+        pool_mask=None,
+        utility_scores=None,
+        utility_candidate_mask=None,
+        utility_cost_scores=None,
+        utility_value_targets=None,
+        utility_progress_targets=None,
+        utility_uncertainty_targets=None,
+        utility_target_mask=None,
         execution_state_target=None,
         prediction_state_target=None,
         execution_state_target_mask=None,
         prediction_state_target_mask=None,
+        previous_router_probs=None,
         return_aux=False,
     ):
         self.calls.append(
@@ -99,10 +108,19 @@ class FakeActionHead(torch.nn.Module):
                 "past_actions": past_actions,
                 "state": state,
                 "trajectory_ids": trajectory_ids,
+                "pool_mask": pool_mask,
+                "utility_scores": utility_scores,
+                "utility_candidate_mask": utility_candidate_mask,
+                "utility_cost_scores": utility_cost_scores,
+                "utility_value_targets": utility_value_targets,
+                "utility_progress_targets": utility_progress_targets,
+                "utility_uncertainty_targets": utility_uncertainty_targets,
+                "utility_target_mask": utility_target_mask,
                 "execution_state_target": execution_state_target,
                 "prediction_state_target": prediction_state_target,
                 "execution_state_target_mask": execution_state_target_mask,
                 "prediction_state_target_mask": prediction_state_target_mask,
+                "previous_router_probs": previous_router_probs,
                 "return_aux": return_aux,
             }
         )
@@ -168,6 +186,15 @@ class LaraCoreSmokeTest(unittest.TestCase):
                 "prediction_state_target": np.ones((1, 3), dtype=np.float32) * 11,
                 "prediction_state_target_mask": False,
                 "trajectory_id": 11,
+                "pool_mask": np.array([True, True, False], dtype=bool),
+                "utility_scores": np.array([1.0, 0.0, -1.0], dtype=np.float32),
+                "utility_candidate_mask": np.array([True, True, False], dtype=bool),
+                "utility_cost_scores": np.array([0.1, 0.2, 0.3], dtype=np.float32),
+                "utility_value_targets": np.array([1.0, 2.0, 3.0], dtype=np.float32),
+                "utility_progress_targets": np.array([0.5, 0.6, 0.7], dtype=np.float32),
+                "utility_uncertainty_targets": np.array([0.2, 0.1, 0.3], dtype=np.float32),
+                "utility_target_mask": np.array([True, False, True], dtype=bool),
+                "previous_router_probs": np.array([0.5, 0.3, 0.2], dtype=np.float32),
             },
             {
                 "image": ["image-1"],
@@ -183,6 +210,15 @@ class LaraCoreSmokeTest(unittest.TestCase):
                 "prediction_state_target": np.ones((1, 3), dtype=np.float32) * 21,
                 "prediction_state_target_mask": True,
                 "trajectory_id": 12,
+                "pool_mask": np.array([False, True, True], dtype=bool),
+                "utility_scores": np.array([0.0, 1.0, -1.0], dtype=np.float32),
+                "utility_candidate_mask": np.array([False, True, True], dtype=bool),
+                "utility_cost_scores": np.array([0.4, 0.5, 0.6], dtype=np.float32),
+                "utility_value_targets": np.array([2.0, 3.0, 4.0], dtype=np.float32),
+                "utility_progress_targets": np.array([0.1, 0.2, 0.3], dtype=np.float32),
+                "utility_uncertainty_targets": np.array([0.7, 0.8, 0.9], dtype=np.float32),
+                "utility_target_mask": np.array([False, True, True], dtype=bool),
+                "previous_router_probs": np.array([0.2, 0.3, 0.5], dtype=np.float32),
             },
         ]
 
@@ -206,6 +242,15 @@ class LaraCoreSmokeTest(unittest.TestCase):
         self.assertTrue(np.all(action_call["past_actions"][1] == examples[1]["past_actions"]))
         self.assertTrue(np.all(action_call["state"][0] == examples[0]["current_state"]))
         self.assertTrue(np.all(action_call["state"][1] == examples[1]["current_state"]))
+        self.assertTrue(np.all(action_call["pool_mask"][0] == examples[0]["pool_mask"]))
+        self.assertTrue(np.all(action_call["utility_scores"][1] == examples[1]["utility_scores"]))
+        self.assertTrue(np.all(action_call["utility_candidate_mask"][0] == examples[0]["utility_candidate_mask"]))
+        self.assertTrue(np.all(action_call["utility_cost_scores"][1] == examples[1]["utility_cost_scores"]))
+        self.assertTrue(np.all(action_call["utility_value_targets"][0] == examples[0]["utility_value_targets"]))
+        self.assertTrue(np.all(action_call["utility_progress_targets"][1] == examples[1]["utility_progress_targets"]))
+        self.assertTrue(np.all(action_call["utility_uncertainty_targets"][0] == examples[0]["utility_uncertainty_targets"]))
+        self.assertTrue(np.all(action_call["utility_target_mask"][1] == examples[1]["utility_target_mask"]))
+        self.assertTrue(np.all(action_call["previous_router_probs"][0] == examples[0]["previous_router_probs"]))
         self.assertTrue(np.all(action_call["execution_state_target"][0] == examples[0]["execution_state_target"]))
         self.assertTrue(np.all(action_call["prediction_state_target"][1] == examples[1]["prediction_state_target"]))
         self.assertEqual(action_call["execution_state_target_mask"], [True, True])

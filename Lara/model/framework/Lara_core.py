@@ -46,27 +46,19 @@ class Lara(baseframework):
         batch_images = [example["image"] for example in examples]
         batch_videos = [example["video"] for example in examples]
         instructions = [example["lang"] for example in examples]
+
+        def optional_batch_field(name: str):
+            return [example[name] for example in examples] if all(name in example for example in examples) else None
+
         action_key = "future_actions" if "future_actions" in examples[0] else "action"
         actions = [example[action_key] for example in examples] if action_key in examples[0] else None
         actions_are_future = action_key == "future_actions"
-        past_actions = (
-            [example["past_actions"] for example in examples]
-            if all("past_actions" in example for example in examples)
-            else None
-        )
+        past_actions = optional_batch_field("past_actions")
         state_key = "current_state" if "current_state" in examples[0] else "state"
         state = [example[state_key] for example in examples] if state_key in examples[0] else None
-        trajectory_ids = [example["trajectory_id"] for example in examples] if "trajectory_id" in examples[0] else None
-        execution_state_target = (
-            [example["execution_state_target"] for example in examples]
-            if all("execution_state_target" in example for example in examples)
-            else None
-        )
-        prediction_state_target = (
-            [example["prediction_state_target"] for example in examples]
-            if all("prediction_state_target" in example for example in examples)
-            else None
-        )
+        trajectory_ids = optional_batch_field("trajectory_id")
+        execution_state_target = optional_batch_field("execution_state_target")
+        prediction_state_target = optional_batch_field("prediction_state_target")
         execution_state_target_mask = (
             [example.get("execution_state_target_mask", True) for example in examples]
             if execution_state_target is not None
@@ -77,6 +69,15 @@ class Lara(baseframework):
             if prediction_state_target is not None
             else None
         )
+        utility_scores = optional_batch_field("utility_scores")
+        utility_candidate_mask = optional_batch_field("utility_candidate_mask")
+        utility_cost_scores = optional_batch_field("utility_cost_scores")
+        utility_value_targets = optional_batch_field("utility_value_targets")
+        utility_progress_targets = optional_batch_field("utility_progress_targets")
+        utility_uncertainty_targets = optional_batch_field("utility_uncertainty_targets")
+        utility_target_mask = optional_batch_field("utility_target_mask")
+        previous_router_probs = optional_batch_field("previous_router_probs")
+        pool_mask = optional_batch_field("pool_mask")
 
         if actions is not None:
             prompt_template = self.config.datasets.vla_data.get("CoT_prompt", "")
@@ -105,10 +106,19 @@ class Lara(baseframework):
                 past_actions=past_actions,
                 state=state,
                 trajectory_ids=trajectory_ids,
+                pool_mask=pool_mask,
+                utility_scores=utility_scores,
+                utility_candidate_mask=utility_candidate_mask,
+                utility_cost_scores=utility_cost_scores,
+                utility_value_targets=utility_value_targets,
+                utility_progress_targets=utility_progress_targets,
+                utility_uncertainty_targets=utility_uncertainty_targets,
+                utility_target_mask=utility_target_mask,
                 execution_state_target=execution_state_target,
                 prediction_state_target=prediction_state_target,
                 execution_state_target_mask=execution_state_target_mask,
                 prediction_state_target_mask=prediction_state_target_mask,
+                previous_router_probs=previous_router_probs,
                 return_aux=True,
             )
 
