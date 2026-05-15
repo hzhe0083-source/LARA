@@ -17,7 +17,7 @@ These files exist to make the next implementation steps concrete, but they are n
 
 - Stage-1 latent action head scaffold: posterior encoder, VQ codebook, and context-only prior (`use_latent_action_head: false`).
 - Stage-2 MoE/router scaffold: residual token experts, optional direct action-chunk experts, posterior responsibility from latent tokens or per-expert action reconstruction losses, episode-level resident pool targets from aggregated chunk responsibility, chunk-level top-k routing constrained to the resident pool, posterior-to-router distillation losses, balance/stickiness stabilizers, and route collapse diagnostics (`use_lara_moe: false`).
-- Utility calibration scaffold: optional route utility head, candidate value/progress/uncertainty/cost scoring helpers, centered utility regression, and pairwise ranking losses (`lara_utility_loss_weight: 0.0`, `lara_use_utility_head: false`).
+- Utility calibration scaffold: optional supervised route utility head, candidate value/progress/uncertainty/cost scoring helpers, centered utility regression, and pairwise ranking losses (`lara_utility_loss_weight: 0.0`, `lara_utility_head_loss_weight: 0.0`, `lara_use_utility_head: false`).
 
 ## Missing Paper Components
 
@@ -41,7 +41,7 @@ These files exist to make the next implementation steps concrete, but they are n
 - Stage-1 latent action head code was added behind `use_latent_action_head`; it is not yet validated in a full training run.
 - Stage-2 MoE/router code was added behind `use_lara_moe`; it now has torch tests for resident-pool routing, chunk top-k routing, per-expert action-loss posterior responsibility, and episode-level pool target aggregation, but it is not yet validated in a full training run.
 - Trajectory ids are now passed from the LeRobot dataloader through `Lara_core` into the action adapter so batch-local episode responsibility can supervise the pool router.
-- Utility calibration loss code, a generic candidate utility scorer, and an optional route utility head were added behind zero default weights; they still need real counterfactual labels or closed-loop evaluator signals before they can be considered the paper's calibration stage.
+- Utility calibration loss code, a generic candidate utility scorer, and an optional supervised route utility head were added behind zero default weights; they still need real counterfactual labels or closed-loop evaluator signals before they can be considered the paper's calibration stage.
 - Optional direct action-chunk expert heads were added behind `lara_use_direct_action_experts: false`; they still need real SO101 training validation.
 - Route-switch-rate and retained-probability-mass helpers were added for offline route diagnostics; closed-loop subset-retention success curves still need real evaluation rollouts.
 - Sparse active/resident expert budget helpers were added for matched-budget reporting; real FLOPs, latency, VRAM, and success measurements still require benchmark runs.

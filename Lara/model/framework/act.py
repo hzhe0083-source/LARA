@@ -79,6 +79,7 @@ class ActionHeadAdapter(nn.Module):
                 pool_loss_weight=action_cfg.get("lara_pool_loss_weight", 1.0),
                 utility_loss_weight=action_cfg.get("lara_utility_loss_weight", 0.0),
                 utility_rank_loss_weight=action_cfg.get("lara_utility_rank_loss_weight", 0.0),
+                utility_head_loss_weight=action_cfg.get("lara_utility_head_loss_weight", 0.0),
                 balance_loss_weight=action_cfg.get("lara_balance_loss_weight", 0.0),
                 stickiness_loss_weight=action_cfg.get("lara_stickiness_loss_weight", 0.0),
                 use_utility_head=action_cfg.get("lara_use_utility_head", False),
@@ -205,6 +206,10 @@ class ActionHeadAdapter(nn.Module):
         utility_scores=None,
         utility_candidate_mask=None,
         utility_cost_scores=None,
+        utility_value_targets=None,
+        utility_progress_targets=None,
+        utility_uncertainty_targets=None,
+        utility_target_mask=None,
         previous_router_probs=None,
         latent_action_tokens: Optional[torch.Tensor] = None,
         return_aux: bool = False,
@@ -269,6 +274,34 @@ class ActionHeadAdapter(nn.Module):
                 if utility_cost_scores is not None
                 else None
             )
+            utility_value_targets = (
+                self._as_tensor(utility_value_targets, device=conditioning_tokens.device, dtype=conditioning_tokens.dtype)
+                if utility_value_targets is not None
+                else None
+            )
+            utility_progress_targets = (
+                self._as_tensor(
+                    utility_progress_targets,
+                    device=conditioning_tokens.device,
+                    dtype=conditioning_tokens.dtype,
+                )
+                if utility_progress_targets is not None
+                else None
+            )
+            utility_uncertainty_targets = (
+                self._as_tensor(
+                    utility_uncertainty_targets,
+                    device=conditioning_tokens.device,
+                    dtype=conditioning_tokens.dtype,
+                )
+                if utility_uncertainty_targets is not None
+                else None
+            )
+            utility_target_mask = (
+                self._as_tensor(utility_target_mask, device=conditioning_tokens.device, dtype=torch.bool)
+                if utility_target_mask is not None
+                else None
+            )
             previous_router_probs = (
                 self._as_tensor(previous_router_probs, device=conditioning_tokens.device, dtype=conditioning_tokens.dtype)
                 if previous_router_probs is not None
@@ -282,6 +315,10 @@ class ActionHeadAdapter(nn.Module):
                 utility_scores=utility_scores,
                 utility_candidate_mask=utility_candidate_mask,
                 utility_cost_scores=utility_cost_scores,
+                utility_value_targets=utility_value_targets,
+                utility_progress_targets=utility_progress_targets,
+                utility_uncertainty_targets=utility_uncertainty_targets,
+                utility_target_mask=utility_target_mask,
                 previous_router_probs=previous_router_probs,
             )
             conditioning_tokens = moe_output.tokens
@@ -292,6 +329,7 @@ class ActionHeadAdapter(nn.Module):
                     "moe_pool_distill_loss": moe_output.pool_loss,
                     "moe_utility_loss": moe_output.utility_loss,
                     "moe_utility_rank_loss": moe_output.utility_rank_loss,
+                    "moe_utility_head_loss": moe_output.utility_head_loss,
                     "moe_balance_loss": moe_output.balance_loss,
                     "moe_stickiness_loss": moe_output.stickiness_loss,
                     "moe_utility_calibration_error": moe_output.utility_calibration_error,

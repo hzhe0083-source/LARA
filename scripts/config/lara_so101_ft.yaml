@@ -49,6 +49,7 @@ framework:
     lara_pool_loss_weight: 1.0
     lara_utility_loss_weight: 0.0
     lara_utility_rank_loss_weight: 0.0
+    lara_utility_head_loss_weight: 0.0
     lara_use_utility_head: false
     lara_utility_hidden_dim: 1024
     lara_utility_progress_weight: 1.0

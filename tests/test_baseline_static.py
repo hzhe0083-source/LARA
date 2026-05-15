@@ -98,6 +98,7 @@ def test_optional_moe_router_stage_two_exists():
     assert "def candidate_route_utility" in moe_src
     assert "def aggregate_episode_responsibilities" in moe_src
     assert "def utility_calibration_objective" in moe_src
+    assert "def utility_component_supervision_loss" in moe_src
     assert "expert_action_losses" in moe_src
     assert "pool_target_probs" in moe_src
     assert "utility_scores" in moe_src
@@ -127,6 +128,7 @@ def test_optional_moe_router_stage_two_exists():
     assert "lara_episode_pool_size: 4" in config_src
     assert "lara_utility_loss_weight: 0.0" in config_src
     assert "lara_utility_rank_loss_weight: 0.0" in config_src
+    assert "lara_utility_head_loss_weight: 0.0" in config_src
     assert "lara_use_utility_head: false" in config_src
     assert "lara_balance_loss_weight: 0.0" in config_src
     assert "lara_stickiness_loss_weight: 0.0" in config_src

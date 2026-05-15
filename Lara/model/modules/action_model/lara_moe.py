@@ -14,6 +14,7 @@ class MoEConditionerOutput:
     pool_loss: torch.Tensor
     utility_loss: torch.Tensor
     utility_rank_loss: torch.Tensor
+    utility_head_loss: torch.Tensor
     balance_loss: torch.Tensor
     stickiness_loss: torch.Tensor
     utility_calibration_error: torch.Tensor
@@ -328,6 +329,40 @@ def utility_calibration_objective(
     return regression_loss + rank_loss_weight * rank_loss, rank_loss, calibration_error
 
 
+def utility_component_supervision_loss(
+    value_scores: torch.Tensor,
+    progress_scores: torch.Tensor,
+    uncertainty_scores: torch.Tensor,
+    value_targets: Optional[torch.Tensor] = None,
+    progress_targets: Optional[torch.Tensor] = None,
+    uncertainty_targets: Optional[torch.Tensor] = None,
+    target_mask: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    predictions_and_targets = [
+        (value_scores, value_targets),
+        (progress_scores, progress_targets),
+        (uncertainty_scores, uncertainty_targets),
+    ]
+    reference = value_scores
+    for prediction, target in predictions_and_targets:
+        if prediction.shape != reference.shape:
+            raise ValueError(f"Utility predictions must share shape {tuple(reference.shape)}")
+        if target is not None and target.shape != reference.shape:
+            raise ValueError(f"Utility targets must have shape {tuple(reference.shape)}, got {tuple(target.shape)}")
+    if target_mask is None:
+        target_mask = torch.ones_like(reference, dtype=torch.bool)
+    else:
+        target_mask = _validate_expert_mask(target_mask, reference, "target_mask")
+
+    losses = []
+    for prediction, target in predictions_and_targets:
+        if target is not None:
+            losses.append(F.smooth_l1_loss(prediction[target_mask], target.detach()[target_mask]))
+    if not losses:
+        return reference.new_zeros(())
+    return torch.stack(losses).mean()
+
+
 class ResidualActionExpert(nn.Module):
     """Small token adapter used as a lightweight action expert."""
 
@@ -556,6 +591,7 @@ class LatentActionMoE(nn.Module):
         pool_loss_weight: float = 1.0,
         utility_loss_weight: float = 0.0,
         utility_rank_loss_weight: float = 0.0,
+        utility_head_loss_weight: float = 0.0,
         balance_loss_weight: float = 0.0,
         stickiness_loss_weight: float = 0.0,
         use_utility_head: bool = False,
@@ -576,6 +612,7 @@ class LatentActionMoE(nn.Module):
         self.pool_loss_weight = pool_loss_weight
         self.utility_loss_weight = utility_loss_weight
         self.utility_rank_loss_weight = utility_rank_loss_weight
+        self.utility_head_loss_weight = utility_head_loss_weight
         self.balance_loss_weight = balance_loss_weight
         self.stickiness_loss_weight = stickiness_loss_weight
         self.posterior_temperature = posterior_temperature
@@ -674,6 +711,10 @@ class LatentActionMoE(nn.Module):
         utility_scores: Optional[torch.Tensor] = None,
         utility_candidate_mask: Optional[torch.Tensor] = None,
         utility_cost_scores: Optional[torch.Tensor] = None,
+        utility_value_targets: Optional[torch.Tensor] = None,
+        utility_progress_targets: Optional[torch.Tensor] = None,
+        utility_uncertainty_targets: Optional[torch.Tensor] = None,
+        utility_target_mask: Optional[torch.Tensor] = None,
         previous_router_probs: Optional[torch.Tensor] = None,
     ) -> MoEConditionerOutput:
         self._validate_inputs(conditioning_tokens, latent_action_tokens)
@@ -731,6 +772,18 @@ class LatentActionMoE(nn.Module):
             utility_value_scores = utility_output["value_scores"]
             utility_progress_scores = utility_output["progress_scores"]
             utility_uncertainty_scores = utility_output["uncertainty_scores"]
+        if utility_value_scores is not None:
+            utility_head_loss = utility_component_supervision_loss(
+                value_scores=utility_value_scores,
+                progress_scores=utility_progress_scores,
+                uncertainty_scores=utility_uncertainty_scores,
+                value_targets=utility_value_targets,
+                progress_targets=utility_progress_targets,
+                uncertainty_targets=utility_uncertainty_targets,
+                target_mask=utility_target_mask,
+            )
+        else:
+            utility_head_loss = router_logits.new_zeros(())
         if utility_scores is None:
             utility_loss = router_logits.new_zeros(())
             utility_rank_loss = router_logits.new_zeros(())
@@ -752,6 +805,7 @@ class LatentActionMoE(nn.Module):
             self.router_loss_weight * route_loss
             + self.pool_loss_weight * pool_loss
             + self.utility_loss_weight * utility_loss
+            + self.utility_head_loss_weight * utility_head_loss
             + self.balance_loss_weight * balance_loss
             + self.stickiness_loss_weight * stickiness_loss
         )
@@ -768,6 +822,7 @@ class LatentActionMoE(nn.Module):
             pool_loss=pool_loss.detach(),
             utility_loss=utility_loss.detach(),
             utility_rank_loss=utility_rank_loss.detach(),
+            utility_head_loss=utility_head_loss.detach(),
             balance_loss=balance_loss.detach(),
             stickiness_loss=stickiness_loss.detach(),
             utility_calibration_error=utility_calibration_error.detach(),

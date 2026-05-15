@@ -17,6 +17,7 @@ from Lara.model.modules.action_model.lara_moe import (
     sparse_route_budget,
     uniform_balance_loss,
     utility_calibration_objective,
+    utility_component_supervision_loss,
 )
 
 
@@ -278,6 +279,49 @@ class LatentActionMoETest(unittest.TestCase):
         self.assertEqual(output.utility_scores.shape, (2, 3))
         self.assertGreater(float(output.utility_loss), 0.0)
         self.assertTrue(torch.allclose(output.loss, output.utility_loss))
+
+    def test_utility_component_supervision_loss_uses_available_targets(self):
+        value = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+        progress = torch.tensor([[0.5, 1.5], [2.5, 3.5]])
+        uncertainty = torch.ones(2, 2)
+        target_mask = torch.tensor([[True, False], [True, True]])
+
+        loss = utility_component_supervision_loss(
+            value_scores=value,
+            progress_scores=progress,
+            uncertainty_scores=uncertainty,
+            value_targets=torch.zeros(2, 2),
+            progress_targets=torch.ones(2, 2),
+            target_mask=target_mask,
+        )
+
+        self.assertGreater(float(loss), 0.0)
+
+    def test_forward_can_supervise_utility_head_components(self):
+        torch.manual_seed(0)
+        moe = LatentActionMoE(
+            hidden_size=8,
+            num_experts=3,
+            top_k=2,
+            episode_pool_size=3,
+            expert_hidden_size=16,
+            router_hidden_size=12,
+            use_utility_head=True,
+            utility_hidden_size=12,
+            utility_head_loss_weight=0.5,
+        )
+        conditioning_tokens = torch.randn(2, 4, 8)
+        value_targets = torch.zeros(2, 3)
+        progress_targets = torch.ones(2, 3)
+
+        output = moe(
+            conditioning_tokens,
+            utility_value_targets=value_targets,
+            utility_progress_targets=progress_targets,
+        )
+
+        self.assertGreater(float(output.utility_head_loss), 0.0)
+        self.assertTrue(torch.allclose(output.loss, 0.5 * output.utility_head_loss))
 
     def test_action_chunk_expert_bank_produces_per_expert_losses(self):
         torch.manual_seed(0)
