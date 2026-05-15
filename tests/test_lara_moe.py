@@ -543,6 +543,33 @@ class LatentActionMoETest(unittest.TestCase):
         self.assertTrue(torch.allclose(components["full"], torch.tensor([[20.0 / 3.0, 1.0]])))
         self.assertTrue(torch.allclose(components["weighted"], torch.tensor([[10.0 / 3.0, 2.0 / 3.0]])))
 
+    def test_action_chunk_expert_bank_masks_padded_action_steps(self):
+        pred_actions = torch.tensor(
+            [
+                [
+                    [[1.0], [100.0], [100.0]],
+                    [[2.0], [200.0], [200.0]],
+                ]
+            ]
+        )
+        target_actions = torch.zeros(1, 3, 1)
+        action_mask = torch.tensor([[True, False, False]])
+
+        components = ActionChunkExpertBank.reconstruction_loss_components(
+            pred_actions,
+            target_actions,
+            action_mask=action_mask,
+        )
+        routed_loss = ActionChunkExpertBank.action_chunk_loss(
+            pred_actions[:, 0, :, :],
+            target_actions,
+            action_mask=action_mask,
+        )
+
+        self.assertTrue(torch.allclose(components["full"], torch.tensor([[1.0, 4.0]])))
+        self.assertTrue(torch.allclose(components["weighted"], torch.tensor([[1.0, 4.0]])))
+        self.assertTrue(torch.allclose(routed_loss, torch.tensor(1.0)))
+
     def test_utility_component_targets_split_value_progress_and_uncertainty(self):
         full_losses = torch.tensor([[0.1, 1.0, 2.0]])
         execution_losses = torch.tensor([[0.1, 2.0, 3.0]])

@@ -282,15 +282,24 @@ class FlowmatchingActionHead(nn.Module):
         pred_actions: torch.Tensor,
         velocity: torch.Tensor,
         reduction: str = "mean",
+        action_mask: torch.Tensor = None,
     ) -> torch.Tensor:
         loss = (pred_actions - velocity) ** 2
         if reduction != "mean":
             if reduction != "none":
                 raise ValueError(f"Unsupported action_loss reduction: {reduction}")
+        if action_mask is not None:
+            if action_mask.ndim == 3 and action_mask.shape[-1] == 1:
+                action_mask = action_mask.squeeze(-1)
+            if action_mask.shape != loss.shape[:2]:
+                raise ValueError(f"Expected action_mask shape {tuple(loss.shape[:2])}, got {tuple(action_mask.shape)}")
+            mask = action_mask.to(device=loss.device, dtype=loss.dtype).unsqueeze(-1)
+        else:
+            mask = torch.ones(loss.shape[:2], device=loss.device, dtype=loss.dtype).unsqueeze(-1)
         if self.execution_loss_weight == self.prediction_loss_weight:
             if reduction == "none":
-                return loss.mean(dim=(1, 2))
-            return loss.mean()
+                return (loss * mask).sum(dim=(1, 2)) / (mask.sum(dim=(1, 2)) * loss.shape[-1]).clamp_min(1.0)
+            return (loss * mask).sum() / (mask.sum() * loss.shape[-1]).clamp_min(1.0)
 
         execution_horizon = min(self.execution_horizon, loss.shape[1])
         weights = torch.full(
@@ -300,9 +309,10 @@ class FlowmatchingActionHead(nn.Module):
             dtype=loss.dtype,
         )
         weights[:, :execution_horizon, :] = self.execution_loss_weight
+        weights = weights * mask
         if reduction == "none":
-            return (loss * weights).sum(dim=(1, 2)) / (weights.sum() * loss.shape[-1])
-        return (loss * weights).sum() / (weights.sum() * loss.shape[0] * loss.shape[-1])
+            return (loss * weights).sum(dim=(1, 2)) / (weights.sum(dim=(1, 2)) * loss.shape[-1]).clamp_min(1.0)
+        return (loss * weights).sum() / (weights.sum() * loss.shape[-1]).clamp_min(1.0)
 
     def forward(
         self,
@@ -312,6 +322,7 @@ class FlowmatchingActionHead(nn.Module):
         noise: torch.Tensor = None,
         t: torch.Tensor = None,
         reduction: str = "mean",
+        action_mask: torch.Tensor = None,
     ):
         """
         vl_embs: shape (B, seq_length, feature_dim)
@@ -333,6 +344,12 @@ class FlowmatchingActionHead(nn.Module):
 
         noisy_trajectory = (1 - t) * noise + t * actions
         velocity = actions - noise
+        if action_mask is not None:
+            action_mask_for_inputs = action_mask.to(device=actions.device, dtype=actions.dtype)
+            if action_mask_for_inputs.ndim == 2:
+                action_mask_for_inputs = action_mask_for_inputs[:, :, None]
+            noisy_trajectory = noisy_trajectory * action_mask_for_inputs
+            velocity = velocity * action_mask_for_inputs
 
         # Convert (continuous) t -> discrete if needed
         t_discretized = self.discretize_time(t[:, 0, 0])
@@ -365,7 +382,7 @@ class FlowmatchingActionHead(nn.Module):
         pred_actions = pred[:, -actions.shape[1] :]
 
         # Slice out only the action portion of pred and target.
-        return self.action_loss(pred_actions, velocity, reduction=reduction)
+        return self.action_loss(pred_actions, velocity, reduction=reduction, action_mask=action_mask)
 
     @torch.no_grad()
     def predict_action(self, vl_embs: torch.Tensor, state: torch.Tensor = None) -> torch.Tensor:

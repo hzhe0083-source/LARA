@@ -1595,6 +1595,21 @@ class LeRobotMixtureDataset(Dataset):
         state = np.concatenate(state_parts, axis=1).astype(np.float16)
         return state[0:1], bool(valid)
 
+    def _future_action_mask(
+        self,
+        dataset: LeRobotSingleDataset,
+        trajectory_id: int,
+        base_index: int,
+        horizon: int,
+    ) -> np.ndarray:
+        if not dataset.modality_keys.get("action"):
+            return np.ones(horizon, dtype=bool)
+        action_key = dataset.modality_keys["action"][0]
+        step_indices = dataset.delta_indices[action_key][:horizon] + base_index
+        trajectory_index = dataset.get_trajectory_index(trajectory_id)
+        trajectory_length = dataset.trajectory_lengths[trajectory_index]
+        return ((step_indices >= 0) & (step_indices < trajectory_length)).astype(bool)
+
     def __getitem__(self, index: int) -> dict:
         """Get the data for a single trajectory and start index.
 
@@ -1638,6 +1653,12 @@ class LeRobotMixtureDataset(Dataset):
                 return_dict = dict(
                     action=action,
                     future_actions=action,
+                    future_action_mask=self._future_action_mask(
+                        dataset,
+                        trajectory_name,
+                        step,
+                        action.shape[0],
+                    ),
                     trajectory_id=trajectory_name,
                     base_index=step,
                     image=images,

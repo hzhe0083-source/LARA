@@ -1,6 +1,6 @@
 # LARA Implementation Gap
 
-This repository currently implements the SO101 VLA-JEPA action baseline, not the full LARA paper method.
+This repository currently implements the SO101 VLA-JEPA action baseline and default-off research scaffolds, not the full LARA paper method. The MoE and two-level routing code paths are not yet paper-complete.
 
 ## Implemented Baseline
 
@@ -10,10 +10,11 @@ This repository currently implements the SO101 VLA-JEPA action baseline, not the
 - Latent-token conditioned flow-matching action head.
 - Prediction horizon `H_p = 60` and execution horizon `H_e = 10` configuration.
 - Weighted action loss for executable prefix versus long-horizon tail.
+- `future_action_mask` propagation for SO101/LeRobot batches so padded future steps at trajectory boundaries do not supervise action, latent, transition, utility-proxy, or direct-expert reconstruction losses.
 
 ## Experimental Scaffolding
 
-These files exist to make the next implementation steps concrete, but they are not complete LARA components and are disabled by default:
+These files exist to make the next implementation steps concrete, but they are not complete LARA components and are disabled by default. They should be read as scaffolding and diagnostic wiring, not as evidence that the paper method is finished:
 
 - Stage-1 latent action head scaffold: posterior encoder, VQ codebook, optional code-usage regularization, context-only prior, and optional execution/prediction boundary-state transition loss (`use_latent_action_head: false`, `lara_use_transition_head: false`).
 - Stage-2 MoE/router scaffold: residual token experts, optional direct action-chunk experts, optional routed direct-expert action output, posterior responsibility from latent tokens or per-expert action reconstruction losses, optional posterior floor/top-r smoothing, episode-level resident pool targets from aggregated chunk responsibility, reusable episode-level resident pool masks, budget-conditioned episode pool routing, optional training-time randomized resident-pool size, chunk-level top-k routing constrained to the resident pool, optional inference stickiness, posterior-to-router distillation losses, balance/stickiness/expert-diversity/entropy stabilizers, and route-quality aggregation metrics (`use_lara_moe: false`).
@@ -24,6 +25,7 @@ These files exist to make the next implementation steps concrete, but they are n
 - Production-ready latent action training and validation.
 - Validated transition-state training with real SO101 boundary targets.
 - Validated MoE action experts that directly produce or adapt action chunks in full SO101 training.
+- Validated two-level routing: episode-level resident pool selection, chunk-level top-k routing inside that pool, and resident-pool reuse across real SO101 rollout horizons.
 - Closed-loop route diagnostics and subset-retention success curves.
 - Real counterfactual utility scoring from latent-state or closed-loop evaluator signals beyond action reconstruction labels.
 - Validated matched-compute and matched-resident-expert experiments with real FLOPs, latency, VRAM, and rollout success.
@@ -40,6 +42,7 @@ These files exist to make the next implementation steps concrete, but they are n
 - `ActionHeadAdapter` has a dummy-batch forward/predict smoke test for basic loss and output shape.
 - SO101 batches now expose `future_actions` and `current_state` explicitly, with `action` and `state` retained as compatibility aliases.
 - `future_actions` is now treated as a strict future-only target and must match `action_horizon`; only the legacy `action` fallback is tail-sliced.
+- SO101/LeRobot batches now expose `future_action_mask`; the action adapter passes it into flow-matching losses, latent-action posterior pooling, transition/action utility proxies, and direct-expert reconstruction losses so padded trajectory-end steps do not become training targets.
 - The LeRobot v3 collator can be imported without the optional `lerobot` package and has unit coverage for explicit `future_actions/current_state` aliases.
 - Action labels remain fp32 in the adapter.
 - Static pytest coverage was added for the baseline guardrails in `tests/test_baseline_static.py`.
@@ -68,7 +71,7 @@ These files exist to make the next implementation steps concrete, but they are n
 - Action target alignment is explicit for the current SO101 dataloader via strict `future_actions`. Future datasets that return past/current/future actions together must split out an `action_horizon`-length `future_actions` window before calling the action adapter.
 - Full `Lara` model instantiation with real Qwen/V-JEPA checkpoints and real-component one-step training smoke tests now have a script entry point. The current local `--run-step --attn-implementation sdpa` checks complete dummy forward/backward through the VLA baseline and optional latent/MoE scaffolds, real SO101 batch forward/backward through the VLA baseline plus the combined latent+MoE/direct-output scaffold, and an optional action-head-only optimizer update; the default FlashAttention path still reports missing `flash_attn`.
 - The latent action head is currently a Stage-1 skeleton that can pass real-component smoke, but it still needs empirical SO101 training validation, loss-weight tuning, and ablation against the token-conditioned flow baseline.
-- The MoE/router path is currently a Stage-2 scaffold that can pass real-component smoke with direct action experts and routed direct output, but it still needs full-train validation of direct experts and per-expert action-loss posterior paths, resident-pool success evaluation, and closed-loop validation beyond server-side pool reuse.
+- The MoE/router path is currently a Stage-2 scaffold that can pass real-component smoke with optional utility labels, but it still needs full-train validation of direct experts and per-expert action-loss posterior paths, resident-pool success evaluation, and closed-loop validation beyond server-side pool reuse. Do not describe it as the completed LARA MoE or completed two-level router yet.
 - Utility calibration currently validates action-loss utility labels, transition-state consistency utility labels, direct-expert action reconstruction component labels, generic utility composition, a trainable utility-head interface, and loss surfaces; it still does not supervise utility from true closed-loop evaluator labels.
 - The optional transition head and dataloader boundary targets are wired and can be exercised by real-batch smoke, but transition-state training still needs empirical validation and loss-weight tuning.
 - Matched-compute and matched-resident support currently covers reporting protocol and expert-budget accounting only; it does not measure real FLOPs, latency, VRAM, or closed-loop success.

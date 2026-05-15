@@ -81,6 +81,7 @@ class FakeActionHead(torch.nn.Module):
         latent_action_tokens,
         actions,
         actions_are_future=False,
+        action_mask=None,
         past_actions=None,
         state=None,
         trajectory_ids=None,
@@ -105,6 +106,7 @@ class FakeActionHead(torch.nn.Module):
                 "latent_action_tokens": latent_action_tokens,
                 "actions": actions,
                 "actions_are_future": actions_are_future,
+                "action_mask": action_mask,
                 "past_actions": past_actions,
                 "state": state,
                 "trajectory_ids": trajectory_ids,
@@ -178,6 +180,7 @@ class LaraCoreSmokeTest(unittest.TestCase):
                 "lang": "pick",
                 "action": np.ones((3, 2), dtype=np.float32),
                 "future_actions": np.ones((3, 2), dtype=np.float32) * 5,
+                "future_action_mask": np.array([True, True, False], dtype=bool),
                 "past_actions": np.ones((2, 2), dtype=np.float32) * -5,
                 "state": np.ones((1, 3), dtype=np.float32),
                 "current_state": np.ones((1, 3), dtype=np.float32) * 9,
@@ -202,6 +205,7 @@ class LaraCoreSmokeTest(unittest.TestCase):
                 "lang": "place",
                 "action": np.ones((3, 2), dtype=np.float32) * 2,
                 "future_actions": np.ones((3, 2), dtype=np.float32) * 7,
+                "future_action_mask": np.array([True, False, False], dtype=bool),
                 "past_actions": np.ones((2, 2), dtype=np.float32) * -7,
                 "state": np.ones((1, 3), dtype=np.float32) * 2,
                 "current_state": np.ones((1, 3), dtype=np.float32) * 8,
@@ -238,6 +242,8 @@ class LaraCoreSmokeTest(unittest.TestCase):
         self.assertTrue(action_call["actions_are_future"])
         self.assertTrue(np.all(action_call["actions"][0] == examples[0]["future_actions"]))
         self.assertTrue(np.all(action_call["actions"][1] == examples[1]["future_actions"]))
+        self.assertTrue(np.all(action_call["action_mask"][0] == examples[0]["future_action_mask"]))
+        self.assertTrue(np.all(action_call["action_mask"][1] == examples[1]["future_action_mask"]))
         self.assertTrue(np.all(action_call["past_actions"][0] == examples[0]["past_actions"]))
         self.assertTrue(np.all(action_call["past_actions"][1] == examples[1]["past_actions"]))
         self.assertTrue(np.all(action_call["state"][0] == examples[0]["current_state"]))

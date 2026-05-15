@@ -12,7 +12,7 @@ The SO101 path intentionally does not default to the VLA-JEPA Real-world checkpo
 
 ## Implementation Status
 
-The manuscript in [`document/LARA_collapse_paper.tex`](./document/LARA_collapse_paper.tex) describes the intended full LARA algorithm. The code in this repository has only implemented the VLA/action-baseline part so far.
+The manuscript in [`document/LARA_collapse_paper.tex`](./document/LARA_collapse_paper.tex) describes the intended full LARA algorithm. The code in this repository has implemented the SO101 VLA/action-baseline path and several default-off scaffolds, but the paper's latent-action MoE and two-level routing method should still be treated as unfinished.
 
 See [`document/IMPLEMENTATION_GAP.md`](./document/IMPLEMENTATION_GAP.md) for the current paper-to-code gap list and recommended implementation order.
 
@@ -25,12 +25,13 @@ Completed in code:
   - `action_horizon: 60`
   - `execution_horizon: 10`
   - at 30 Hz, predict 2.0 seconds and execute the first 0.333 seconds before re-observing.
+- SO101/LeRobot action-valid masks for trajectory-end chunks, so padded future action steps do not supervise the flow, latent-action, transition, or direct-expert losses.
 
 Experimental scaffolding exists but is not complete or validated:
 
-- Stage-1 latent action head scaffold with posterior encoder, VQ codebook, optional code-usage regularization, context-only prior, and optional execution/prediction boundary-state transition loss (`use_latent_action_head: false`, `lara_use_transition_head: false` by default).
-- Stage-2 MoE/router scaffold with residual token experts, optional direct action-chunk experts, optional routed direct-expert action output, posterior responsibility from latent tokens or per-expert action reconstruction losses, optional posterior floor/top-r smoothing, LeRobot trajectory ids for episode-level resident pool targets, reusable episode-level resident pool masks, budget-conditioned episode pool routing, optional training-time randomized resident-pool size, chunk-level top-k routing inside the resident pool, optional inference stickiness, optional balance/stickiness/expert-diversity/entropy stabilizers, and route-quality aggregation metrics (`use_lara_moe: false` by default).
-- Utility calibration scaffold with optional action-loss utility labels, optional transition-state consistency utility labels, optional direct-expert action reconstruction or transition-state component labels for value/progress/uncertainty targets, optional dataset-provided utility/candidate/cost/component targets, an optional supervised route utility head, candidate value/progress/uncertainty/cost scoring helpers, centered utility regression, and pairwise ranking losses (`lara_utility_loss_weight: 0.0`, `lara_utility_head_loss_weight: 0.0`, `lara_use_action_loss_utility: false`, `lara_use_state_utility: false`, `lara_use_utility_head: false` by default).
+- Stage-1 latent action head scaffold with posterior encoder, VQ codebook, optional code-usage regularization, context-only prior, and optional execution/prediction boundary-state transition loss (`use_latent_action_head: false`, `lara_use_transition_head: false` by default). This is not yet production-ready latent-action training.
+- Stage-2 MoE/router scaffold with residual token experts, optional direct action-chunk experts, optional routed direct-expert action output, posterior responsibility from latent tokens or per-expert action reconstruction losses, optional posterior floor/top-r smoothing, LeRobot trajectory ids for episode-level resident pool targets, reusable episode-level resident pool masks, budget-conditioned episode pool routing, optional training-time randomized resident-pool size, chunk-level top-k routing inside the resident pool, optional inference stickiness, optional balance/stickiness/expert-diversity/entropy stabilizers, and route-quality aggregation metrics (`use_lara_moe: false` by default). This is code scaffolding only; the MoE experts and two-level router have not been validated as the LARA paper method.
+- Utility calibration scaffold with optional action-loss utility labels, optional transition-state consistency utility labels, optional direct-expert action reconstruction or transition-state component labels for value/progress/uncertainty targets, optional dataset-provided utility/candidate/cost/component targets, an optional supervised route utility head, candidate value/progress/uncertainty/cost scoring helpers, centered utility regression, and pairwise ranking losses (`lara_utility_loss_weight: 0.0`, `lara_utility_head_loss_weight: 0.0`, `lara_use_action_loss_utility: false`, `lara_use_state_utility: false`, `lara_use_utility_head: false` by default). These labels are proxies or pass-through hooks, not true closed-loop counterfactual utility calibration.
 - Action-head MoE diagnostics include `metric/moe_route_quality_*` scalars for posterior/utility ranking, top-k consistency, route regret, and retained probability mass when MoE is enabled.
 - Matched-compute and matched-resident protocol helpers for subset-retention success aggregation, active/resident budget checks, result-table rows, and compute-success Pareto flags.
 - Minimal dummy-batch smoke coverage exists for `ActionHeadAdapter` forward and prediction shapes.
@@ -40,6 +41,7 @@ Described in the paper but not implemented yet:
 
 - production-ready latent action training
 - validated MoE action experts that directly model or adapt action chunks in full SO101 training
+- validated two-level routing behavior: episode-level resident pool selection plus chunk-level top-k routing inside that resident pool, under real SO101 training and rollout evaluation
 - real counterfactual utility scoring from latent-state or closed-loop evaluator signals beyond action reconstruction labels
 - validated transition-state training with real SO101 boundary targets
 - full resident-pool training/evaluation and closed-loop success/retention curves beyond static and unit tests
@@ -203,6 +205,7 @@ framework:
 
 `action_horizon` is the canonical prediction horizon. `future_action_window_size` is a legacy compatibility field and should stay equal to `action_horizon - 1` until it is removed.
 SO101 batches pass `future_actions` as an explicit future-only supervision window, and that window must have exactly `action_horizon` steps. The older `action` fallback can still carry wider context and is tail-sliced only for compatibility.
+SO101 batches also pass `future_action_mask`; near trajectory ends, invalid padded steps are masked out of the flow-matching loss, latent posterior pooling, transition/action utility proxies, and direct-expert reconstruction losses.
 When the optional latent-action head is enabled, its posterior/codebook/prior is trained on the first `latent_action_horizon` steps of that window, so the latent code stays aligned with the executable receding-horizon chunk while the flow/direct action heads still predict the full `action_horizon`.
 When the optional MoE/direct-expert path is enabled, posterior responsibility and pool-router targets use `router_horizon`, while action-loss utility proxies and value/progress/uncertainty component labels use `utility_horizon`.
 

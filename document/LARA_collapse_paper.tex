@@ -502,17 +502,19 @@ utility calibration, not as the next round's real closed-loop input.
 
 \subsection*{Current Repository Implementation Status}
 
-The current repository implements only the SO101 VLA-JEPA action baseline: the
+The current repository implements the SO101 VLA-JEPA action baseline: the
 pretrained VLA representation is reused, latent and embodied action tokens are
 extracted from the token stream, and a flow-matching action head predicts the
-continuous follower-arm action chunk. This is not yet the full LARA algorithm in
-this manuscript. In particular, production-ready latent-action training, MoE
-action experts, posterior responsibility training, the episode-level pool
-router, the chunk-level top-$k$ router inside the resident pool, and
-counterfactual utility calibration remain future implementation work. Any
-current latent-action or MoE/router code should be treated as disabled
-experimental scaffolding until it has full training, diagnostic, and closed-loop
-validation.
+continuous follower-arm action chunk. The SO101 dataloader and action adapter
+also propagate future-action validity masks so trajectory-end padding does not
+supervise action, latent, transition, utility-proxy, or direct-expert losses.
+This is not yet the full LARA algorithm in this manuscript. In particular,
+production-ready latent-action training, validated MoE action experts,
+posterior-responsibility training, the episode-level pool router, the
+chunk-level top-$k$ router inside the resident pool, and counterfactual utility
+calibration remain future implementation work. Any current latent-action or
+MoE/router code should be treated as default-off experimental scaffolding until
+it has full training, diagnostic, matched-budget, and closed-loop validation.
 
 \section{Experimental Protocol}
 

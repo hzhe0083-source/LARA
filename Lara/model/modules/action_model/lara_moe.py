@@ -759,6 +759,7 @@ class ActionChunkExpertBank(nn.Module):
     def action_chunk_loss(
         pred_actions: torch.Tensor,
         target_actions: torch.Tensor,
+        action_mask: Optional[torch.Tensor] = None,
         execution_horizon: Optional[int] = None,
         execution_loss_weight: float = 1.0,
         prediction_loss_weight: float = 1.0,
@@ -774,6 +775,15 @@ class ActionChunkExpertBank(nn.Module):
             )
 
         loss = (pred_actions - target_actions) ** 2
+        if action_mask is not None:
+            if action_mask.ndim == 3 and action_mask.shape[-1] == 1:
+                action_mask = action_mask.squeeze(-1)
+            if action_mask.shape != loss.shape[:2]:
+                raise ValueError(f"Expected action_mask shape {tuple(loss.shape[:2])}, got {tuple(action_mask.shape)}")
+            mask = action_mask.to(device=loss.device, dtype=loss.dtype).unsqueeze(-1)
+        else:
+            mask = torch.ones(loss.shape[:2], device=loss.device, dtype=loss.dtype).unsqueeze(-1)
+        weights = None
         if execution_loss_weight != prediction_loss_weight:
             horizon = loss.shape[1]
             execution_horizon = horizon if execution_horizon is None else min(execution_horizon, horizon)
@@ -784,13 +794,16 @@ class ActionChunkExpertBank(nn.Module):
                 dtype=loss.dtype,
             )
             weights[:, :execution_horizon, :] = execution_loss_weight
-            loss = loss * weights
-        return loss.mean()
+        if weights is None:
+            return (loss * mask).sum() / (mask.sum() * loss.shape[-1]).clamp_min(1.0)
+        weighted_mask = mask * weights
+        return (loss * weighted_mask).sum() / (weighted_mask.sum() * loss.shape[-1]).clamp_min(1.0)
 
     @staticmethod
     def reconstruction_losses(
         pred_actions: torch.Tensor,
         target_actions: torch.Tensor,
+        action_mask: Optional[torch.Tensor] = None,
         execution_horizon: Optional[int] = None,
         execution_loss_weight: float = 1.0,
         prediction_loss_weight: float = 1.0,
@@ -798,6 +811,7 @@ class ActionChunkExpertBank(nn.Module):
         return ActionChunkExpertBank.reconstruction_loss_components(
             pred_actions,
             target_actions,
+            action_mask=action_mask,
             execution_horizon=execution_horizon,
             execution_loss_weight=execution_loss_weight,
             prediction_loss_weight=prediction_loss_weight,
@@ -807,6 +821,7 @@ class ActionChunkExpertBank(nn.Module):
     def reconstruction_loss_components(
         pred_actions: torch.Tensor,
         target_actions: torch.Tensor,
+        action_mask: Optional[torch.Tensor] = None,
         execution_horizon: Optional[int] = None,
         execution_loss_weight: float = 1.0,
         prediction_loss_weight: float = 1.0,
@@ -823,18 +838,38 @@ class ActionChunkExpertBank(nn.Module):
 
         per_step_loss = (pred_actions - target_actions[:, None, :, :]).pow(2).mean(dim=-1)
         horizon = per_step_loss.shape[-1]
+        if action_mask is not None:
+            if action_mask.ndim == 3 and action_mask.shape[-1] == 1:
+                action_mask = action_mask.squeeze(-1)
+            if action_mask.shape != target_actions.shape[:2]:
+                raise ValueError(
+                    f"Expected action_mask shape {tuple(target_actions.shape[:2])}, got {tuple(action_mask.shape)}"
+                )
+            mask = action_mask.to(device=per_step_loss.device, dtype=per_step_loss.dtype)[:, None, :]
+        else:
+            mask = torch.ones(
+                per_step_loss.shape[0],
+                1,
+                horizon,
+                device=per_step_loss.device,
+                dtype=per_step_loss.dtype,
+            )
         execution_horizon = horizon if execution_horizon is None else min(max(int(execution_horizon), 0), horizon)
+        execution_mask = mask[:, :, :execution_horizon]
+        prediction_mask = mask[:, :, execution_horizon:]
         execution_loss = (
-            per_step_loss[:, :, :execution_horizon].mean(dim=-1)
+            (per_step_loss[:, :, :execution_horizon] * execution_mask).sum(dim=-1)
+            / execution_mask.sum(dim=-1).clamp_min(1.0)
             if execution_horizon > 0
             else per_step_loss.new_zeros(per_step_loss.shape[:2])
         )
         prediction_loss = (
-            per_step_loss[:, :, execution_horizon:].mean(dim=-1)
+            (per_step_loss[:, :, execution_horizon:] * prediction_mask).sum(dim=-1)
+            / prediction_mask.sum(dim=-1).clamp_min(1.0)
             if execution_horizon < horizon
             else per_step_loss.new_zeros(per_step_loss.shape[:2])
         )
-        full_loss = per_step_loss.mean(dim=-1)
+        full_loss = (per_step_loss * mask).sum(dim=-1) / mask.sum(dim=-1).clamp_min(1.0)
         weighted_step_loss = per_step_loss
         if execution_loss_weight != prediction_loss_weight:
             weights = torch.full(
@@ -849,7 +884,7 @@ class ActionChunkExpertBank(nn.Module):
             "full": full_loss,
             "execution": execution_loss,
             "prediction": prediction_loss,
-            "weighted": weighted_step_loss.mean(dim=-1),
+            "weighted": (weighted_step_loss * mask).sum(dim=-1) / mask.sum(dim=-1).clamp_min(1.0),
         }
 
 

@@ -207,6 +207,32 @@ class ActionHeadAdapter(nn.Module):
             raise ValueError(f"Expected actions with shape [B, T, D], got {tuple(action_tensor.shape)}")
         return action_tensor
 
+    def _action_mask_to_tensor(
+        self,
+        action_mask,
+        actions: torch.Tensor,
+        actions_are_future: bool,
+    ) -> Optional[torch.Tensor]:
+        if action_mask is None:
+            return None
+        mask_tensor = self._as_tensor(action_mask, device=actions.device, dtype=torch.bool)
+        if mask_tensor.ndim == 3 and mask_tensor.shape[-1] == 1:
+            mask_tensor = mask_tensor.squeeze(-1)
+        if mask_tensor.ndim != 2 or mask_tensor.shape[0] != actions.shape[0]:
+            raise ValueError(
+                f"Expected action_mask with shape [B, T], got {tuple(mask_tensor.shape)} "
+                f"for actions {tuple(actions.shape)}"
+            )
+        if actions_are_future:
+            if mask_tensor.shape[1] != self.action_horizon:
+                raise ValueError(
+                    f"future_action_mask must have exactly {self.action_horizon} steps, got {mask_tensor.shape[1]}"
+                )
+            return mask_tensor
+        if mask_tensor.shape[1] < self.action_horizon:
+            raise ValueError(f"Expected action_mask with at least {self.action_horizon} steps, got {mask_tensor.shape[1]}")
+        return mask_tensor[:, -self.action_horizon :]
+
     def _state_to_tensor(self, state, context_tokens: torch.Tensor) -> Optional[torch.Tensor]:
         if state is None:
             return None
@@ -291,6 +317,7 @@ class ActionHeadAdapter(nn.Module):
         embodied_action_tokens: torch.Tensor,
         actions,
         actions_are_future: bool = False,
+        action_mask=None,
         past_actions=None,
         state=None,
         trajectory_ids=None,
@@ -325,10 +352,18 @@ class ActionHeadAdapter(nn.Module):
         # Prefer explicit future-only windows from the dataloader. The legacy
         # `action` fallback can still contain wider context, so it keeps tail slicing.
         actions_target = actions if actions_are_future else actions[:, -self.action_horizon :, :]
+        action_mask_target = self._action_mask_to_tensor(action_mask, actions, actions_are_future)
         aux_losses = {}
         if self.latent_action_head is not None:
             latent_actions_target = actions_target[:, : self.latent_action_horizon, :]
-            latent_output = self.latent_action_head(embodied_action_tokens, latent_actions_target)
+            latent_action_mask = (
+                action_mask_target[:, : self.latent_action_horizon] if action_mask_target is not None else None
+            )
+            latent_output = self.latent_action_head(
+                embodied_action_tokens,
+                latent_actions_target,
+                future_action_mask=latent_action_mask,
+            )
             latent_action_tokens = latent_output.tokens
             aux_losses = {
                 "latent_action_loss": latent_output.loss,
@@ -349,10 +384,17 @@ class ActionHeadAdapter(nn.Module):
             if transition_loss is not None:
                 aux_losses["transition_state_loss"] = self.transition_loss_weight * transition_loss
         actions_target_repeated = actions_target.repeat_interleave(self.repeated_diffusion_steps, dim=0)
+        action_mask_repeated = (
+            action_mask_target.repeat_interleave(self.repeated_diffusion_steps, dim=0)
+            if action_mask_target is not None
+            else None
+        )
         conditioning_tokens = self._conditioning_tokens(embodied_action_tokens, latent_action_tokens)
         state_tensor = self._state_to_tensor(state, embodied_action_tokens)
         router_actions_target = actions_target[:, : self.router_horizon, :]
         utility_actions_target = actions_target[:, : self.utility_horizon, :]
+        router_action_mask = action_mask_target[:, : self.router_horizon] if action_mask_target is not None else None
+        utility_action_mask = action_mask_target[:, : self.utility_horizon] if action_mask_target is not None else None
         direct_expert_actions = None
         direct_routed_action_loss = None
         if self.lara_moe is not None:
@@ -366,6 +408,7 @@ class ActionHeadAdapter(nn.Module):
                 direct_expert_loss_components = self.direct_action_experts.reconstruction_loss_components(
                     direct_expert_actions,
                     actions_target,
+                    action_mask=action_mask_target,
                     execution_horizon=self.execution_horizon,
                     execution_loss_weight=self.config.framework.action_model.get("execution_loss_weight", 1.0),
                     prediction_loss_weight=self.config.framework.action_model.get("prediction_loss_weight", 1.0),
@@ -373,16 +416,19 @@ class ActionHeadAdapter(nn.Module):
                 direct_expert_losses = self.direct_action_experts.reconstruction_losses(
                     direct_expert_actions[:, :, : self.router_horizon, :],
                     router_actions_target,
+                    action_mask=router_action_mask,
                 )
                 utility_expert_losses = self.direct_action_experts.reconstruction_losses(
                     direct_expert_actions[:, :, : self.utility_horizon, :],
                     utility_actions_target,
+                    action_mask=utility_action_mask,
                 )
                 direct_utility_component_targets = None
                 if self.use_action_loss_utility_components:
                     direct_utility_loss_components = self.direct_action_experts.reconstruction_loss_components(
                         direct_expert_actions,
                         actions_target,
+                        action_mask=action_mask_target,
                         execution_horizon=self.utility_horizon,
                     )
                     direct_utility_component_targets = utility_component_targets_from_expert_losses(
@@ -405,12 +451,22 @@ class ActionHeadAdapter(nn.Module):
                 expert_action_losses = (
                     direct_expert_losses.detach()
                     if direct_expert_losses is not None
-                    else self._expert_action_losses(conditioning_tokens, router_actions_target, state)
+                    else self._expert_action_losses(
+                        conditioning_tokens,
+                        router_actions_target,
+                        state,
+                        action_mask=router_action_mask,
+                    )
                     if self.use_expert_loss_posterior
                     else None
                 )
                 if utility_expert_losses is None and self.use_action_loss_utility:
-                    utility_expert_losses = self._expert_action_losses(conditioning_tokens, utility_actions_target, state)
+                    utility_expert_losses = self._expert_action_losses(
+                        conditioning_tokens,
+                        utility_actions_target,
+                        state,
+                        action_mask=utility_action_mask,
+                    )
                 if self.use_state_utility:
                     state_utility_loss_components = self._expert_transition_loss_components(
                         conditioning_tokens,
@@ -608,6 +664,7 @@ class ActionHeadAdapter(nn.Module):
                 direct_routed_action_loss = ActionChunkExpertBank.action_chunk_loss(
                     direct_routed_actions,
                     actions_target,
+                    action_mask=action_mask_target,
                     execution_horizon=self.execution_horizon,
                     execution_loss_weight=self.config.framework.action_model.get("execution_loss_weight", 1.0),
                     prediction_loss_weight=self.config.framework.action_model.get("prediction_loss_weight", 1.0),
@@ -624,7 +681,12 @@ class ActionHeadAdapter(nn.Module):
         action_loss = (
             direct_routed_action_loss
             if self.use_direct_action_output
-            else self.action_model(context_repeated, actions_target_repeated, state_repeated)
+            else self.action_model(
+                context_repeated,
+                actions_target_repeated,
+                state_repeated,
+                action_mask=action_mask_repeated,
+            )
         )
         if not return_aux:
             return (
@@ -779,7 +841,7 @@ class ActionHeadAdapter(nn.Module):
         trajectory_tensor = self._trajectory_ids_to_tensor(trajectory_ids, device=expert_action_losses.device)
         return aggregate_episode_responsibilities(posterior_probs, trajectory_tensor)
 
-    def _expert_action_losses(self, conditioning_tokens, actions_target, state=None) -> torch.Tensor:
+    def _expert_action_losses(self, conditioning_tokens, actions_target, state=None, action_mask=None) -> torch.Tensor:
         if self.lara_moe is None:
             raise RuntimeError("_expert_action_losses requires lara_moe")
         expert_tokens = self.lara_moe.expert_conditioning_tokens(conditioning_tokens)
@@ -787,6 +849,10 @@ class ActionHeadAdapter(nn.Module):
         flat_tokens = expert_tokens.reshape(batch_size * num_experts, token_count, hidden_size)
         flat_actions = actions_target[:, None, :, :].expand(-1, num_experts, -1, -1)
         flat_actions = flat_actions.reshape(batch_size * num_experts, actions_target.shape[1], actions_target.shape[2])
+        flat_action_mask = None
+        if action_mask is not None:
+            flat_action_mask = action_mask[:, None, :].expand(-1, num_experts, -1)
+            flat_action_mask = flat_action_mask.reshape(batch_size * num_experts, actions_target.shape[1])
 
         noise = torch.randn(actions_target.shape, device=actions_target.device, dtype=actions_target.dtype)
         t = self.action_model.sample_time(actions_target.shape[0], device=actions_target.device, dtype=actions_target.dtype)
@@ -806,6 +872,7 @@ class ActionHeadAdapter(nn.Module):
             noise=noise,
             t=t,
             reduction="none",
+            action_mask=flat_action_mask,
         )
         return losses.view(batch_size, num_experts)
 

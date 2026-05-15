@@ -13,6 +13,7 @@ class LeRobotV3CollateTest(unittest.TestCase):
                 "observation.image": torch.zeros(2, 3, 4, 4),
                 "observation.state": torch.arange(6, dtype=torch.float32).view(2, 3),
                 "action": torch.ones(3, 2),
+                "action_is_pad": torch.tensor([False, False, True]),
                 "task": "pick",
             }
         ]
@@ -32,6 +33,7 @@ class LeRobotV3CollateTest(unittest.TestCase):
         self.assertEqual(examples[0]["lang"], "pick")
         self.assertEqual(len(examples[0]["image"]), 1)
         self.assertTrue(np.array_equal(examples[0]["future_actions"], examples[0]["action"]))
+        self.assertTrue(np.array_equal(examples[0]["future_action_mask"], np.array([True, True, False])))
         self.assertTrue(np.array_equal(examples[0]["current_state"], examples[0]["state"]))
         self.assertEqual(examples[0]["current_state"].shape, (1, 3))
         self.assertTrue(np.array_equal(examples[0]["execution_state_target"], np.array([[3, 4, 5]], dtype=np.float32)))

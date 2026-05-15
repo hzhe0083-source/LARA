@@ -39,6 +39,30 @@ class LatentActionHeadTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Expected future_actions horizon 4"):
             encoder(torch.randn(2, 5, 8), torch.randn(2, 3, 3))
 
+    def test_posterior_encoder_accepts_future_action_mask(self):
+        torch.manual_seed(0)
+        encoder = PosteriorLatentActionEncoder(
+            context_dim=8,
+            action_dim=3,
+            action_horizon=4,
+            num_latent_tokens=2,
+            hidden_dim=16,
+        )
+        context_tokens = torch.randn(2, 5, 8)
+        future_actions = torch.randn(2, 4, 3)
+        future_action_mask = torch.tensor(
+            [
+                [True, True, False, False],
+                [True, False, False, False],
+            ]
+        )
+
+        latent_tokens = encoder(context_tokens, future_actions, future_action_mask=future_action_mask)
+
+        self.assertEqual(latent_tokens.shape, (2, 2, 8))
+        with self.assertRaisesRegex(ValueError, "future_action_mask"):
+            encoder(context_tokens, future_actions, future_action_mask=torch.ones(2, 3, dtype=torch.bool))
+
     def test_vector_quantizer_returns_codes_and_perplexity(self):
         torch.manual_seed(0)
         quantizer = VectorQuantizer(codebook_size=8, code_dim=6, commitment_weight=0.25)

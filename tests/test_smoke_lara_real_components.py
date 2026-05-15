@@ -184,6 +184,8 @@ class SmokeLaraRealComponentsTest(unittest.TestCase):
 
             self.assertEqual(len(examples), 2)
             self.assertEqual(examples[0]["future_actions"].shape, (3, 2))
+            self.assertEqual(examples[0]["future_action_mask"].shape, (3,))
+            self.assertTrue(examples[0]["future_action_mask"].all())
             self.assertEqual(examples[0]["current_state"].shape, (1, 4))
             self.assertEqual(examples[0]["execution_state_target"].shape, (1, 4))
             self.assertTrue(examples[0]["execution_state_target_mask"])
@@ -230,6 +232,7 @@ class SmokeLaraRealComponentsTest(unittest.TestCase):
         examples = [
             {
                 "future_actions": np.zeros((3, 2), dtype=np.float32),
+                "future_action_mask": np.array([True, True, False], dtype=bool),
                 "current_state": np.zeros((1, 4), dtype=np.float16),
                 "video": np.zeros((2, 8, 16, 16, 3), dtype=np.uint8),
                 "trajectory_id": np.int64(7),
@@ -241,6 +244,7 @@ class SmokeLaraRealComponentsTest(unittest.TestCase):
 
         self.assertEqual(summary["batch_size"], 1)
         self.assertEqual(summary["fields"]["future_actions"]["shape"], [3, 2])
+        self.assertEqual(summary["fields"]["future_action_mask"]["shape"], [3])
         self.assertEqual(summary["fields"]["video"]["dtype"], "uint8")
         self.assertEqual(summary["trajectory_ids"], [7])
         self.assertEqual(summary["base_indices"], [9])

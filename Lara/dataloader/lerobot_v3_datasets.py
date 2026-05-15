@@ -31,6 +31,11 @@ def collate_fn(
         example = {"image": []}
         example["action"] = b[action_key].cpu().numpy()
         example["future_actions"] = example["action"]
+        action_pad_key = f"{action_key}_is_pad"
+        if action_pad_key in b:
+            example["future_action_mask"] = (~b[action_pad_key].bool()).cpu().numpy()
+        else:
+            example["future_action_mask"] = torch.ones(b[action_key].shape[0], dtype=torch.bool).cpu().numpy()
         example["lang"] = b[task_key]
 
         for k in img_keys:

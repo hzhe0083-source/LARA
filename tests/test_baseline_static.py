@@ -60,8 +60,10 @@ def test_so101_batches_expose_future_actions():
     dataloader_src = read("Lara/dataloader/__init__.py")
     trainer_src = read("Lara/training/train_lara.py")
     assert "future_actions=action" in dataset_src
+    assert "future_action_mask=self._future_action_mask" in dataset_src
     assert 'return_dict["current_state"] = state[0:1]' in dataset_src
     assert 'example["future_actions"] = example["action"]' in v3_dataset_src
+    assert 'example["future_action_mask"]' in v3_dataset_src
     assert 'example["current_state"] = example["state"]' in v3_dataset_src
     assert 'return_dict["execution_state_target"] = execution_state' in dataset_src
     assert 'return_dict["prediction_state_target"] = prediction_state' in dataset_src
@@ -72,6 +74,8 @@ def test_so101_batches_expose_future_actions():
     assert "base_index=step" in dataset_src
     assert '"future_actions" if "future_actions" in examples[0] else "action"' in core_src
     assert 'actions_are_future = action_key == "future_actions"' in core_src
+    assert 'action_mask_key = "future_action_mask" if "future_action_mask" in examples[0] else "action_mask"' in core_src
+    assert "action_mask=action_mask" in core_src
     assert 'past_actions = optional_batch_field("past_actions")' in core_src
     assert "actions_are_future=actions_are_future" in core_src
     assert "past_actions=past_actions" in core_src
@@ -94,7 +98,10 @@ def test_so101_batches_expose_future_actions():
 def test_action_head_future_windows_are_strict():
     adapter_src = read("Lara/model/framework/act.py")
     assert "actions_are_future: bool = False" in adapter_src
+    assert "action_mask=None" in adapter_src
     assert "past_actions=None" in adapter_src
+    assert "def _action_mask_to_tensor" in adapter_src
+    assert "action_mask_target = self._action_mask_to_tensor(action_mask, actions, actions_are_future)" in adapter_src
     assert "actions_are_future and actions.shape[1] != self.action_horizon" in adapter_src
     assert "future_actions must have exactly {self.action_horizon} steps" in adapter_src
     assert "not actions_are_future and actions.shape[1] < self.action_horizon" in adapter_src
@@ -128,6 +135,7 @@ def test_optional_latent_action_head_stage_one_exists():
     assert '"router_horizon"' in adapter_src
     assert '"utility_horizon"' in adapter_src
     assert "latent_actions_target = actions_target[:, : self.latent_action_horizon, :]" in adapter_src
+    assert "future_action_mask=latent_action_mask" in adapter_src
     assert "router_actions_target = actions_target[:, : self.router_horizon, :]" in adapter_src
     assert "utility_actions_target = actions_target[:, : self.utility_horizon, :]" in adapter_src
     assert "use_latent_action_head" in adapter_src
@@ -276,6 +284,7 @@ def test_optional_moe_router_stage_two_exists():
     assert "posterior_uniform_floor" in moe_src
     assert "posterior_top_r" in moe_src
     assert "reduction: str = \"mean\"" in flow_src
+    assert "action_mask: torch.Tensor = None" in flow_src
     assert "reduction=\"none\"" in adapter_src
     assert "def _expert_action_losses" in adapter_src
     assert "with torch.no_grad()" in adapter_src
@@ -328,11 +337,15 @@ def test_optional_moe_router_stage_two_exists():
 def test_paper_gap_is_explicit():
     readme = read("README.md")
     gap = read("document/IMPLEMENTATION_GAP.md")
-    assert "only implemented the VLA/action-baseline part" in readme
+    assert "implemented the SO101 VLA/action-baseline path and several default-off scaffolds" in readme
+    assert "paper's latent-action MoE and two-level routing method should still be treated as unfinished" in readme
     assert "not the final latent-action MoE/router implementation" in readme
     assert "Experimental scaffolding exists but is not complete or validated" in readme
+    assert "padded future action steps do not supervise" in readme
     assert "Missing Paper Components" in gap
     assert "MoE action experts" in gap
+    assert "Do not describe it as the completed LARA MoE or completed two-level router yet" in gap
+    assert "future_action_mask" in gap
     assert "Trajectory ids are now passed" in gap
     assert "chunk-level top-k routing constrained to the resident pool" in gap
     assert "pool target aggregation" in gap

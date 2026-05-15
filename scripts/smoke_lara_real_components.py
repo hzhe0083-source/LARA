@@ -171,6 +171,7 @@ def build_dummy_examples(cfg: Any, batch_size: int = 1) -> list[dict[str, Any]]:
                 "video": video.copy(),
                 "lang": "move the follower arm safely",
                 "future_actions": np.zeros((action_horizon, action_dim), dtype=np.float32),
+                "future_action_mask": np.ones(action_horizon, dtype=bool),
                 "current_state": np.zeros((1, state_dim), dtype=np.float32),
                 "execution_state_target": np.zeros((1, state_dim), dtype=np.float32),
                 "execution_state_target_mask": True,
@@ -215,6 +216,7 @@ def summarize_examples(examples: list[dict[str, Any]]) -> dict[str, Any]:
     fields = {}
     for key in [
         "future_actions",
+        "future_action_mask",
         "current_state",
         "video",
         "execution_state_target",

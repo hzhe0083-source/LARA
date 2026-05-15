@@ -53,6 +53,8 @@ class Lara(baseframework):
         action_key = "future_actions" if "future_actions" in examples[0] else "action"
         actions = [example[action_key] for example in examples] if action_key in examples[0] else None
         actions_are_future = action_key == "future_actions"
+        action_mask_key = "future_action_mask" if "future_action_mask" in examples[0] else "action_mask"
+        action_mask = optional_batch_field(action_mask_key)
         past_actions = optional_batch_field("past_actions")
         state_key = "current_state" if "current_state" in examples[0] else "state"
         state = [example[state_key] for example in examples] if state_key in examples[0] else None
@@ -103,6 +105,7 @@ class Lara(baseframework):
                 latent_action_tokens=qwen_context.action_tokens,
                 actions=actions,
                 actions_are_future=actions_are_future,
+                action_mask=action_mask,
                 past_actions=past_actions,
                 state=state,
                 trajectory_ids=trajectory_ids,

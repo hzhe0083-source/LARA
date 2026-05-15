@@ -164,6 +164,44 @@ class ActionHeadAdapterSmokeTest(unittest.TestCase):
                 return_aux=True,
             )
 
+    def test_action_mask_excludes_padded_future_steps_from_flow_loss(self):
+        torch.manual_seed(0)
+        adapter = ActionHeadAdapter(config=tiny_action_config(), context_hidden_size=16)
+        adapter.train()
+        embodied_tokens = torch.randn(1, 2, 16)
+        latent_tokens = torch.randn(1, 1, 16)
+        actions = torch.randn(1, 3, 2)
+        state = torch.randn(1, 1, 3)
+
+        output = adapter(
+            embodied_action_tokens=embodied_tokens,
+            latent_action_tokens=latent_tokens,
+            actions=actions,
+            actions_are_future=True,
+            action_mask=torch.tensor([[False, False, False]]),
+            state=state,
+            return_aux=True,
+        )
+
+        self.assertTrue(torch.allclose(output["action_loss"], torch.tensor(0.0)))
+        self.assertTrue(torch.allclose(output["total_action_loss"], torch.tensor(0.0)))
+
+    def test_future_action_mask_must_match_configured_horizon(self):
+        adapter = ActionHeadAdapter(config=tiny_action_config(), context_hidden_size=16)
+        embodied_tokens = torch.randn(1, 2, 16)
+        latent_tokens = torch.randn(1, 1, 16)
+        actions = torch.randn(1, 3, 2)
+
+        with self.assertRaisesRegex(ValueError, "future_action_mask must have exactly 3 steps"):
+            adapter(
+                embodied_action_tokens=embodied_tokens,
+                latent_action_tokens=latent_tokens,
+                actions=actions,
+                actions_are_future=True,
+                action_mask=torch.tensor([[True, True]]),
+                return_aux=True,
+            )
+
     def test_forward_with_direct_moe_action_experts_adds_aux_loss(self):
         torch.manual_seed(0)
         adapter = ActionHeadAdapter(

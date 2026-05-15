@@ -92,7 +92,12 @@ class PosteriorLatentActionEncoder(nn.Module):
         self.to_latents = nn.Linear(hidden_dim, num_latent_tokens * context_dim)
         nn.init.normal_(self.action_pos, mean=0.0, std=0.02)
 
-    def forward(self, context_tokens: torch.Tensor, future_actions: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        context_tokens: torch.Tensor,
+        future_actions: torch.Tensor,
+        future_action_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         if context_tokens.ndim != 3:
             raise ValueError(f"Expected context_tokens [B, T, D], got {tuple(context_tokens.shape)}")
         if future_actions.ndim != 3:
@@ -104,6 +109,14 @@ class PosteriorLatentActionEncoder(nn.Module):
                 f"Batch mismatch between context_tokens and future_actions: "
                 f"{context_tokens.shape[0]} != {future_actions.shape[0]}"
             )
+        if future_action_mask is not None:
+            if future_action_mask.ndim != 2 or future_action_mask.shape != future_actions.shape[:2]:
+                raise ValueError(
+                    f"Expected future_action_mask {tuple(future_actions.shape[:2])}, "
+                    f"got {tuple(future_action_mask.shape)}"
+                )
+            future_action_mask = future_action_mask.to(device=future_actions.device, dtype=future_actions.dtype)
+            future_actions = future_actions * future_action_mask[:, :, None]
 
         batch_size = context_tokens.shape[0]
         context_summary = self.context_norm(context_tokens).mean(dim=1)
@@ -114,7 +127,11 @@ class PosteriorLatentActionEncoder(nn.Module):
             dtype=action_features.dtype,
         )
         fused = self.encoder(torch.cat([context_features, action_features], dim=-1))
-        pooled = fused.mean(dim=1)
+        if future_action_mask is None:
+            pooled = fused.mean(dim=1)
+        else:
+            mask = future_action_mask.to(device=fused.device, dtype=fused.dtype)
+            pooled = (fused * mask[:, :, None]).sum(dim=1) / mask.sum(dim=1, keepdim=True).clamp_min(1.0)
         latents = self.to_latents(pooled)
         return latents.view(batch_size, self.num_latent_tokens, context_tokens.shape[-1])
 
@@ -236,8 +253,13 @@ class LatentActionHead(nn.Module):
             hidden_dim=hidden_dim,
         )
 
-    def forward(self, context_tokens: torch.Tensor, future_actions: torch.Tensor) -> LatentActionOutput:
-        posterior_tokens = self.posterior(context_tokens, future_actions)
+    def forward(
+        self,
+        context_tokens: torch.Tensor,
+        future_actions: torch.Tensor,
+        future_action_mask: torch.Tensor | None = None,
+    ) -> LatentActionOutput:
+        posterior_tokens = self.posterior(context_tokens, future_actions, future_action_mask=future_action_mask)
         quantized_tokens, code_indices, vq_loss, code_usage_loss, perplexity = self.codebook(posterior_tokens)
         prior_logits = self.prior(context_tokens)
         prior_loss = F.cross_entropy(
