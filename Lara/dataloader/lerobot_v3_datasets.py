@@ -1,5 +1,7 @@
 import bisect
+import json
 import os
+from pathlib import Path
 
 import torch
 import torchvision.transforms as T
@@ -14,6 +16,42 @@ def _boundary_state_from_sequence(state_sequence, boundary_index: int):
     valid = boundary_index < state_sequence.shape[0]
     safe_index = min(boundary_index, state_sequence.shape[0] - 1)
     return state_sequence[safe_index : safe_index + 1], bool(valid)
+
+
+def _as_int(value) -> int:
+    return int(torch.as_tensor(value).flatten()[0])
+
+
+def _load_task_map(repo_id: str) -> dict[int, str]:
+    meta_dir = Path(repo_id) / "meta"
+    tasks_parquet = meta_dir / "tasks.parquet"
+    tasks_jsonl = meta_dir / "tasks.jsonl"
+    if tasks_parquet.exists():
+        import pyarrow.parquet as pq
+
+        table = pq.read_table(tasks_parquet)
+        columns = table.column_names
+        if "task_index" not in columns:
+            return {}
+        task_column = "task" if "task" in columns else "instruction" if "instruction" in columns else None
+        if task_column is None:
+            return {}
+        indices = table["task_index"].to_pylist()
+        tasks = table[task_column].to_pylist()
+        return {int(task_index): str(task) for task_index, task in zip(indices, tasks)}
+    if tasks_jsonl.exists():
+        task_map = {}
+        with tasks_jsonl.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                task_index = row.get("task_index")
+                task = row.get("task", row.get("instruction"))
+                if task_index is not None and task is not None:
+                    task_map[int(task_index)] = str(task)
+        return task_map
+    return {}
 
 
 def collate_fn(
@@ -42,7 +80,7 @@ def collate_fn(
         elif "task" in b:
             example["lang"] = b["task"]
         elif "task_index" in b:
-            example["lang"] = f"task_{int(torch.as_tensor(b['task_index']).flatten()[0])}"
+            example["lang"] = f"task_{_as_int(b['task_index'])}"
         else:
             example["lang"] = "perform the task"
 
@@ -96,6 +134,24 @@ class MixtureDataset(Dataset):
         return self.datasets[ds_idx][sample_idx]
 
 
+class TaskTextDataset(Dataset):
+    def __init__(self, dataset, task_map: dict[int, str]):
+        self.dataset = dataset
+        self.task_map = task_map
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        sample = self.dataset[idx]
+        if "task" not in sample and "task_index" in sample and self.task_map:
+            task_index = _as_int(sample["task_index"])
+            if task_index in self.task_map:
+                sample = dict(sample)
+                sample["task"] = self.task_map[task_index]
+        return sample
+
+
 def get_lerobot_v3_datasets(
     data_cfg: dict,
     action_horizon: int | None = None,
@@ -147,11 +203,13 @@ def get_lerobot_v3_datasets(
         }
         for k in image_keys:
             delta_timestamps[k] = [t / ds_meta.fps for t in range(action_horizon+1)]
-        dataset_mixture.append(
-            LeRobotDataset(
-                repo_id,
-                delta_timestamps=delta_timestamps,
-            )
-    )
+        dataset = LeRobotDataset(
+            repo_id,
+            delta_timestamps=delta_timestamps,
+        )
+        task_map = _load_task_map(repo_id)
+        if task_map:
+            dataset = TaskTextDataset(dataset, task_map)
+        dataset_mixture.append(dataset)
     #[print(ds.num_episodes, ds.num_frames, i) for i, ds in enumerate(dataset_mixture)]
     return MixtureDataset(dataset_mixture)

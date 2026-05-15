@@ -3,7 +3,7 @@ import unittest
 import numpy as np
 import torch
 
-from Lara.dataloader.lerobot_v3_datasets import collate_fn
+from Lara.dataloader.lerobot_v3_datasets import TaskTextDataset, collate_fn
 
 
 class LeRobotV3CollateTest(unittest.TestCase):
@@ -40,6 +40,33 @@ class LeRobotV3CollateTest(unittest.TestCase):
         self.assertTrue(np.array_equal(examples[0]["prediction_state_target"], np.array([[3, 4, 5]], dtype=np.float32)))
         self.assertTrue(examples[0]["execution_state_target_mask"])
         self.assertFalse(examples[0]["prediction_state_target_mask"])
+
+    def test_task_text_wrapper_maps_task_index_before_collate(self):
+        class DummyDataset:
+            def __len__(self):
+                return 1
+
+            def __getitem__(self, idx):
+                return {
+                    "observation.image": torch.zeros(2, 3, 4, 4),
+                    "observation.state": torch.arange(6, dtype=torch.float32).view(2, 3),
+                    "action": torch.ones(3, 2),
+                    "task_index": torch.tensor([7]),
+                }
+
+        dataset = TaskTextDataset(DummyDataset(), {7: "open the drawer"})
+        examples = collate_fn(
+            [dataset[0]],
+            img_keys=["observation.image"],
+            state_key="observation.state",
+            action_key="action",
+            task_key="task",
+            resize_size=8,
+            execution_horizon=1,
+            prediction_horizon=2,
+        )
+
+        self.assertEqual(examples[0]["lang"], "open the drawer")
 
 
 if __name__ == "__main__":
