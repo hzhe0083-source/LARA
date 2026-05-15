@@ -41,10 +41,12 @@ framework:
     lara_prior_loss_weight: 1.0
     use_lara_moe: false
     lara_num_experts: 8
+    lara_episode_pool_size: 4
     lara_top_k: 2
     lara_expert_hidden_dim: 1024
     lara_router_hidden_dim: 1024
     lara_router_loss_weight: 1.0
+    lara_pool_loss_weight: 1.0
     lara_expert_residual_scale: 0.1
     noise_beta_alpha: 1.5
     noise_beta_beta: 1.0

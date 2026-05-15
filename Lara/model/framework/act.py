@@ -64,9 +64,11 @@ class ActionHeadAdapter(nn.Module):
                 hidden_size=context_hidden_size,
                 num_experts=action_cfg.get("lara_num_experts", 8),
                 top_k=action_cfg.get("lara_top_k", 2),
+                episode_pool_size=action_cfg.get("lara_episode_pool_size", None),
                 expert_hidden_size=action_cfg.get("lara_expert_hidden_dim", action_cfg.get("hidden_size", 1024)),
                 router_hidden_size=action_cfg.get("lara_router_hidden_dim", action_cfg.get("hidden_size", 1024)),
                 router_loss_weight=action_cfg.get("lara_router_loss_weight", 1.0),
+                pool_loss_weight=action_cfg.get("lara_pool_loss_weight", 1.0),
                 residual_scale=action_cfg.get("lara_expert_residual_scale", 0.1),
             )
             if self.use_lara_moe
@@ -177,8 +179,11 @@ class ActionHeadAdapter(nn.Module):
             aux_losses.update(
                 {
                     "moe_router_loss": moe_output.loss,
+                    "moe_route_distill_loss": moe_output.route_loss,
+                    "moe_pool_distill_loss": moe_output.pool_loss,
                     "moe_router_entropy": moe_output.router_entropy,
                     "moe_posterior_entropy": moe_output.posterior_entropy,
+                    "moe_pool_entropy": moe_output.pool_entropy,
                 }
             )
         context_repeated = conditioning_tokens.repeat_interleave(self.repeated_diffusion_steps, dim=0)
