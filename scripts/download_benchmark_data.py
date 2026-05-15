@@ -81,11 +81,11 @@ def _resolve_dataset(name: str, data_root: Path) -> BenchmarkDataset:
     )
 
 
-def _ensure_dirs(data_root: Path) -> dict[str, Path]:
+def _ensure_dirs(data_root: Path, cache_scope: str = "shared") -> dict[str, Path]:
     paths = {
-        "hf_home": data_root / "hf_home",
-        "hf_cache": data_root / "hf_cache",
-        "xet_cache": data_root / "xet_cache",
+        "hf_home": data_root / "hf_home" / cache_scope,
+        "hf_cache": data_root / "hf_cache" / cache_scope,
+        "xet_cache": data_root / "xet_cache" / cache_scope,
         "logs": data_root / "logs",
     }
     for path in paths.values():
@@ -93,8 +93,8 @@ def _ensure_dirs(data_root: Path) -> dict[str, Path]:
     return paths
 
 
-def _download_env(data_root: Path, disable_xet: bool) -> dict[str, str]:
-    paths = _ensure_dirs(data_root)
+def _download_env(data_root: Path, disable_xet: bool, cache_scope: str = "shared") -> dict[str, str]:
+    paths = _ensure_dirs(data_root, cache_scope=cache_scope)
     env = os.environ.copy()
     env.update(
         {
@@ -292,13 +292,13 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     data_root = args.data_root.expanduser().resolve()
-    env = _download_env(data_root, disable_xet=not args.enable_xet)
     dry_run = not args.download
     failures = 0
     reports = []
 
     for dataset_name in _dataset_names(args.dataset):
         dataset = _resolve_dataset(dataset_name, data_root)
+        env = _download_env(data_root, disable_xet=not args.enable_xet, cache_scope=dataset.name)
         dataset.local_dir.mkdir(parents=True, exist_ok=True)
         if not args.preflight_only:
             cmd = build_hf_command(
