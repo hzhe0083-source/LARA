@@ -148,6 +148,9 @@ class ActionHeadAdapterSmokeTest(unittest.TestCase):
 
         self.assertIn("moe_utility_loss", output)
         self.assertIn("moe_utility_scores", output)
+        self.assertIn("moe_route_quality_utility_spearman", output)
+        self.assertIn("moe_route_quality_utility_topk_consistency", output)
+        self.assertIn("moe_route_quality_retained_probability_mass_0_5", output)
         self.assertGreater(float(output["moe_utility_loss"]), 0.0)
         self.assertEqual(output["moe_utility_scores"].shape, (2, 3))
         self.assertTrue(torch.isfinite(output["total_action_loss"]).item())

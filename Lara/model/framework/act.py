@@ -15,6 +15,7 @@ from Lara.model.modules.action_model.lara_moe import (
     LatentActionMoE,
     aggregate_episode_responsibilities,
     posterior_from_expert_losses,
+    route_quality_metrics,
     utility_from_expert_losses,
 )
 
@@ -50,6 +51,10 @@ class ActionHeadAdapter(nn.Module):
         self.use_action_loss_utility = action_cfg.get("lara_use_action_loss_utility", False)
         self.action_loss_utility_temperature = action_cfg.get("lara_action_loss_utility_temperature", 1.0)
         self.action_loss_utility_normalize = action_cfg.get("lara_action_loss_utility_normalize", True)
+        route_retention_fractions = action_cfg.get("lara_route_retention_fractions", [0.25, 0.5, 1.0])
+        self.route_retention_fractions = (
+            list(route_retention_fractions) if route_retention_fractions is not None else None
+        )
         self.use_direct_action_experts = action_cfg.get("lara_use_direct_action_experts", False)
         self.use_direct_action_output = action_cfg.get("lara_use_direct_action_output", False)
         self.direct_expert_loss_weight = action_cfg.get("lara_direct_expert_loss_weight", 1.0)
@@ -448,6 +453,16 @@ class ActionHeadAdapter(nn.Module):
                         "moe_utility_uncertainty_scores": moe_output.utility_uncertainty_scores,
                     }
                 )
+            for metric_name, metric_value in route_quality_metrics(
+                moe_output.router_probs,
+                posterior_probs=moe_output.posterior_probs,
+                utility_scores=moe_output.utility_scores,
+                pool_mask=moe_output.pool_mask,
+                active_mask=moe_output.active_mask,
+                retention_fractions=self.route_retention_fractions,
+            ).items():
+                safe_metric_name = metric_name.replace("/", "_").replace(".", "_")
+                aux_losses[f"moe_route_quality_{safe_metric_name}"] = metric_value
             if direct_expert_loss is not None:
                 aux_losses["moe_direct_expert_loss"] = self.direct_expert_loss_weight * direct_expert_loss
             if self.use_direct_action_output:
