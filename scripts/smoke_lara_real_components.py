@@ -42,6 +42,8 @@ def apply_smoke_overrides(
     *,
     attn_implementation: str | None = None,
     use_latent_action_head: bool | None = None,
+    use_transition_head: bool | None = None,
+    transition_loss_weight: float | None = None,
     use_lara_moe: bool | None = None,
     use_direct_action_experts: bool | None = None,
     use_direct_action_output: bool | None = None,
@@ -51,6 +53,13 @@ def apply_smoke_overrides(
     action_cfg = cfg.framework.action_model
     if use_latent_action_head is not None:
         action_cfg.use_latent_action_head = bool(use_latent_action_head)
+    if use_transition_head is not None:
+        action_cfg.lara_use_transition_head = bool(use_transition_head)
+        configured_weight = float(action_cfg.get("lara_transition_loss_weight", 0.0))
+        if use_transition_head and transition_loss_weight is None and configured_weight == 0.0:
+            action_cfg.lara_transition_loss_weight = 1.0
+    if transition_loss_weight is not None:
+        action_cfg.lara_transition_loss_weight = float(transition_loss_weight)
     if use_lara_moe is not None:
         action_cfg.use_lara_moe = bool(use_lara_moe)
     if use_direct_action_experts is not None:
@@ -121,6 +130,10 @@ def build_dummy_examples(cfg: Any, batch_size: int = 1) -> list[dict[str, Any]]:
                 "lang": "move the follower arm safely",
                 "future_actions": np.zeros((action_horizon, action_dim), dtype=np.float32),
                 "current_state": np.zeros((1, state_dim), dtype=np.float32),
+                "execution_state_target": np.zeros((1, state_dim), dtype=np.float32),
+                "execution_state_target_mask": True,
+                "prediction_state_target": np.zeros((1, state_dim), dtype=np.float32),
+                "prediction_state_target_mask": True,
                 "trajectory_id": idx,
             }
         )
@@ -236,6 +249,8 @@ def smoke_lara_real_components(
     run_step: bool = False,
     attn_implementation: str | None = None,
     use_latent_action_head: bool | None = None,
+    use_transition_head: bool | None = None,
+    transition_loss_weight: float | None = None,
     use_lara_moe: bool | None = None,
     use_direct_action_experts: bool | None = None,
     use_direct_action_output: bool | None = None,
@@ -248,6 +263,8 @@ def smoke_lara_real_components(
         cfg,
         attn_implementation=attn_implementation,
         use_latent_action_head=use_latent_action_head,
+        use_transition_head=use_transition_head,
+        transition_loss_weight=transition_loss_weight,
         use_lara_moe=use_lara_moe,
         use_direct_action_experts=use_direct_action_experts,
         use_direct_action_output=use_direct_action_output,
@@ -310,6 +327,20 @@ def main() -> int:
         help="Temporarily enable the default-off Stage-1 latent action head scaffold.",
     )
     parser.add_argument(
+        "--use-transition-head",
+        action="store_true",
+        help=(
+            "Temporarily enable the default-off execution/prediction boundary-state "
+            "transition head scaffold. If the configured loss weight is zero, smoke "
+            "sets it to 1.0 unless --transition-loss-weight is provided."
+        ),
+    )
+    parser.add_argument(
+        "--transition-loss-weight",
+        type=float,
+        help="Temporarily override framework.action_model.lara_transition_loss_weight for smoke checks.",
+    )
+    parser.add_argument(
         "--use-lara-moe",
         action="store_true",
         help="Temporarily enable the default-off Stage-2 MoE/router scaffold.",
@@ -336,6 +367,8 @@ def main() -> int:
         run_step=args.run_step,
         attn_implementation=args.attn_implementation,
         use_latent_action_head=args.use_latent_action_head or None,
+        use_transition_head=args.use_transition_head or None,
+        transition_loss_weight=args.transition_loss_weight,
         use_lara_moe=args.use_lara_moe or None,
         use_direct_action_experts=args.use_direct_action_experts or None,
         use_direct_action_output=args.use_direct_action_output or None,

@@ -47,6 +47,7 @@ def tiny_smoke_config(tmpdir: Path):
                     "use_latent_action_head": False,
                     "use_lara_moe": False,
                     "lara_use_transition_head": False,
+                    "lara_transition_loss_weight": 0.0,
                     "lara_use_direct_action_experts": False,
                     "lara_use_direct_action_output": False,
                 },
@@ -101,6 +102,7 @@ class SmokeLaraRealComponentsTest(unittest.TestCase):
             apply_smoke_overrides(
                 cfg,
                 use_latent_action_head=True,
+                use_transition_head=True,
                 use_lara_moe=True,
                 use_direct_action_experts=True,
                 use_direct_action_output=True,
@@ -108,14 +110,26 @@ class SmokeLaraRealComponentsTest(unittest.TestCase):
             summary = smoke_config_summary(cfg)
 
             self.assertTrue(cfg.framework.action_model.use_latent_action_head)
+            self.assertTrue(cfg.framework.action_model.lara_use_transition_head)
+            self.assertEqual(cfg.framework.action_model.lara_transition_loss_weight, 1.0)
             self.assertTrue(cfg.framework.action_model.use_lara_moe)
             self.assertTrue(cfg.framework.action_model.lara_use_direct_action_experts)
             self.assertTrue(cfg.framework.action_model.lara_use_direct_action_output)
             self.assertTrue(summary["use_latent_action_head"])
+            self.assertTrue(summary["lara_use_transition_head"])
             self.assertTrue(summary["use_lara_moe"])
             self.assertTrue(summary["lara_use_direct_action_experts"])
             self.assertTrue(summary["lara_use_direct_action_output"])
             self.assertFalse(summary["use_lara_moe_default_safe"])
+
+    def test_transition_loss_weight_override_is_preserved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = tiny_smoke_config(Path(tmp))
+
+            apply_smoke_overrides(cfg, use_transition_head=True, transition_loss_weight=0.25)
+
+            self.assertTrue(cfg.framework.action_model.lara_use_transition_head)
+            self.assertEqual(cfg.framework.action_model.lara_transition_loss_weight, 0.25)
 
     def test_direct_action_overrides_imply_moe_prerequisites(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -146,6 +160,10 @@ class SmokeLaraRealComponentsTest(unittest.TestCase):
             self.assertEqual(len(examples), 2)
             self.assertEqual(examples[0]["future_actions"].shape, (3, 2))
             self.assertEqual(examples[0]["current_state"].shape, (1, 4))
+            self.assertEqual(examples[0]["execution_state_target"].shape, (1, 4))
+            self.assertTrue(examples[0]["execution_state_target_mask"])
+            self.assertEqual(examples[0]["prediction_state_target"].shape, (1, 4))
+            self.assertTrue(examples[0]["prediction_state_target_mask"])
             self.assertEqual(examples[0]["video"].shape, (2, 8, 16, 16, 3))
 
     def test_build_real_examples_uses_configured_so101_horizons(self):
@@ -246,12 +264,16 @@ class SmokeLaraRealComponentsTest(unittest.TestCase):
                     cfg_path,
                     instantiate=True,
                     use_latent_action_head=True,
+                    use_transition_head=True,
+                    transition_loss_weight=0.5,
                     use_direct_action_output=True,
                 )
 
             action_cfg = instantiate.call_args.args[0].framework.action_model
             self.assertEqual(result["instantiate"]["status"], "error")
             self.assertTrue(action_cfg.use_latent_action_head)
+            self.assertTrue(action_cfg.lara_use_transition_head)
+            self.assertEqual(action_cfg.lara_transition_loss_weight, 0.5)
             self.assertTrue(action_cfg.use_lara_moe)
             self.assertTrue(action_cfg.lara_use_direct_action_experts)
             self.assertTrue(action_cfg.lara_use_direct_action_output)

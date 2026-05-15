@@ -58,6 +58,7 @@ These files exist to make the next implementation steps concrete, but they are n
 - `scripts/smoke_lara_real_components.py` now provides an explicit preflight for local Qwen/V-JEPA checkpoint paths and optional real `Lara` instantiate/one-step dummy forward-backward checks, with structured error reporting for missing runtime dependencies or model-load failures.
 - The real-component smoke script can temporarily enable the default-off Stage-1 latent-action head and Stage-2 MoE/direct action expert scaffolds. Local `--run-step --attn-implementation sdpa` checks now complete dummy forward/backward for the latent-only path, the MoE/direct-output path, and the combined latent+MoE/direct-output path.
 - The same smoke script can now use `--use-real-batch` to load examples from the configured SO101 LeRobot dataset, report real sample shapes, and run the model path on real SO101 batch contents instead of synthetic zeros. Passing this smoke only proves integration wiring; it is not evidence that the paper's latent-action MoE or two-level routing algorithm is trained or complete.
+- The smoke script can also temporarily enable `--use-transition-head`; dummy smoke now supplies execution/prediction boundary state targets, and real SO101 batch smoke uses the dataloader-provided boundary targets to exercise the transition-state loss path.
 
 ## Remaining Engineering Risks
 
@@ -66,7 +67,7 @@ These files exist to make the next implementation steps concrete, but they are n
 - The latent action head is currently a Stage-1 skeleton that can pass real-component smoke, but it still needs empirical SO101 training validation, loss-weight tuning, and ablation against the token-conditioned flow baseline.
 - The MoE/router path is currently a Stage-2 scaffold that can pass real-component smoke with direct action experts and routed direct output, but it still needs full-train validation of direct experts and per-expert action-loss posterior paths, resident-pool success evaluation, and closed-loop validation beyond server-side pool reuse.
 - Utility calibration currently validates action-loss utility labels, generic utility composition, a trainable utility-head interface, and loss surfaces; it does not yet supervise value/progress/uncertainty from latent-state or closed-loop evaluator labels.
-- The optional transition head and dataloader boundary targets are wired, but transition-state training still needs empirical validation and loss-weight tuning.
+- The optional transition head and dataloader boundary targets are wired and can be exercised by real-batch smoke, but transition-state training still needs empirical validation and loss-weight tuning.
 - Matched-compute and matched-resident support currently covers reporting protocol and expert-budget accounting only; it does not measure real FLOPs, latency, VRAM, or closed-loop success.
 - The new pytest static tests were not run in the system Python because that interpreter lacks `pytest`; run them inside the project environment with `python -m pytest tests/test_baseline_static.py`.
 - VJ2 video preprocessing still happens inside the forward path and may bottleneck training.

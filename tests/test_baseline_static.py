@@ -177,6 +177,8 @@ def test_optional_moe_router_stage_two_exists():
     assert "--real-batch-size" in smoke_src
     assert "--attn-implementation" in smoke_src
     assert "--use-latent-action-head" in smoke_src
+    assert "--use-transition-head" in smoke_src
+    assert "--transition-loss-weight" in smoke_src
     assert "--use-lara-moe" in smoke_src
     assert "--use-direct-action-experts" in smoke_src
     assert "--use-direct-action-output" in smoke_src

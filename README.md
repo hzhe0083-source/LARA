@@ -127,7 +127,8 @@ python scripts/smoke_lara_real_components.py \
   --config scripts/config/lara_so101_ft.yaml \
   --run-step \
   --attn-implementation sdpa \
-  --use-latent-action-head
+  --use-latent-action-head \
+  --use-transition-head
 
 python scripts/smoke_lara_real_components.py \
   --config scripts/config/lara_so101_ft.yaml \
@@ -139,7 +140,7 @@ python scripts/smoke_lara_real_components.py \
   --use-direct-action-output
 ```
 
-`--use-real-batch` loads a small batch from the configured SO101 LeRobot dataset instead of the synthetic dummy batch. It can be combined with `--run-step` and the paper-stage flags to check that real SO101 sample shapes feed the same model path. `--use-direct-action-experts` implies `--use-lara-moe`; `--use-direct-action-output` implies both. These flags are smoke-time overrides only, and a passing smoke check does not mean the MoE/two-level routing method from the paper is complete or trained.
+`--use-real-batch` loads a small batch from the configured SO101 LeRobot dataset instead of the synthetic dummy batch. It can be combined with `--run-step` and the paper-stage flags to check that real SO101 sample shapes feed the same model path. `--use-transition-head` temporarily enables the boundary-state transition scaffold and gives it loss weight 1.0 when the config keeps the default zero weight; pass `--transition-loss-weight` to override that smoke weight. `--use-direct-action-experts` implies `--use-lara-moe`; `--use-direct-action-output` implies both. These flags are smoke-time overrides only, and a passing smoke check does not mean the MoE/two-level routing method from the paper is complete or trained.
 
 ## SO101 Dataset
 
