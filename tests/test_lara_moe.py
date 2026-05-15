@@ -6,6 +6,7 @@ from Lara.model.modules.action_model.lara_moe import (
     ActionChunkExpertBank,
     LatentActionMoE,
     aggregate_episode_responsibilities,
+    candidate_route_utility,
     centered_utility_targets,
     masked_topk_softmax,
     posterior_from_expert_losses,
@@ -336,6 +337,32 @@ class LatentActionMoETest(unittest.TestCase):
         self.assertLessEqual(float(curve[0.25]), float(curve[0.5]))
         self.assertLessEqual(float(curve[0.5]), float(curve[1.0]))
         self.assertTrue(torch.allclose(curve[1.0], torch.tensor(1.0)))
+
+    def test_candidate_route_utility_combines_value_progress_uncertainty_and_cost(self):
+        value = torch.tensor([[1.0, 2.0]])
+        progress = torch.tensor([[0.5, 1.0]])
+        uncertainty = torch.tensor([[0.25, 0.5]])
+        cost = torch.tensor([[0.1, 0.2]])
+
+        utility = candidate_route_utility(
+            value_scores=value,
+            progress_scores=progress,
+            uncertainty_scores=uncertainty,
+            cost_scores=cost,
+            progress_weight=2.0,
+            uncertainty_weight=0.5,
+            cost_weight=3.0,
+        )
+
+        expected = value + 2.0 * progress - 0.5 * uncertainty - 3.0 * cost
+        self.assertTrue(torch.allclose(utility, expected))
+
+    def test_candidate_route_utility_validates_component_shapes(self):
+        with self.assertRaisesRegex(ValueError, "share shape"):
+            candidate_route_utility(
+                value_scores=torch.zeros(2, 3),
+                progress_scores=torch.zeros(2, 4),
+            )
 
 
 if __name__ == "__main__":

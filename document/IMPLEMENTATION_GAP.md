@@ -17,7 +17,7 @@ These files exist to make the next implementation steps concrete, but they are n
 
 - Stage-1 latent action head scaffold: posterior encoder, VQ codebook, and context-only prior (`use_latent_action_head: false`).
 - Stage-2 MoE/router scaffold: residual token experts, optional direct action-chunk experts, posterior responsibility from latent tokens or per-expert action reconstruction losses, episode-level resident pool targets from aggregated chunk responsibility, chunk-level top-k routing constrained to the resident pool, posterior-to-router distillation losses, balance/stickiness stabilizers, and route collapse diagnostics (`use_lara_moe: false`).
-- Utility calibration scaffold: centered utility regression and pairwise ranking losses for externally supplied candidate route utilities (`lara_utility_loss_weight: 0.0`).
+- Utility calibration scaffold: candidate value/progress/uncertainty/cost scoring helpers, centered utility regression, and pairwise ranking losses for externally supplied route utilities (`lara_utility_loss_weight: 0.0`).
 
 ## Missing Paper Components
 
@@ -40,7 +40,7 @@ These files exist to make the next implementation steps concrete, but they are n
 - Stage-1 latent action head code was added behind `use_latent_action_head`; it is not yet validated in a full training run.
 - Stage-2 MoE/router code was added behind `use_lara_moe`; it now has torch tests for resident-pool routing, chunk top-k routing, per-expert action-loss posterior responsibility, and episode-level pool target aggregation, but it is not yet validated in a full training run.
 - Trajectory ids are now passed from the LeRobot dataloader through `Lara_core` into the action adapter so batch-local episode responsibility can supervise the pool router.
-- Utility calibration loss code was added behind zero default weights; it still needs a real utility-score producer before it can be considered the paper's counterfactual calibration stage.
+- Utility calibration loss code and generic candidate utility scoring helpers were added behind zero default weights; they still need real value/progress/uncertainty signals before they can be considered the paper's counterfactual calibration stage.
 - Optional direct action-chunk expert heads were added behind `lara_use_direct_action_experts: false`; they still need real SO101 training validation.
 - Route-switch-rate and retained-probability-mass helpers were added for offline route diagnostics; closed-loop subset-retention success curves still need real evaluation rollouts.
 
@@ -50,7 +50,7 @@ These files exist to make the next implementation steps concrete, but they are n
 - Full `Lara` model instantiation with real Qwen/V-JEPA checkpoints and real-component one-step training smoke tests still need to be run; framework glue and fake action-head backprop are covered by checkpoint-free smoke tests.
 - The latent action head is currently a Stage-1 skeleton and still needs empirical validation, loss-weight tuning, and ablation against the token-conditioned flow baseline.
 - The MoE/router path is currently a Stage-2 scaffold and still needs full-train validation of the direct expert and per-expert action-loss posterior paths, resident-pool success evaluation, and closed-loop validation.
-- Utility calibration currently validates only the loss surface; it does not yet compute candidate route utility from value/progress/latent-state or closed-loop evaluator signals.
+- Utility calibration currently validates only generic utility composition and loss surfaces; it does not yet produce value/progress/uncertainty signals from latent-state or closed-loop evaluator models.
 - The new pytest static tests were not run in the system Python because that interpreter lacks `pytest`; run them inside the project environment with `python -m pytest tests/test_baseline_static.py`.
 - VJ2 video preprocessing still happens inside the forward path and may bottleneck training.
 - `pyproject.toml` and `requirements.txt` do not pin the torch/CUDA runtime; the project still depends on a compatible prebuilt PyTorch environment.

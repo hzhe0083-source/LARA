@@ -183,6 +183,46 @@ def retained_probability_mass(probs: torch.Tensor, retention_fractions: list[flo
     return results
 
 
+def candidate_route_utility(
+    value_scores: Optional[torch.Tensor] = None,
+    progress_scores: Optional[torch.Tensor] = None,
+    uncertainty_scores: Optional[torch.Tensor] = None,
+    cost_scores: Optional[torch.Tensor] = None,
+    progress_weight: float = 1.0,
+    uncertainty_weight: float = 1.0,
+    cost_weight: float = 1.0,
+) -> torch.Tensor:
+    components = [value_scores, progress_scores, uncertainty_scores, cost_scores]
+    reference = next((component for component in components if component is not None), None)
+    if reference is None:
+        raise ValueError("At least one utility component must be provided")
+    if reference.ndim != 2:
+        raise ValueError(f"Expected utility components [B, M], got {tuple(reference.shape)}")
+    for component in components:
+        if component is not None and component.shape != reference.shape:
+            raise ValueError(
+                f"All utility components must share shape {tuple(reference.shape)}, got {tuple(component.shape)}"
+            )
+    for name, weight in [
+        ("progress_weight", progress_weight),
+        ("uncertainty_weight", uncertainty_weight),
+        ("cost_weight", cost_weight),
+    ]:
+        if weight < 0:
+            raise ValueError(f"{name} must be non-negative")
+
+    utility = torch.zeros_like(reference)
+    if value_scores is not None:
+        utility = utility + value_scores
+    if progress_scores is not None:
+        utility = utility + progress_weight * progress_scores
+    if uncertainty_scores is not None:
+        utility = utility - uncertainty_weight * uncertainty_scores
+    if cost_scores is not None:
+        utility = utility - cost_weight * cost_scores
+    return utility
+
+
 def aggregate_episode_responsibilities(
     posterior_probs: torch.Tensor,
     episode_ids: torch.Tensor,
