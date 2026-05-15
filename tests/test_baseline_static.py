@@ -245,6 +245,11 @@ def test_optional_moe_router_stage_two_exists():
     assert "counterfactual_utility_matrix_from_records" in readiness_cli_src
     assert "protocol_evidence_audit" in readiness_cli_src
     assert "--allow-incomplete" in readiness_cli_src
+    assert "--min-training-steps" in readiness_cli_src
+    assert "--min-robot-eval-episodes" in readiness_cli_src
+    assert "uses_real_so101_data" in readiness_cli_src
+    assert "has_counterfactual_utility_eval" in readiness_cli_src
+    assert "checkpoint_path must point to an existing checkpoint" in readiness_cli_src
     assert "def smoke_lara_real_components" in smoke_src
     assert "def _exception_status" in smoke_src
     assert "def apply_smoke_overrides" in smoke_src
@@ -403,6 +408,7 @@ def test_optional_moe_router_stage_two_exists():
     assert "matched-compute rows, matched-resident rows, budget-match flags, Pareto frontier flags" in gap
     assert "scripts/summarize_lara_protocol.py" in gap
     assert "scripts/audit_lara_paper_readiness.py" in gap
+    assert "structured JSON with required paper-stage flags" in gap
     assert "route-sequence diagnostics" in gap
     assert "training-time randomized resident-pool size" in gap
     assert "scripts/smoke_lara_real_components.py" in gap

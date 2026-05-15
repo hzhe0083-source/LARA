@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 from typing import Any
@@ -47,6 +48,41 @@ def _check(name: str, ok: bool, *, detail: str, severity: str = "required", **ex
     }
     payload.update(extra)
     return payload
+
+
+def _load_json_object(path: Path, artifact_name: str) -> dict[str, Any]:
+    text = path.read_text(encoding="utf-8").strip()
+    if not text:
+        raise ValueError(f"{artifact_name} must not be empty")
+    payload = json.loads(text)
+    if not isinstance(payload, dict):
+        raise ValueError(f"{artifact_name} must be a JSON object")
+    return payload
+
+
+def _artifact_value(payload: dict[str, Any], dotted_keys: str | tuple[str, ...], default: Any = None) -> Any:
+    if isinstance(dotted_keys, str):
+        dotted_keys = (dotted_keys,)
+    for dotted_key in dotted_keys:
+        value = _value(payload, dotted_key, None)
+        if value is not None:
+            return value
+    return default
+
+
+def _artifact_bool(payload: dict[str, Any], dotted_keys: str | tuple[str, ...], default: bool = False) -> bool:
+    value = _artifact_value(payload, dotted_keys, default)
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "ok", "completed"}
+    return bool(value)
+
+
+def _finite_float(value: Any) -> float | None:
+    try:
+        scalar = float(value)
+    except (TypeError, ValueError):
+        return None
+    return scalar if math.isfinite(scalar) else None
 
 
 def load_records(path: str | Path) -> list[dict[str, Any]]:
@@ -253,14 +289,195 @@ def _rollout_protocol_check(
     )
 
 
-def _artifact_check(name: str, path: Path | None, detail: str) -> dict[str, Any]:
+def _existing_path(path_value: Any, *, relative_to: Path) -> str | None:
+    if path_value is None or str(path_value) == "":
+        return None
+    path = Path(path_value)
+    if not path.is_absolute():
+        path = (relative_to / path).resolve()
+    return str(path) if path.exists() else None
+
+
+def _training_artifact_check(path: Path | None, cfg: Any, *, min_steps: int) -> dict[str, Any]:
+    name = "full_so101_training_artifact"
+    detail = "Full SO101 training evidence for latent/MoE paths is required before paper-complete claims."
     if path is None:
         return _check(name, False, detail=detail, missing=f"Provide --{name.replace('_', '-')}.")
+    if not path.exists():
+        return _check(name, False, detail=f"{detail} Path does not exist: {path}", path=str(path))
+
+    payload = _load_json_object(path, name)
+    artifact_dir = path.parent
+    status = str(_artifact_value(payload, ("status", "training_status"), "")).lower()
+    data_mix = _artifact_value(payload, ("config.datasets.vla_data.data_mix", "dataset.data_mix", "data_mix"))
+    train_steps = int(_artifact_value(payload, ("train_steps_completed", "global_step", "trainer.global_step"), 0) or 0)
+    final_metrics = _artifact_value(payload, ("final_metrics", "metrics"), {})
+    if not isinstance(final_metrics, dict):
+        final_metrics = {}
+
+    required_flags = {
+        "use_latent_action_head": (
+            "config.framework.action_model.use_latent_action_head",
+            "features.use_latent_action_head",
+            "use_latent_action_head",
+        ),
+        "lara_use_transition_head": (
+            "config.framework.action_model.lara_use_transition_head",
+            "features.lara_use_transition_head",
+            "lara_use_transition_head",
+        ),
+        "use_lara_moe": (
+            "config.framework.action_model.use_lara_moe",
+            "features.use_lara_moe",
+            "use_lara_moe",
+        ),
+        "lara_use_direct_action_experts": (
+            "config.framework.action_model.lara_use_direct_action_experts",
+            "features.lara_use_direct_action_experts",
+            "lara_use_direct_action_experts",
+        ),
+        "lara_use_expert_loss_posterior": (
+            "config.framework.action_model.lara_use_expert_loss_posterior",
+            "features.lara_use_expert_loss_posterior",
+            "lara_use_expert_loss_posterior",
+        ),
+    }
+    missing_flags = [
+        flag_name for flag_name, keys in required_flags.items() if not _artifact_bool(payload, keys)
+    ]
+    uses_utility_labels = _artifact_bool(
+        payload,
+        (
+            "uses_counterfactual_utility_labels",
+            "features.uses_counterfactual_utility_labels",
+        ),
+    ) or bool(_artifact_value(payload, "config.datasets.vla_data.counterfactual_utility_labels_path"))
+    utility_loss_weight = _finite_float(
+        _artifact_value(payload, "config.framework.action_model.lara_utility_loss_weight", 0.0)
+    )
+    uses_utility_training = uses_utility_labels and utility_loss_weight is not None and utility_loss_weight > 0
+
+    required_metric_keys = (
+        "action_loss",
+        "transition_state_loss",
+        "moe_router_loss",
+        "moe_pool_distill_loss",
+        "moe_utility_loss",
+    )
+    missing_metrics = [
+        metric_key for metric_key in required_metric_keys if _finite_float(final_metrics.get(metric_key)) is None
+    ]
+    checkpoint_path = _existing_path(
+        _artifact_value(payload, ("checkpoint_path", "best_checkpoint_path", "final_checkpoint_path")),
+        relative_to=artifact_dir,
+    )
+
+    failures = []
+    if status not in {"ok", "success", "completed", "complete"}:
+        failures.append("status must be completed/ok")
+    if not _artifact_bool(payload, ("uses_real_so101_data", "dataset.uses_real_so101_data")):
+        failures.append("uses_real_so101_data must be true")
+    if data_mix != _value(cfg, "datasets.vla_data.data_mix", "so101_single_arm"):
+        failures.append("data_mix must match the SO101 config")
+    if train_steps < min_steps:
+        failures.append(f"train_steps_completed must be >= {min_steps}")
+    if missing_flags:
+        failures.append(f"required paper-stage flags are missing/false: {missing_flags}")
+    if not uses_utility_training:
+        failures.append("counterfactual utility labels and positive lara_utility_loss_weight are required")
+    if missing_metrics:
+        failures.append(f"required finite final metrics are missing: {missing_metrics}")
+    if checkpoint_path is None:
+        failures.append("checkpoint_path must point to an existing checkpoint")
+
     return _check(
         name,
-        path.exists(),
-        detail=f"{detail} Path: {path}",
+        not failures,
+        detail=detail,
         path=str(path),
+        failures=failures,
+        train_steps_completed=train_steps,
+        min_training_steps=min_steps,
+        data_mix=data_mix,
+        checkpoint_path=checkpoint_path,
+        missing_required_flags=missing_flags,
+        missing_required_metrics=missing_metrics,
+        uses_counterfactual_utility_labels=uses_utility_labels,
+        lara_utility_loss_weight=utility_loss_weight,
+    )
+
+
+def _robot_eval_artifact_check(
+    path: Path | None,
+    *,
+    required_fractions: list[float] | None,
+    min_episodes: int,
+    cfg: Any,
+) -> dict[str, Any]:
+    name = "closed_loop_robot_eval_artifact"
+    detail = "Real closed-loop SO101 evaluation evidence is required beyond unit/smoke tests."
+    if path is None:
+        return _check(name, False, detail=detail, missing=f"Provide --{name.replace('_', '-')}.")
+    if not path.exists():
+        return _check(name, False, detail=f"{detail} Path does not exist: {path}", path=str(path))
+
+    payload = _load_json_object(path, name)
+    status = str(_artifact_value(payload, ("status", "eval_status"), "")).lower()
+    robot = str(_artifact_value(payload, ("robot", "robot_type", "benchmark"), ""))
+    num_episodes = int(_artifact_value(payload, ("num_episodes", "episodes", "rollout_episodes"), 0) or 0)
+    success_rate = _finite_float(_artifact_value(payload, ("success_rate", "success")))
+    observed_fractions = [
+        float(fraction)
+        for fraction in _artifact_value(payload, ("resident_fractions", "route_retention_fractions"), [])
+    ]
+    required_fractions = required_fractions or []
+    missing_fractions = [
+        f"{fraction:g}" for fraction in required_fractions if fraction not in observed_fractions
+    ]
+
+    expected_action_horizon = int(_value(cfg, "framework.action_model.action_horizon", 60))
+    expected_execution_horizon = int(_value(cfg, "framework.action_model.execution_horizon", 10))
+    prediction_horizon = int(_artifact_value(payload, ("prediction_horizon", "action_horizon"), 0) or 0)
+    execution_horizon = int(_artifact_value(payload, "execution_horizon", 0) or 0)
+
+    failures = []
+    if status not in {"ok", "success", "completed", "complete"}:
+        failures.append("status must be completed/ok")
+    if "so101" not in robot.lower():
+        failures.append("robot must identify SO101")
+    if not _artifact_bool(payload, ("uses_real_robot", "real_robot")):
+        failures.append("uses_real_robot must be true")
+    if not _artifact_bool(payload, ("closed_loop", "is_closed_loop")):
+        failures.append("closed_loop must be true")
+    if num_episodes < min_episodes:
+        failures.append(f"num_episodes must be >= {min_episodes}")
+    if success_rate is None or not 0.0 <= success_rate <= 1.0:
+        failures.append("success_rate must be finite and in [0, 1]")
+    if prediction_horizon != expected_action_horizon or execution_horizon != expected_execution_horizon:
+        failures.append(
+            f"horizons must match action_horizon={expected_action_horizon}, execution_horizon={expected_execution_horizon}"
+        )
+    if missing_fractions:
+        failures.append(f"missing resident fractions: {missing_fractions}")
+    if not _artifact_bool(payload, ("has_route_diagnostics", "route_diagnostics.ok")):
+        failures.append("route diagnostics must be present")
+    if not _artifact_bool(payload, ("has_matched_compute_metrics", "matched_compute.ok")):
+        failures.append("matched-compute metrics must be present")
+    if not _artifact_bool(payload, ("has_counterfactual_utility_eval", "counterfactual_utility_eval.ok")):
+        failures.append("counterfactual utility evaluation must be present")
+
+    return _check(
+        name,
+        not failures,
+        detail=detail,
+        path=str(path),
+        failures=failures,
+        num_episodes=num_episodes,
+        min_robot_eval_episodes=min_episodes,
+        success_rate=success_rate,
+        robot=robot,
+        resident_fractions=[f"{fraction:g}" for fraction in observed_fractions],
+        missing_required_fractions=missing_fractions,
     )
 
 
@@ -290,17 +507,18 @@ def audit_lara_paper_readiness(args: argparse.Namespace) -> dict[str, Any]:
         )
     )
     checks.append(
-        _artifact_check(
-            "full_so101_training_artifact",
+        _training_artifact_check(
             _repo_path(args.full_so101_training_artifact),
-            "Full SO101 training evidence for latent/MoE paths is required before paper-complete claims.",
+            cfg,
+            min_steps=args.min_training_steps,
         )
     )
     checks.append(
-        _artifact_check(
-            "closed_loop_robot_eval_artifact",
+        _robot_eval_artifact_check(
             _repo_path(args.closed_loop_robot_eval_artifact),
-            "Real closed-loop SO101 evaluation evidence is required beyond unit/smoke tests.",
+            required_fractions=required_fractions,
+            min_episodes=args.min_robot_eval_episodes,
+            cfg=cfg,
         )
     )
 
@@ -321,6 +539,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--rollout-records", help="Closed-loop rollout JSON/JSONL for paper protocol auditing.")
     parser.add_argument("--full-so101-training-artifact", help="Path to full SO101 latent/MoE training evidence.")
     parser.add_argument("--closed-loop-robot-eval-artifact", help="Path to real SO101 closed-loop evaluation evidence.")
+    parser.add_argument("--min-training-steps", type=int, default=1000)
+    parser.add_argument("--min-robot-eval-episodes", type=int, default=1)
     parser.add_argument(
         "--required-resident-fractions",
         help="Comma-separated resident fractions required in rollout records; defaults to config lara_route_retention_fractions.",

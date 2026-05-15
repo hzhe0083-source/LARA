@@ -249,6 +249,10 @@ python scripts/audit_lara_paper_readiness.py \
 
 The command intentionally exits nonzero when required evidence is missing. For preflight logs where an incomplete report is still useful, add `--allow-incomplete`.
 
+The training artifact is a JSON object, not a free-form log. It must show a completed real-SO101 run, positive training steps, an existing checkpoint path, enabled latent/MoE/transition/direct-expert/expert-posterior flags, counterfactual utility labels with positive utility loss weight, and finite final metrics including `action_loss`, `transition_state_loss`, `moe_router_loss`, `moe_pool_distill_loss`, and `moe_utility_loss`.
+
+The robot evaluation artifact is also structured JSON. It must identify SO101 real-robot closed-loop evaluation, match the configured 60/10 horizons, cover the required resident fractions, report finite `success_rate`, include enough episodes for `--min-robot-eval-episodes`, and explicitly confirm route diagnostics, matched-compute metrics, and counterfactual utility evaluation.
+
 ## Training
 
 Run SO101 fine-tuning with:
