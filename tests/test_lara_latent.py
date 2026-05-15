@@ -44,11 +44,12 @@ class LatentActionHeadTest(unittest.TestCase):
         quantizer = VectorQuantizer(codebook_size=8, code_dim=6, commitment_weight=0.25)
         inputs = torch.randn(2, 3, 6)
 
-        quantized, indices, vq_loss, perplexity = quantizer(inputs)
+        quantized, indices, vq_loss, code_usage_loss, perplexity = quantizer(inputs)
 
         self.assertEqual(quantized.shape, inputs.shape)
         self.assertEqual(indices.shape, (2, 3))
         self.assertGreaterEqual(float(vq_loss.detach()), 0.0)
+        self.assertGreaterEqual(float(code_usage_loss.detach()), 0.0)
         self.assertGreaterEqual(float(perplexity), 1.0)
 
     def test_latent_action_head_forward_and_predict(self):
@@ -60,6 +61,7 @@ class LatentActionHeadTest(unittest.TestCase):
             num_latent_tokens=2,
             codebook_size=8,
             hidden_dim=16,
+            code_usage_loss_weight=0.1,
         )
         context_tokens = torch.randn(2, 5, 8)
         future_actions = torch.randn(2, 4, 3)
@@ -71,6 +73,7 @@ class LatentActionHeadTest(unittest.TestCase):
         self.assertTrue(torch.isfinite(output.loss).item())
         self.assertGreaterEqual(float(output.vq_loss), 0.0)
         self.assertGreaterEqual(float(output.prior_loss), 0.0)
+        self.assertGreaterEqual(float(output.code_usage_loss), 0.0)
         self.assertEqual(predicted_tokens.shape, (2, 2, 8))
 
     def test_transition_head_predicts_execution_and_prediction_boundary_states(self):

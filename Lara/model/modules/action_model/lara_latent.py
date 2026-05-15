@@ -11,6 +11,7 @@ class LatentActionOutput:
     loss: torch.Tensor
     vq_loss: torch.Tensor
     prior_loss: torch.Tensor
+    code_usage_loss: torch.Tensor
     perplexity: torch.Tensor
 
 
@@ -121,11 +122,20 @@ class PosteriorLatentActionEncoder(nn.Module):
 class VectorQuantizer(nn.Module):
     """Straight-through VQ codebook for latent action tokens."""
 
-    def __init__(self, codebook_size: int, code_dim: int, commitment_weight: float = 0.25):
+    def __init__(
+        self,
+        codebook_size: int,
+        code_dim: int,
+        commitment_weight: float = 0.25,
+        usage_temperature: float = 1.0,
+    ):
         super().__init__()
+        if usage_temperature <= 0:
+            raise ValueError("usage_temperature must be positive")
         self.codebook_size = codebook_size
         self.code_dim = code_dim
         self.commitment_weight = commitment_weight
+        self.usage_temperature = usage_temperature
         self.codebook = nn.Embedding(codebook_size, code_dim)
         nn.init.normal_(self.codebook.weight, mean=0.0, std=0.02)
 
@@ -147,6 +157,10 @@ class VectorQuantizer(nn.Module):
         codebook_loss = F.mse_loss(quantized, inputs.detach())
         commitment_loss = F.mse_loss(inputs, quantized.detach())
         vq_loss = codebook_loss + self.commitment_weight * commitment_loss
+        soft_assignments = torch.softmax(-distances / self.usage_temperature, dim=-1)
+        avg_soft_probs = soft_assignments.mean(dim=0).clamp_min(1e-8)
+        uniform_probs = torch.full_like(avg_soft_probs, 1.0 / self.codebook_size)
+        code_usage_loss = F.kl_div(torch.log(avg_soft_probs), uniform_probs, reduction="sum")
         quantized = inputs + (quantized - inputs).detach()
 
         with torch.no_grad():
@@ -154,7 +168,7 @@ class VectorQuantizer(nn.Module):
             avg_probs = encodings.mean(dim=0)
             perplexity = torch.exp(-torch.sum(avg_probs * torch.log(avg_probs + 1e-10)))
 
-        return quantized, indices.view(inputs.shape[0], inputs.shape[1]), vq_loss, perplexity
+        return quantized, indices.view(inputs.shape[0], inputs.shape[1]), vq_loss, code_usage_loss, perplexity
 
 
 class LatentActionPrior(nn.Module):
@@ -195,10 +209,13 @@ class LatentActionHead(nn.Module):
         commitment_weight: float = 0.25,
         vq_loss_weight: float = 1.0,
         prior_loss_weight: float = 1.0,
+        code_usage_loss_weight: float = 0.0,
+        code_usage_temperature: float = 1.0,
     ):
         super().__init__()
         self.vq_loss_weight = vq_loss_weight
         self.prior_loss_weight = prior_loss_weight
+        self.code_usage_loss_weight = code_usage_loss_weight
         self.posterior = PosteriorLatentActionEncoder(
             context_dim=context_dim,
             action_dim=action_dim,
@@ -210,6 +227,7 @@ class LatentActionHead(nn.Module):
             codebook_size=codebook_size,
             code_dim=context_dim,
             commitment_weight=commitment_weight,
+            usage_temperature=code_usage_temperature,
         )
         self.prior = LatentActionPrior(
             context_dim=context_dim,
@@ -220,18 +238,23 @@ class LatentActionHead(nn.Module):
 
     def forward(self, context_tokens: torch.Tensor, future_actions: torch.Tensor) -> LatentActionOutput:
         posterior_tokens = self.posterior(context_tokens, future_actions)
-        quantized_tokens, code_indices, vq_loss, perplexity = self.codebook(posterior_tokens)
+        quantized_tokens, code_indices, vq_loss, code_usage_loss, perplexity = self.codebook(posterior_tokens)
         prior_logits = self.prior(context_tokens)
         prior_loss = F.cross_entropy(
             prior_logits.reshape(-1, prior_logits.shape[-1]),
             code_indices.reshape(-1).detach(),
         )
-        loss = self.vq_loss_weight * vq_loss + self.prior_loss_weight * prior_loss
+        loss = (
+            self.vq_loss_weight * vq_loss
+            + self.prior_loss_weight * prior_loss
+            + self.code_usage_loss_weight * code_usage_loss
+        )
         return LatentActionOutput(
             tokens=quantized_tokens,
             loss=loss,
             vq_loss=vq_loss.detach(),
             prior_loss=prior_loss.detach(),
+            code_usage_loss=code_usage_loss.detach(),
             perplexity=perplexity.detach(),
         )
 

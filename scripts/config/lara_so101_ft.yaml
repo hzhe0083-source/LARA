@@ -39,6 +39,8 @@ framework:
     lara_commitment_weight: 0.25
     lara_vq_loss_weight: 1.0
     lara_prior_loss_weight: 1.0
+    lara_code_usage_loss_weight: 0.0
+    lara_code_usage_temperature: 1.0
     lara_use_transition_head: false
     lara_transition_hidden_dim: 1024
     lara_transition_loss_weight: 0.0

@@ -73,6 +73,8 @@ class ActionHeadAdapter(nn.Module):
                 commitment_weight=action_cfg.get("lara_commitment_weight", 0.25),
                 vq_loss_weight=action_cfg.get("lara_vq_loss_weight", 1.0),
                 prior_loss_weight=action_cfg.get("lara_prior_loss_weight", 1.0),
+                code_usage_loss_weight=action_cfg.get("lara_code_usage_loss_weight", 0.0),
+                code_usage_temperature=action_cfg.get("lara_code_usage_temperature", 1.0),
             )
             if self.use_latent_action_head
             else None
@@ -282,6 +284,7 @@ class ActionHeadAdapter(nn.Module):
                 "latent_action_loss": latent_output.loss,
                 "latent_action_vq_loss": latent_output.vq_loss,
                 "latent_action_prior_loss": latent_output.prior_loss,
+                "latent_action_code_usage_loss": latent_output.code_usage_loss,
                 "latent_action_perplexity": latent_output.perplexity,
             }
         if self.transition_head is not None:
