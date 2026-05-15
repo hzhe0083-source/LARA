@@ -390,21 +390,36 @@ class ResidualActionExpert(nn.Module):
 class ActionChunkExpert(nn.Module):
     """Expert head that directly reconstructs a future action chunk."""
 
-    def __init__(self, hidden_size: int, expert_hidden_size: int, action_horizon: int, action_dim: int):
+    def __init__(
+        self,
+        hidden_size: int,
+        expert_hidden_size: int,
+        action_horizon: int,
+        action_dim: int,
+        state_dim: Optional[int] = None,
+    ):
         super().__init__()
         self.action_horizon = action_horizon
         self.action_dim = action_dim
         self.context_norm = nn.LayerNorm(hidden_size)
+        self.state_proj = nn.Linear(state_dim, hidden_size) if state_dim is not None else None
         self.net = nn.Sequential(
             nn.Linear(hidden_size, expert_hidden_size),
             nn.GELU(),
             nn.Linear(expert_hidden_size, action_horizon * action_dim),
         )
 
-    def forward(self, tokens: torch.Tensor) -> torch.Tensor:
+    def forward(self, tokens: torch.Tensor, state: Optional[torch.Tensor] = None) -> torch.Tensor:
         if tokens.ndim != 3:
             raise ValueError(f"Expected tokens [B, T, D], got {tuple(tokens.shape)}")
         context_summary = self.context_norm(tokens).mean(dim=1)
+        if state is not None and self.state_proj is not None:
+            if state.ndim == 2:
+                state = state.unsqueeze(1)
+            if state.ndim != 3 or state.shape[0] != tokens.shape[0]:
+                raise ValueError(f"Expected state [B, D] or [B, T, D], got {tuple(state.shape)}")
+            state_summary = state.to(device=tokens.device, dtype=tokens.dtype).mean(dim=1)
+            context_summary = context_summary + self.state_proj(state_summary)
         actions = self.net(context_summary)
         return actions.view(tokens.shape[0], self.action_horizon, self.action_dim)
 
@@ -419,6 +434,7 @@ class ActionChunkExpertBank(nn.Module):
         expert_hidden_size: int,
         action_horizon: int,
         action_dim: int,
+        state_dim: Optional[int] = None,
     ):
         super().__init__()
         self.action_horizon = action_horizon
@@ -430,13 +446,56 @@ class ActionChunkExpertBank(nn.Module):
                     expert_hidden_size=expert_hidden_size,
                     action_horizon=action_horizon,
                     action_dim=action_dim,
+                    state_dim=state_dim,
                 )
                 for _ in range(num_experts)
             ]
         )
 
-    def forward(self, tokens: torch.Tensor) -> torch.Tensor:
-        return torch.stack([expert(tokens) for expert in self.experts], dim=1)
+    def forward(self, tokens: torch.Tensor, state: Optional[torch.Tensor] = None) -> torch.Tensor:
+        return torch.stack([expert(tokens, state=state) for expert in self.experts], dim=1)
+
+    @staticmethod
+    def routed_actions(pred_actions: torch.Tensor, route_weights: torch.Tensor) -> torch.Tensor:
+        if pred_actions.ndim != 4:
+            raise ValueError(f"Expected pred_actions [B, M, H, D], got {tuple(pred_actions.shape)}")
+        if route_weights.ndim != 2 or route_weights.shape != pred_actions.shape[:2]:
+            raise ValueError(
+                f"Expected route_weights [B, M] matching pred_actions, got {tuple(route_weights.shape)}"
+            )
+        return torch.sum(pred_actions * route_weights[:, :, None, None].to(pred_actions.dtype), dim=1)
+
+    @staticmethod
+    def action_chunk_loss(
+        pred_actions: torch.Tensor,
+        target_actions: torch.Tensor,
+        execution_horizon: Optional[int] = None,
+        execution_loss_weight: float = 1.0,
+        prediction_loss_weight: float = 1.0,
+    ) -> torch.Tensor:
+        if pred_actions.ndim != 3:
+            raise ValueError(f"Expected pred_actions [B, H, D], got {tuple(pred_actions.shape)}")
+        if target_actions.ndim != 3:
+            raise ValueError(f"Expected target_actions [B, H, D], got {tuple(target_actions.shape)}")
+        if pred_actions.shape != target_actions.shape:
+            raise ValueError(
+                f"pred_actions and target_actions must share shape, got "
+                f"{tuple(pred_actions.shape)} vs {tuple(target_actions.shape)}"
+            )
+
+        loss = (pred_actions - target_actions) ** 2
+        if execution_loss_weight != prediction_loss_weight:
+            horizon = loss.shape[1]
+            execution_horizon = horizon if execution_horizon is None else min(execution_horizon, horizon)
+            weights = torch.full(
+                (1, horizon, 1),
+                prediction_loss_weight,
+                device=loss.device,
+                dtype=loss.dtype,
+            )
+            weights[:, :execution_horizon, :] = execution_loss_weight
+            loss = loss * weights
+        return loss.mean()
 
     @staticmethod
     def reconstruction_losses(

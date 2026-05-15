@@ -58,6 +58,7 @@ framework:
     lara_balance_loss_weight: 0.0
     lara_stickiness_loss_weight: 0.0
     lara_use_direct_action_experts: false
+    lara_use_direct_action_output: false
     lara_direct_expert_hidden_dim: 1024
     lara_direct_expert_loss_weight: 1.0
     lara_posterior_temperature: 1.0

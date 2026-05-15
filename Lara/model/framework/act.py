@@ -43,7 +43,13 @@ class ActionHeadAdapter(nn.Module):
         self.use_lara_moe = action_cfg.get("use_lara_moe", False)
         self.use_expert_loss_posterior = action_cfg.get("lara_use_expert_loss_posterior", True)
         self.use_direct_action_experts = action_cfg.get("lara_use_direct_action_experts", False)
+        self.use_direct_action_output = action_cfg.get("lara_use_direct_action_output", False)
         self.direct_expert_loss_weight = action_cfg.get("lara_direct_expert_loss_weight", 1.0)
+        if self.use_direct_action_output and (not self.use_lara_moe or not self.use_direct_action_experts):
+            raise ValueError(
+                "lara_use_direct_action_output requires use_lara_moe=True "
+                "and lara_use_direct_action_experts=True"
+            )
         self.repeated_diffusion_steps = action_cfg.get(
             "repeated_diffusion_steps",
             self.config.trainer.get("repeated_diffusion_steps", 4) if self.config and self.config.trainer else 4,
@@ -100,6 +106,7 @@ class ActionHeadAdapter(nn.Module):
                 expert_hidden_size=action_cfg.get("lara_direct_expert_hidden_dim", action_cfg.get("hidden_size", 1024)),
                 action_horizon=self.action_horizon,
                 action_dim=action_cfg.action_dim,
+                state_dim=action_cfg.get("state_dim", None),
             )
             if self.use_lara_moe and self.use_direct_action_experts
             else None
@@ -236,11 +243,14 @@ class ActionHeadAdapter(nn.Module):
             }
         actions_target_repeated = actions_target.repeat_interleave(self.repeated_diffusion_steps, dim=0)
         conditioning_tokens = self._conditioning_tokens(embodied_action_tokens, latent_action_tokens)
+        state_tensor = self._state_to_tensor(state, embodied_action_tokens)
+        direct_expert_actions = None
+        direct_routed_action_loss = None
         if self.lara_moe is not None:
             direct_expert_loss = None
             direct_expert_losses = None
             if self.direct_action_experts is not None:
-                direct_expert_actions = self.direct_action_experts(conditioning_tokens)
+                direct_expert_actions = self.direct_action_experts(conditioning_tokens, state=state_tensor)
                 direct_expert_losses = self.direct_action_experts.reconstruction_losses(
                     direct_expert_actions,
                     actions_target,
@@ -367,16 +377,32 @@ class ActionHeadAdapter(nn.Module):
                 )
             if direct_expert_loss is not None:
                 aux_losses["moe_direct_expert_loss"] = self.direct_expert_loss_weight * direct_expert_loss
+            if self.use_direct_action_output:
+                direct_routed_actions = ActionChunkExpertBank.routed_actions(
+                    direct_expert_actions,
+                    moe_output.posterior_probs if self.training else moe_output.router_probs,
+                )
+                direct_routed_action_loss = ActionChunkExpertBank.action_chunk_loss(
+                    direct_routed_actions,
+                    actions_target,
+                    execution_horizon=self.config.framework.action_model.get("execution_horizon", self.action_horizon),
+                    execution_loss_weight=self.config.framework.action_model.get("execution_loss_weight", 1.0),
+                    prediction_loss_weight=self.config.framework.action_model.get("prediction_loss_weight", 1.0),
+                )
+                aux_losses["moe_direct_routed_action_loss"] = direct_routed_action_loss
         context_repeated = conditioning_tokens.repeat_interleave(self.repeated_diffusion_steps, dim=0)
 
-        state_tensor = self._state_to_tensor(state, embodied_action_tokens)
         state_repeated = (
             state_tensor.repeat_interleave(self.repeated_diffusion_steps, dim=0)
             if state_tensor is not None
             else None
         )
 
-        action_loss = self.action_model(context_repeated, actions_target_repeated, state_repeated)
+        action_loss = (
+            direct_routed_action_loss
+            if self.use_direct_action_output
+            else self.action_model(context_repeated, actions_target_repeated, state_repeated)
+        )
         if not return_aux:
             return (
                 action_loss
@@ -467,6 +493,7 @@ class ActionHeadAdapter(nn.Module):
         if self.latent_action_head is not None:
             latent_action_tokens = self.latent_action_head.predict(embodied_action_tokens)
         conditioning_tokens = self._conditioning_tokens(embodied_action_tokens, latent_action_tokens)
+        state_tensor = self._state_to_tensor(state, embodied_action_tokens)
         if self.lara_moe is not None:
             initial_context_tokens = (
                 self._as_tensor(initial_context_tokens, device=conditioning_tokens.device, dtype=conditioning_tokens.dtype)
@@ -478,10 +505,13 @@ class ActionHeadAdapter(nn.Module):
                 if pool_mask is not None
                 else None
             )
-            conditioning_tokens = self.lara_moe.predict(
+            moe_output = self.lara_moe(
                 conditioning_tokens,
                 initial_context_tokens=initial_context_tokens,
                 pool_mask=pool_mask,
             )
-        state_tensor = self._state_to_tensor(state, embodied_action_tokens)
+            if self.use_direct_action_output:
+                direct_expert_actions = self.direct_action_experts(conditioning_tokens, state=state_tensor)
+                return ActionChunkExpertBank.routed_actions(direct_expert_actions, moe_output.router_probs)
+            conditioning_tokens = moe_output.tokens
         return self.action_model.predict_action(conditioning_tokens, state_tensor)

@@ -374,6 +374,50 @@ class LatentActionMoETest(unittest.TestCase):
         self.assertEqual(losses.shape, (2, 3))
         self.assertGreater(float(weighted_loss.detach()), 0.0)
 
+    def test_action_chunk_expert_bank_routes_weighted_actions(self):
+        pred_actions = torch.tensor(
+            [
+                [
+                    [[1.0, 0.0], [3.0, 0.0]],
+                    [[5.0, 0.0], [7.0, 0.0]],
+                ]
+            ]
+        )
+        route_weights = torch.tensor([[0.25, 0.75]])
+        target_actions = torch.zeros(1, 2, 2)
+
+        routed_actions = ActionChunkExpertBank.routed_actions(pred_actions, route_weights)
+        loss = ActionChunkExpertBank.action_chunk_loss(
+            routed_actions,
+            target_actions,
+            execution_horizon=1,
+            execution_loss_weight=1.0,
+            prediction_loss_weight=0.5,
+        )
+
+        self.assertTrue(torch.allclose(routed_actions, torch.tensor([[[4.0, 0.0], [6.0, 0.0]]])))
+        self.assertGreater(float(loss), 0.0)
+
+    def test_action_chunk_expert_bank_can_condition_on_state(self):
+        torch.manual_seed(0)
+        experts = ActionChunkExpertBank(
+            hidden_size=8,
+            num_experts=2,
+            expert_hidden_size=16,
+            action_horizon=3,
+            action_dim=2,
+            state_dim=4,
+        )
+        tokens = torch.randn(1, 5, 8)
+        state_a = torch.zeros(1, 1, 4)
+        state_b = torch.ones(1, 1, 4)
+
+        actions_a = experts(tokens, state=state_a)
+        actions_b = experts(tokens, state=state_b)
+
+        self.assertEqual(actions_a.shape, (1, 2, 3, 2))
+        self.assertFalse(torch.allclose(actions_a, actions_b))
+
     def test_balance_and_stickiness_losses(self):
         balanced = torch.tensor(
             [

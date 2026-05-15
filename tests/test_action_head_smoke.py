@@ -150,6 +150,50 @@ class ActionHeadAdapterSmokeTest(unittest.TestCase):
         self.assertEqual(pred_actions.shape, (1, 3, 2))
         self.assertTrue(torch.isfinite(pred_actions).all().item())
 
+    def test_direct_moe_action_output_trains_and_predicts_action_chunks(self):
+        torch.manual_seed(0)
+        adapter = ActionHeadAdapter(
+            config=tiny_action_config(
+                use_lara_moe=True,
+                lara_num_experts=4,
+                lara_episode_pool_size=2,
+                lara_top_k=1,
+                lara_use_direct_action_experts=True,
+                lara_use_direct_action_output=True,
+                lara_use_expert_loss_posterior=False,
+            ),
+            context_hidden_size=16,
+        )
+        adapter.train()
+
+        embodied_tokens = torch.randn(1, 2, 16)
+        latent_tokens = torch.randn(1, 1, 16)
+        actions = torch.randn(1, 3, 2)
+        state = torch.randn(1, 1, 3)
+
+        output = adapter(
+            embodied_action_tokens=embodied_tokens,
+            latent_action_tokens=latent_tokens,
+            actions=actions,
+            state=state,
+            trajectory_ids=[3],
+            return_aux=True,
+        )
+
+        self.assertIn("moe_direct_routed_action_loss", output)
+        self.assertTrue(torch.allclose(output["action_loss"], output["moe_direct_routed_action_loss"]))
+        self.assertTrue(torch.isfinite(output["total_action_loss"]).item())
+
+        adapter.eval()
+        pred_actions = adapter.predict_action(
+            embodied_action_tokens=embodied_tokens,
+            latent_action_tokens=latent_tokens,
+            state=state,
+        )
+
+        self.assertEqual(pred_actions.shape, (1, 3, 2))
+        self.assertTrue(torch.isfinite(pred_actions).all().item())
+
 
 if __name__ == "__main__":
     unittest.main()

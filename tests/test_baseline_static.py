@@ -99,6 +99,8 @@ def test_optional_moe_router_stage_two_exists():
     assert "def sparse_route_budget" in moe_src
     assert "def candidate_route_utility" in moe_src
     assert "def aggregate_episode_responsibilities" in moe_src
+    assert "def routed_actions" in moe_src
+    assert "def action_chunk_loss" in moe_src
     assert "def utility_calibration_objective" in moe_src
     assert "def utility_component_supervision_loss" in moe_src
     assert "expert_action_losses" in moe_src
@@ -107,7 +109,11 @@ def test_optional_moe_router_stage_two_exists():
     assert "lara_use_utility_head" in adapter_src
     assert "def expert_conditioning_tokens" in moe_src
     assert "self.direct_action_experts" in adapter_src
+    assert "self.use_direct_action_output" in adapter_src
+    assert 'state_dim=action_cfg.get("state_dim", None)' in adapter_src
+    assert "direct_action_experts(conditioning_tokens, state=state_tensor)" in adapter_src
     assert "moe_direct_expert_loss" in adapter_src
+    assert "moe_direct_routed_action_loss" in adapter_src
     assert "def _trajectory_ids_to_tensor" in adapter_src
     assert "aggregate_episode_responsibilities(posterior_probs, trajectory_tensor)" in adapter_src
     assert "def select_resident_pool" in moe_src
@@ -140,6 +146,7 @@ def test_optional_moe_router_stage_two_exists():
     assert "lara_balance_loss_weight: 0.0" in config_src
     assert "lara_stickiness_loss_weight: 0.0" in config_src
     assert "lara_use_direct_action_experts: false" in config_src
+    assert "lara_use_direct_action_output: false" in config_src
     assert "lara_direct_expert_loss_weight: 1.0" in config_src
     assert "lara_posterior_temperature: 1.0" in config_src
     assert "lara_use_expert_loss_posterior: true" in config_src
