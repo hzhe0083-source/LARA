@@ -5,10 +5,8 @@ from functools import partial
 import torch
 import numpy as np
 from torch.utils.data import DataLoader
-import numpy as np
 import torch.distributed as dist
 from pathlib import Path
-from Lara.dataloader.vlm_datasets import make_vlm_dataloader
 from Lara.training.trainer_utils.trainer_tools import is_main_process
 
 logger = get_logger(__name__)
@@ -60,6 +58,8 @@ def build_dataloader(cfg, dataset_py="lerobot_datasets_oxe"): # TODO now here on
             vla_dataset.save_dataset_statistics(output_dir / "dataset_statistics.json")
         return vla_train_dataloader
     elif dataset_py == "vlm_datasets":
+        from Lara.dataloader.vlm_datasets import make_vlm_dataloader
+
         vlm_data_module = make_vlm_dataloader(cfg)
         vlm_train_dataloader = vlm_data_module["train_dataloader"]
         

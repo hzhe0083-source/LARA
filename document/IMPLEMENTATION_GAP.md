@@ -35,6 +35,7 @@ These files exist to make the next implementation steps concrete, but they are n
 - Flow-matching timestep buckets are clamped to the valid range.
 - `ActionHeadAdapter` has a dummy-batch forward/predict smoke test for basic loss and output shape.
 - SO101 batches now expose `future_actions` and `current_state` explicitly, with `action` and `state` retained as compatibility aliases.
+- The LeRobot v3 collator can be imported without the optional `lerobot` package and has unit coverage for explicit `future_actions/current_state` aliases.
 - Action labels remain fp32 in the adapter.
 - Static pytest coverage was added for the baseline guardrails in `tests/test_baseline_static.py`.
 - Stage-1 latent action head code was added behind `use_latent_action_head`; it is not yet validated in a full training run.

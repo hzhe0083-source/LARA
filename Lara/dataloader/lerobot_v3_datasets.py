@@ -1,13 +1,14 @@
 import bisect
-import torch
-from torch.utils.data import Dataset
 import os
-import lerobot
-from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
+
+import torch
 import torchvision.transforms as T
-to_pil = T.ToPILImage()
+from torch.utils.data import Dataset
 
 from Lara.dataloader.gr00t_lerobot.mixtures import DATASET_NAMED_MIXTURES
+
+to_pil = T.ToPILImage()
+
 
 def collate_fn(batch, img_keys, state_key, action_key, task_key, resize_size):
     examples = []
@@ -20,7 +21,7 @@ def collate_fn(batch, img_keys, state_key, action_key, task_key, resize_size):
         for k in img_keys:
             img_primary = to_pil(b[k][0]).resize((resize_size, resize_size))
             example["image"].append(img_primary)
-            
+
         for k in b.keys():
             if k == state_key:
                 example["state"] = b[k][0:1].cpu().numpy()
@@ -61,6 +62,8 @@ class MixtureDataset(Dataset):
 def get_lerobot_v3_datasets(
     data_cfg: dict,
 ):
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
+
     data_root_dir = data_cfg.data_root_dir
     data_mix = data_cfg.data_mix
     action_horizon = data_cfg.action_horizon
