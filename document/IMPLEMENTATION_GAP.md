@@ -51,11 +51,12 @@ These files exist to make the next implementation steps concrete, but they are n
 - Sparse active/resident expert budget helpers plus matched-compute rows, budget-match flags, Pareto frontier flags, and subset-retention success aggregation were added for matched-budget reporting; real FLOPs, latency, VRAM, and success measurements still require benchmark runs.
 - Action-head auxiliary diagnostics are now returned as `metric/...` outputs and excluded from the differentiable loss sum by the trainers.
 - The websocket deployment server caches MoE `resident_pool_mask` values per `session_id` and supports `reset`, allowing closed-loop clients to reuse an episode-level expert pool across receding-horizon chunks.
+- `scripts/smoke_lara_real_components.py` now provides an explicit preflight for local Qwen/V-JEPA checkpoint paths and optional real `Lara` instantiate/one-step dummy forward-backward checks.
 
 ## Remaining Engineering Risks
 
 - Action target alignment is explicit for the current SO101 dataloader via `future_actions`. Future datasets that return past/current/future actions together must split out `future_actions` before calling the action adapter.
-- Full `Lara` model instantiation with real Qwen/V-JEPA checkpoints and real-component one-step training smoke tests still need to be run; framework glue and fake action-head backprop are covered by checkpoint-free smoke tests.
+- Full `Lara` model instantiation with real Qwen/V-JEPA checkpoints and real-component one-step training smoke tests now have a script entry point but still need to be run successfully in the full training environment.
 - The latent action head is currently a Stage-1 skeleton and still needs empirical validation, loss-weight tuning, and ablation against the token-conditioned flow baseline.
 - The MoE/router path is currently a Stage-2 scaffold and still needs full-train validation of the direct expert and per-expert action-loss posterior paths, resident-pool success evaluation, and closed-loop validation beyond server-side pool reuse.
 - Utility calibration currently validates action-loss utility labels, generic utility composition, a trainable utility-head interface, and loss surfaces; it does not yet supervise value/progress/uncertainty from latent-state or closed-loop evaluator labels.
@@ -67,7 +68,7 @@ These files exist to make the next implementation steps concrete, but they are n
 
 ## Suggested Implementation Order
 
-1. Add full-framework smoke tests for real Qwen/V-JEPA integration and one fake-batch train step.
+1. Run `scripts/smoke_lara_real_components.py --instantiate --run-step` in the full training environment and fix any real Qwen/V-JEPA integration issues it exposes.
 2. Add optional `past_actions` when a dataset needs history; `future_actions` and `current_state` are explicit for SO101.
 3. Validate and tune the optional latent-action posterior/codebook/prior path.
 4. Validate the optional MoE/router path with real trajectory-id batches and route-quality diagnostics.

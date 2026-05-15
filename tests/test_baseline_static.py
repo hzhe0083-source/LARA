@@ -100,6 +100,7 @@ def test_optional_moe_router_stage_two_exists():
     core_src = read("Lara/model/framework/Lara_core.py")
     server_src = read("deployment/model_server/tools/websocket_policy_server.py")
     protocol_src = read("Lara/evaluation/lara_protocol.py")
+    smoke_src = read("scripts/smoke_lara_real_components.py")
     config_src = read("scripts/config/lara_so101_ft.yaml")
     flow_src = read("Lara/model/modules/action_model/GR00T_ActionHeader.py")
     gap = read("document/IMPLEMENTATION_GAP.md")
@@ -131,6 +132,9 @@ def test_optional_moe_router_stage_two_exists():
     assert "def matched_compute_row" in protocol_src
     assert "def matched_budget_flags" in protocol_src
     assert "def pareto_frontier_flags" in protocol_src
+    assert "def smoke_lara_real_components" in smoke_src
+    assert "--instantiate" in smoke_src
+    assert "--run-step" in smoke_src
     assert "def candidate_route_utility" in moe_src
     assert "def utility_from_expert_losses" in moe_src
     assert "def aggregate_episode_responsibilities" in moe_src
@@ -210,6 +214,7 @@ def test_optional_moe_router_stage_two_exists():
     assert "Action-head route-quality metrics are emitted" in gap
     assert "matched-compute rows, budget-match flags, Pareto frontier flags" in gap
     assert "training-time randomized resident-pool size" in gap
+    assert "scripts/smoke_lara_real_components.py" in gap
     assert "caches MoE `resident_pool_mask` values per `session_id`" in gap
 
 

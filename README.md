@@ -106,6 +106,14 @@ trainer:
 
 This means the VLA-JEPA pretrain representation is reused, while the SO101 action head is trained on SO101 follower-arm action/state data.
 
+Run the lightweight real-component smoke preflight before a heavy training job:
+
+```bash
+python scripts/smoke_lara_real_components.py --config scripts/config/lara_so101_ft.yaml
+```
+
+When the local Qwen/V-JEPA checkpoints and runtime dependencies are available, add `--instantiate` or `--run-step` to load the actual `Lara` framework and execute a one-step dummy forward/backward check.
+
 ## SO101 Dataset
 
 The default SO101 config points to:
@@ -244,7 +252,7 @@ python3 -m py_compile \
   Lara/model/modules/action_model/LayerwiseFM_ActionHeader.py
 ```
 
-A full model instantiation smoke test was not run in the system Python because that interpreter did not have `torch` installed. Use the `Lara` conda environment for training or runtime checks.
+Use `scripts/smoke_lara_real_components.py --instantiate --run-step` inside the training environment for the full Qwen/V-JEPA component smoke check.
 
 ## Acknowledgements
 
