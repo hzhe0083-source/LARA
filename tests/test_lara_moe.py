@@ -42,6 +42,13 @@ class LatentActionMoETest(unittest.TestCase):
         self.assertTrue(torch.all(output.active_mask.sum(dim=-1) == 2))
         self.assertTrue(torch.all(output.active_mask <= output.pool_mask))
         self.assertTrue(torch.allclose(output.router_probs.sum(dim=-1), torch.ones(4)))
+        self.assertEqual(output.active_usage.shape, (6,))
+        self.assertEqual(output.pool_usage.shape, (6,))
+        self.assertGreaterEqual(float(output.dead_expert_ratio), 0.0)
+        self.assertLessEqual(float(output.dead_expert_ratio), 1.0)
+        self.assertGreaterEqual(float(output.route_top1_match), 0.0)
+        self.assertLessEqual(float(output.route_top1_match), 1.0)
+        self.assertGreaterEqual(float(output.route_regret), 0.0)
         self.assertGreaterEqual(float(output.loss.detach()), 0.0)
 
     def test_predict_accepts_external_pool_mask(self):

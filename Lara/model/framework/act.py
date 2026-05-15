@@ -196,6 +196,10 @@ class ActionHeadAdapter(nn.Module):
                     "moe_router_entropy": moe_output.router_entropy,
                     "moe_posterior_entropy": moe_output.posterior_entropy,
                     "moe_pool_entropy": moe_output.pool_entropy,
+                    "moe_dead_expert_ratio": moe_output.dead_expert_ratio,
+                    "moe_pool_dead_expert_ratio": moe_output.pool_dead_expert_ratio,
+                    "moe_route_top1_match": moe_output.route_top1_match,
+                    "moe_route_regret": moe_output.route_regret,
                 }
             )
         context_repeated = conditioning_tokens.repeat_interleave(self.repeated_diffusion_steps, dim=0)

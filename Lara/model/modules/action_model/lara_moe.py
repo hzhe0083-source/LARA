@@ -20,6 +20,12 @@ class MoEConditionerOutput:
     pool_probs: torch.Tensor
     pool_mask: torch.Tensor
     active_mask: torch.Tensor
+    active_usage: torch.Tensor
+    pool_usage: torch.Tensor
+    dead_expert_ratio: torch.Tensor
+    pool_dead_expert_ratio: torch.Tensor
+    route_top1_match: torch.Tensor
+    route_regret: torch.Tensor
 
 
 def _validate_expert_mask(mask: torch.Tensor, logits: torch.Tensor, mask_name: str) -> torch.Tensor:
@@ -97,6 +103,30 @@ def posterior_from_expert_losses(
 
 def entropy(probs: torch.Tensor) -> torch.Tensor:
     return -(probs * torch.log(probs.clamp_min(1e-8))).sum(dim=-1).mean()
+
+
+def route_diagnostics(
+    router_probs: torch.Tensor,
+    posterior_probs: torch.Tensor,
+    pool_mask: torch.Tensor,
+    active_mask: torch.Tensor,
+) -> dict[str, torch.Tensor]:
+    active_usage = active_mask.float().mean(dim=0)
+    pool_usage = pool_mask.float().mean(dim=0)
+    dead_expert_ratio = (active_usage == 0).float().mean()
+    pool_dead_expert_ratio = (pool_usage == 0).float().mean()
+    route_top1_match = (router_probs.argmax(dim=-1) == posterior_probs.argmax(dim=-1)).float().mean()
+    selected_value = (posterior_probs * active_mask.float()).sum(dim=-1)
+    best_value = posterior_probs.max(dim=-1).values
+    route_regret = (best_value - selected_value).clamp_min(0.0).mean()
+    return {
+        "active_usage": active_usage,
+        "pool_usage": pool_usage,
+        "dead_expert_ratio": dead_expert_ratio,
+        "pool_dead_expert_ratio": pool_dead_expert_ratio,
+        "route_top1_match": route_top1_match,
+        "route_regret": route_regret,
+    }
 
 
 class ResidualActionExpert(nn.Module):
@@ -332,6 +362,12 @@ class LatentActionMoE(nn.Module):
         weights = train_weights if self.training and latent_action_tokens is not None else router_probs
         tokens = conditioning_tokens + self._expert_residual(conditioning_tokens, weights)
         total_loss = self.router_loss_weight * route_loss + self.pool_loss_weight * pool_loss
+        diagnostics = route_diagnostics(
+            router_probs=router_probs.detach(),
+            posterior_probs=posterior_probs.detach(),
+            pool_mask=pool_mask.detach(),
+            active_mask=active_mask.detach(),
+        )
         return MoEConditionerOutput(
             tokens=tokens,
             loss=total_loss,
@@ -345,6 +381,12 @@ class LatentActionMoE(nn.Module):
             pool_probs=pool_probs.detach(),
             pool_mask=pool_mask.detach(),
             active_mask=active_mask.detach(),
+            active_usage=diagnostics["active_usage"],
+            pool_usage=diagnostics["pool_usage"],
+            dead_expert_ratio=diagnostics["dead_expert_ratio"],
+            pool_dead_expert_ratio=diagnostics["pool_dead_expert_ratio"],
+            route_top1_match=diagnostics["route_top1_match"],
+            route_regret=diagnostics["route_regret"],
         )
 
     @torch.no_grad()

@@ -75,6 +75,7 @@ def test_optional_moe_router_stage_two_exists():
     assert "def topk_mask" in moe_src
     assert "def masked_kl_div" in moe_src
     assert "def posterior_from_expert_losses" in moe_src
+    assert "def route_diagnostics" in moe_src
     assert "expert_action_losses" in moe_src
     assert "def expert_conditioning_tokens" in moe_src
     assert "episode_pool_size" in moe_src
@@ -88,6 +89,8 @@ def test_optional_moe_router_stage_two_exists():
     assert "use_lara_moe" in adapter_src
     assert "moe_router_loss" in adapter_src
     assert "moe_pool_distill_loss" in adapter_src
+    assert "moe_dead_expert_ratio" in adapter_src
+    assert "moe_route_regret" in adapter_src
     assert "use_lara_moe: false" in config_src
     assert "lara_episode_pool_size: 4" in config_src
     assert "lara_posterior_temperature: 1.0" in config_src
