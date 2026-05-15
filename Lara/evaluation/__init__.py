@@ -10,6 +10,7 @@ from Lara.evaluation.lara_protocol import (
     resident_experts_for_fraction,
     rollout_record_with_route_diagnostics,
     route_sequence_diagnostics,
+    step_context_id,
     subset_retention_rows,
     subset_retention_success_curve,
 )
@@ -26,6 +27,7 @@ __all__ = [
     "resident_experts_for_fraction",
     "rollout_record_with_route_diagnostics",
     "route_sequence_diagnostics",
+    "step_context_id",
     "subset_retention_rows",
     "subset_retention_success_curve",
 ]

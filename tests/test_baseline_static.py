@@ -74,6 +74,12 @@ def test_so101_batches_expose_future_actions():
     assert 'execution_horizon=cfg.framework.action_model.get("execution_horizon", None)' in dataloader_src
     assert "trajectory_id=trajectory_name" in dataset_src
     assert "base_index=step" in dataset_src
+    assert "def load_counterfactual_utility_label_index" in dataset_src
+    assert "counterfactual_utility_labels_path" in dataset_src
+    assert "counterfactual_utility_sample_labeled_only" in dataset_src
+    assert "self._counterfactual_utility_labeled_step_indices" in dataset_src
+    assert 'return_dict["utility_scores"] = utility_label["utility_scores"].copy()' in dataset_src
+    assert 'return_dict["utility_candidate_mask"] = utility_label["utility_candidate_mask"].copy()' in dataset_src
     assert '"future_actions" if "future_actions" in examples[0] else "action"' in core_src
     assert 'actions_are_future = action_key == "future_actions"' in core_src
     assert 'action_mask_key = "future_action_mask" if "future_action_mask" in examples[0] else "action_mask"' in core_src
@@ -204,6 +210,9 @@ def test_optional_moe_router_stage_two_exists():
     assert "def protocol_summary_from_records" in protocol_src
     assert "def protocol_evidence_audit" in protocol_src
     assert "def counterfactual_utility_matrix_from_records" in protocol_src
+    assert "def step_context_id" in protocol_src
+    assert "trajectory_key: str = \"trajectory_id\"" in protocol_src
+    assert "base_index_key: str = \"base_index\"" in protocol_src
     assert '"utility_candidate_mask"' in protocol_src
     assert "min_candidates_per_context" in protocol_src
     assert "PAPER_REQUIRED_METRIC_KEYS" in protocol_src
@@ -360,6 +369,9 @@ def test_optional_moe_router_stage_two_exists():
     assert "lara_posterior_top_r:" in config_src
     assert "lara_use_expert_loss_posterior: true" in config_src
     assert "include_episode_start: false" in config_src
+    assert "counterfactual_utility_labels_path:" in config_src
+    assert "counterfactual_utility_min_candidates_per_context: 2" in config_src
+    assert "counterfactual_utility_sample_labeled_only: false" in config_src
     assert "Stage-2 MoE/router scaffold" in gap
     assert "expert-diversity/entropy stabilizers" in gap
     assert "route-quality aggregation metrics" in gap

@@ -59,6 +59,7 @@ def get_vla_dataset(
     action_horizon: int = 7,
     video_horizon: int = 16,
     execution_horizon: int | None = None,
+    num_utility_experts: int | None = None,
     **kwargs: dict,
 ) -> LeRobotMixtureDataset:
     """
@@ -97,6 +98,21 @@ def get_vla_dataset(
         action_horizon=action_horizon,
         execution_horizon=execution_horizon,
         include_episode_start=data_cfg.get("include_episode_start", False),
+        counterfactual_utility_labels_path=data_cfg.get("counterfactual_utility_labels_path", None),
+        num_utility_experts=num_utility_experts,
+        counterfactual_utility_cost_weight=data_cfg.get("counterfactual_utility_cost_weight", 0.0),
+        counterfactual_utility_require_all_experts=data_cfg.get(
+            "counterfactual_utility_require_all_experts",
+            False,
+        ),
+        counterfactual_utility_min_candidates_per_context=data_cfg.get(
+            "counterfactual_utility_min_candidates_per_context",
+            2,
+        ),
+        counterfactual_utility_sample_labeled_only=data_cfg.get(
+            "counterfactual_utility_sample_labeled_only",
+            False,
+        ),
         seed=seed,
         **kwargs,
     )

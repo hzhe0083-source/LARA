@@ -65,6 +65,16 @@ def _metric_value(record: Mapping[str, object], metric_key: str):
     return _record_value(record, *METRIC_KEY_ALIASES.get(metric_key, (metric_key,)))
 
 
+def step_context_id(trajectory_id: object, base_index: object) -> str:
+    """Stable key for per-step counterfactual labels."""
+
+    try:
+        base_index = int(base_index)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"base_index must be integer-like, got {base_index!r}") from exc
+    return f"{trajectory_id}:{base_index}"
+
+
 def _key_aliases(keys: str | Sequence[str], name: str) -> tuple[str, ...]:
     if isinstance(keys, str):
         aliases = (keys,)
@@ -124,6 +134,8 @@ def counterfactual_utility_matrix_from_records(
     *,
     num_experts: int,
     context_key: str = "context_id",
+    trajectory_key: str = "trajectory_id",
+    base_index_key: str = "base_index",
     expert_keys: str | Sequence[str] = ("expert_id", "candidate_expert_id"),
     value_keys: str | Sequence[str] = (
         "utility_score",
@@ -168,7 +180,14 @@ def counterfactual_utility_matrix_from_records(
             raise ValueError("records must contain mapping objects")
         context_id = _record_value(record, context_key)
         if context_id is None:
-            raise ValueError(f"record {record_index} must define {context_key}")
+            trajectory_id = _record_value(record, trajectory_key)
+            base_index = _record_value(record, base_index_key)
+            if trajectory_id is not None and base_index is not None:
+                context_id = step_context_id(trajectory_id, base_index)
+        if context_id is None:
+            raise ValueError(
+                f"record {record_index} must define {context_key} or both {trajectory_key} and {base_index_key}"
+            )
         try:
             row_index = context_to_row.get(context_id)
         except TypeError as exc:

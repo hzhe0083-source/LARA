@@ -44,7 +44,8 @@ def build_dataloader(cfg, dataset_py="lerobot_datasets_oxe"): # TODO now here on
             data_cfg=vla_dataset_cfg,
             action_horizon=cfg.framework.action_model.action_horizon,
             video_horizon=cfg.framework.vj2_model.num_frames,
-            execution_horizon=cfg.framework.action_model.get("execution_horizon", None))
+            execution_horizon=cfg.framework.action_model.get("execution_horizon", None),
+            num_utility_experts=cfg.framework.action_model.get("lara_num_experts", None))
         
         vla_train_dataloader = DataLoader(
             vla_dataset,

@@ -1,5 +1,8 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
+import numpy as np
 import torch
 
 from Lara.evaluation.lara_protocol import (
@@ -14,6 +17,7 @@ from Lara.evaluation.lara_protocol import (
     resident_experts_for_fraction,
     rollout_record_with_route_diagnostics,
     route_sequence_diagnostics,
+    step_context_id,
     subset_retention_rows,
     subset_retention_success_curve,
 )
@@ -386,6 +390,61 @@ class LARAProtocolTest(unittest.TestCase):
         self.assertAlmostEqual(float(labels["utility_scores"][0, 1]), 0.6, places=6)
         self.assertAlmostEqual(float(labels["utility_scores"][1, 1]), 0.55, places=6)
         self.assertEqual(labels["missing_candidates"], {"ep0:0": [2], "ep0:10": [0]})
+
+    def test_counterfactual_utility_matrix_can_use_trajectory_step_keys(self):
+        labels = counterfactual_utility_matrix_from_records(
+            [
+                {"trajectory_id": 7, "base_index": 20, "expert_id": 0, "success": 1.0},
+                {"trajectory_id": 7, "base_index": 20, "expert_id": 1, "success": 0.0},
+            ],
+            num_experts=3,
+        )
+
+        self.assertEqual(step_context_id(7, 20), "7:20")
+        self.assertEqual(labels["context_ids"], ["7:20"])
+        self.assertTrue(torch.equal(labels["utility_candidate_mask"][0], torch.tensor([True, True, False])))
+
+    def test_lerobot_utility_label_loader_indexes_by_step_context(self):
+        from Lara.dataloader.gr00t_lerobot.datasets import load_counterfactual_utility_label_index
+
+        with TemporaryDirectory() as tmpdir:
+            labels_path = Path(tmpdir) / "utility.jsonl"
+            labels_path.write_text(
+                "\n".join(
+                    [
+                        '{"trajectory_id": 3, "base_index": 5, "expert_id": 0, "success": 1.0}',
+                        '{"trajectory_id": 3, "base_index": 5, "expert_id": 1, "success": 0.25}',
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            label_index = load_counterfactual_utility_label_index(labels_path, num_experts=3)
+
+        self.assertEqual(sorted(label_index), ["3:5"])
+        self.assertEqual(label_index["3:5"]["utility_scores"].dtype.name, "float32")
+        self.assertEqual(label_index["3:5"]["utility_candidate_mask"].tolist(), [True, True, False])
+        self.assertAlmostEqual(float(label_index["3:5"]["utility_scores"][1]), 0.25, places=6)
+
+    def test_lerobot_mixture_can_sample_only_labeled_utility_steps(self):
+        from Lara.dataloader.gr00t_lerobot.datasets import LeRobotMixtureDataset
+
+        class DummyDataset:
+            all_steps = [(3, 5), (3, 6)]
+
+        dataset = object.__new__(LeRobotMixtureDataset)
+        dataset.datasets = [DummyDataset()]
+        dataset.mode = "eval"
+        dataset.epoch = 0
+        dataset.seed = 42
+        dataset._dataset_sampling_weights = np.array([1.0])
+        dataset.counterfactual_utility_sample_labeled_only = True
+        dataset._counterfactual_utility_labeled_step_indices = [np.array([1], dtype=np.int64)]
+
+        _, trajectory_id, base_index = dataset.sample_step(0)
+
+        self.assertEqual((trajectory_id, base_index), (3, 6))
 
     def test_counterfactual_utility_matrix_rejects_single_route_labels(self):
         with self.assertRaisesRegex(ValueError, "at least 2 candidates per context"):

@@ -130,6 +130,14 @@ datasets:
     # the optional episode-level MoE pool router can condition on h_1 instead of
     # the current chunk context.
     include_episode_start: false
+    # Default-off: JSON/JSONL records with context_id or trajectory_id/base_index
+    # plus candidate expert outcomes. When provided, labels are injected as
+    # utility_scores and utility_candidate_mask for the optional utility router loss.
+    counterfactual_utility_labels_path:
+    counterfactual_utility_cost_weight: 0.0
+    counterfactual_utility_require_all_experts: false
+    counterfactual_utility_min_candidates_per_context: 2
+    counterfactual_utility_sample_labeled_only: false
 
 trainer:
   epochs: 100

@@ -50,6 +50,7 @@ from Lara.dataloader.gr00t_lerobot.schema import (
     LeRobotStateActionMetadata,
 )
 from Lara.dataloader.gr00t_lerobot.transform import ComposedModalityTransform
+from Lara.evaluation.lara_protocol import counterfactual_utility_matrix_from_records, step_context_id
 
 from functools import partial
 from typing import Tuple, List
@@ -63,6 +64,46 @@ LE_ROBOT_STATS_FILENAME = "meta/stats_gr00t.json"
 LE_ROBOT_DATA_FILENAME = "data/*/*.parquet"
 LE_ROBOT_STEPS_FILENAME = "meta/steps.pkl"
 EPSILON = 5e-4
+
+
+def _load_json_or_jsonl_records(path: Path | str) -> list[dict]:
+    path = Path(path)
+    text = path.read_text(encoding="utf-8").strip()
+    if not text:
+        raise ValueError(f"counterfactual utility label file is empty: {path}")
+    if text[0] == "[":
+        records = json.loads(text)
+    else:
+        records = [json.loads(line) for line in text.splitlines() if line.strip()]
+    if not isinstance(records, list) or not all(isinstance(record, dict) for record in records):
+        raise ValueError("counterfactual utility labels must be a JSON list of objects or JSONL object records")
+    return records
+
+
+def load_counterfactual_utility_label_index(
+    path: Path | str,
+    *,
+    num_experts: int,
+    cost_weight: float = 0.0,
+    require_all_experts: bool = False,
+    min_candidates_per_context: int = 2,
+) -> dict[str, dict[str, np.ndarray]]:
+    """Load per-step counterfactual utility labels keyed by `trajectory_id:base_index`."""
+
+    labels = counterfactual_utility_matrix_from_records(
+        _load_json_or_jsonl_records(path),
+        num_experts=num_experts,
+        cost_weight=cost_weight,
+        require_all_experts=require_all_experts,
+        min_candidates_per_context=min_candidates_per_context,
+    )
+    label_index: dict[str, dict[str, np.ndarray]] = {}
+    for row_index, context_id in enumerate(labels["context_ids"]):
+        label_index[str(context_id)] = {
+            "utility_scores": labels["utility_scores"][row_index].numpy().astype(np.float32),
+            "utility_candidate_mask": labels["utility_candidate_mask"][row_index].numpy().astype(bool),
+        }
+    return label_index
 
 def calculate_dataset_statistics(parquet_paths: list[Path]) -> dict:
     """Calculate the dataset statistics of all columns for a list of parquet files."""
@@ -1382,6 +1423,12 @@ class LeRobotMixtureDataset(Dataset):
         action_horizon: int | None = None,
         execution_horizon: int | None = None,
         include_episode_start: bool = False,
+        counterfactual_utility_labels_path: str | Path | None = None,
+        num_utility_experts: int | None = None,
+        counterfactual_utility_cost_weight: float = 0.0,
+        counterfactual_utility_require_all_experts: bool = False,
+        counterfactual_utility_min_candidates_per_context: int = 2,
+        counterfactual_utility_sample_labeled_only: bool = False,
         seed: int = 42,
         metadata_config: dict = {
             "percentile_mixing_method": "min_max",
@@ -1421,6 +1468,37 @@ class LeRobotMixtureDataset(Dataset):
         self.action_horizon = action_horizon
         self.execution_horizon = execution_horizon
         self.include_episode_start = include_episode_start
+        if counterfactual_utility_labels_path is not None and num_utility_experts is None:
+            raise ValueError("num_utility_experts must be provided when counterfactual utility labels are enabled")
+        self.counterfactual_utility_label_index = (
+            {}
+            if counterfactual_utility_labels_path is None
+            else load_counterfactual_utility_label_index(
+                counterfactual_utility_labels_path,
+                num_experts=int(num_utility_experts),
+                cost_weight=counterfactual_utility_cost_weight,
+                require_all_experts=counterfactual_utility_require_all_experts,
+                min_candidates_per_context=counterfactual_utility_min_candidates_per_context,
+            )
+        )
+        self.counterfactual_utility_sample_labeled_only = bool(counterfactual_utility_sample_labeled_only)
+        self._counterfactual_utility_labeled_step_indices: list[np.ndarray] = []
+        if self.counterfactual_utility_label_index:
+            for dataset in self.datasets:
+                labeled_indices = [
+                    step_index
+                    for step_index, (trajectory_id, base_index) in enumerate(dataset.all_steps)
+                    if step_context_id(trajectory_id, base_index) in self.counterfactual_utility_label_index
+                ]
+                self._counterfactual_utility_labeled_step_indices.append(np.asarray(labeled_indices, dtype=np.int64))
+            if self.counterfactual_utility_sample_labeled_only and not any(
+                len(indices) > 0 for indices in self._counterfactual_utility_labeled_step_indices
+            ):
+                raise ValueError("counterfactual utility labels do not match any LeRobot steps")
+        else:
+            self._counterfactual_utility_labeled_step_indices = [
+                np.asarray([], dtype=np.int64) for _ in self.datasets
+            ]
 
         # Set properties for sampling
 
@@ -1541,7 +1619,20 @@ class LeRobotMixtureDataset(Dataset):
         rng = np.random.default_rng(seed)
 
         # Sample dataset
-        dataset_index = rng.choice(len(self.datasets), p=self.dataset_sampling_weights)
+        if self.counterfactual_utility_sample_labeled_only:
+            candidate_dataset_indices = np.asarray(
+                [
+                    dataset_index
+                    for dataset_index, step_indices in enumerate(self._counterfactual_utility_labeled_step_indices)
+                    if len(step_indices) > 0
+                ],
+                dtype=np.int64,
+            )
+            candidate_weights = self.dataset_sampling_weights[candidate_dataset_indices]
+            candidate_weights = candidate_weights / candidate_weights.sum()
+            dataset_index = rng.choice(candidate_dataset_indices, p=candidate_weights)
+        else:
+            dataset_index = rng.choice(len(self.datasets), p=self.dataset_sampling_weights)
         dataset = self.datasets[dataset_index]
 
         # Sample trajectory
@@ -1553,7 +1644,10 @@ class LeRobotMixtureDataset(Dataset):
         # # Sample step
         # base_index = rng.choice(dataset.trajectory_lengths[trajectory_index])
         # return dataset, trajectory_id, base_index
-        single_step_index = rng.choice(len(dataset.all_steps))
+        if self.counterfactual_utility_sample_labeled_only:
+            single_step_index = rng.choice(self._counterfactual_utility_labeled_step_indices[dataset_index])
+        else:
+            single_step_index = rng.choice(len(dataset.all_steps))
         trajectory_id, base_index = dataset.all_steps[single_step_index]
         return dataset, trajectory_id, base_index
     
@@ -1625,6 +1719,11 @@ class LeRobotMixtureDataset(Dataset):
             images.append(Image.fromarray(video[0]).resize((self.resolution_size, self.resolution_size)))
         return images
 
+    def _counterfactual_utility_label(self, trajectory_id: int, base_index: int) -> dict[str, np.ndarray] | None:
+        if not self.counterfactual_utility_label_index:
+            return None
+        return self.counterfactual_utility_label_index.get(step_context_id(trajectory_id, base_index))
+
     def __getitem__(self, index: int) -> dict:
         """Get the data for a single trajectory and start index.
 
@@ -1680,6 +1779,10 @@ class LeRobotMixtureDataset(Dataset):
                     lang=language,
                     video=videos,
                 )
+                utility_label = self._counterfactual_utility_label(trajectory_name, step)
+                if utility_label is not None:
+                    return_dict["utility_scores"] = utility_label["utility_scores"].copy()
+                    return_dict["utility_candidate_mask"] = utility_label["utility_candidate_mask"].copy()
                 if self.include_episode_start:
                     return_dict["episode_start_image"] = self._episode_start_images(dataset, trajectory_name)
                 if self.with_state:
