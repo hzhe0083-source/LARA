@@ -76,7 +76,9 @@ def test_optional_moe_router_stage_two_exists():
     assert "def masked_kl_div" in moe_src
     assert "def posterior_from_expert_losses" in moe_src
     assert "def route_diagnostics" in moe_src
+    assert "def aggregate_episode_responsibilities" in moe_src
     assert "expert_action_losses" in moe_src
+    assert "pool_target_probs" in moe_src
     assert "def expert_conditioning_tokens" in moe_src
     assert "episode_pool_size" in moe_src
     assert "active_mask = topk_mask(router_logits, top_k=self.top_k, allowed_mask=pool_mask)" in moe_src
@@ -106,7 +108,7 @@ def test_paper_gap_is_explicit():
     assert "Experimental scaffolding exists but is not complete or validated" in readme
     assert "Missing Paper Components" in gap
     assert "MoE action experts" in gap
-    assert "Episode-level pool router" in gap
+    assert "dataloader trajectory-id wiring" in gap
     assert "chunk-level top-k routing constrained to the resident pool" in gap
-    assert "Episode-level pool router" in gap
+    assert "pool target aggregation" in gap
     assert "per-expert action-loss posterior path" in gap

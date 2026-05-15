@@ -4,6 +4,7 @@ import torch
 
 from Lara.model.modules.action_model.lara_moe import (
     LatentActionMoE,
+    aggregate_episode_responsibilities,
     masked_topk_softmax,
     posterior_from_expert_losses,
 )
@@ -114,6 +115,53 @@ class LatentActionMoETest(unittest.TestCase):
         self.assertEqual(output.posterior_probs.argmax(dim=-1).tolist(), [0, 1])
         self.assertTrue(torch.allclose(output.posterior_probs.sum(dim=-1), torch.ones(2)))
         self.assertGreaterEqual(float(output.loss.detach()), 0.0)
+
+    def test_aggregates_episode_responsibilities_for_pool_targets(self):
+        posterior = torch.tensor(
+            [
+                [0.8, 0.2],
+                [0.4, 0.6],
+                [0.1, 0.9],
+            ]
+        )
+        episode_ids = torch.tensor([3, 3, 7])
+
+        targets = aggregate_episode_responsibilities(posterior, episode_ids)
+
+        expected_ep3 = torch.tensor([0.6, 0.4])
+        self.assertTrue(torch.allclose(targets[0], expected_ep3))
+        self.assertTrue(torch.allclose(targets[1], expected_ep3))
+        self.assertTrue(torch.allclose(targets[2], posterior[2]))
+
+    def test_forward_accepts_trajectory_pool_target(self):
+        torch.manual_seed(0)
+        moe = LatentActionMoE(
+            hidden_size=8,
+            num_experts=3,
+            top_k=2,
+            episode_pool_size=3,
+            expert_hidden_size=16,
+            router_hidden_size=12,
+        )
+        conditioning_tokens = torch.randn(3, 4, 8)
+        expert_losses = torch.tensor(
+            [
+                [0.1, 3.0, 2.0],
+                [2.0, 0.2, 4.0],
+                [0.5, 2.0, 1.0],
+            ]
+        )
+        posterior = posterior_from_expert_losses(expert_losses)
+        pool_target = aggregate_episode_responsibilities(posterior, torch.tensor([1, 1, 2]))
+
+        output = moe(
+            conditioning_tokens,
+            expert_action_losses=expert_losses,
+            pool_target_probs=pool_target,
+        )
+
+        self.assertGreaterEqual(float(output.pool_loss), 0.0)
+        self.assertEqual(output.pool_probs.shape, pool_target.shape)
 
 
 if __name__ == "__main__":

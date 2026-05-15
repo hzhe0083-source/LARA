@@ -129,6 +129,25 @@ def route_diagnostics(
     }
 
 
+def aggregate_episode_responsibilities(
+    posterior_probs: torch.Tensor,
+    episode_ids: torch.Tensor,
+) -> torch.Tensor:
+    if posterior_probs.ndim != 2:
+        raise ValueError(f"Expected posterior_probs [B, M], got {tuple(posterior_probs.shape)}")
+    if episode_ids.ndim != 1 or episode_ids.shape[0] != posterior_probs.shape[0]:
+        raise ValueError(
+            f"Expected episode_ids [B] with B={posterior_probs.shape[0]}, got {tuple(episode_ids.shape)}"
+        )
+
+    episode_ids = episode_ids.to(device=posterior_probs.device)
+    targets = torch.zeros_like(posterior_probs)
+    for episode_id in torch.unique(episode_ids):
+        mask = episode_ids == episode_id
+        targets[mask] = posterior_probs[mask].mean(dim=0, keepdim=True)
+    return targets / targets.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+
+
 class ResidualActionExpert(nn.Module):
     """Small token adapter used as a lightweight action expert."""
 
@@ -309,6 +328,7 @@ class LatentActionMoE(nn.Module):
         initial_context_tokens: Optional[torch.Tensor] = None,
         pool_mask: Optional[torch.Tensor] = None,
         expert_action_losses: Optional[torch.Tensor] = None,
+        pool_target_probs: Optional[torch.Tensor] = None,
     ) -> MoEConditionerOutput:
         self._validate_inputs(conditioning_tokens, latent_action_tokens)
         if initial_context_tokens is not None and initial_context_tokens.shape[0] != conditioning_tokens.shape[0]:
@@ -337,21 +357,15 @@ class LatentActionMoE(nn.Module):
                 temperature=self.posterior_temperature,
             )
             route_loss = masked_kl_div(router_logits, posterior_probs, pool_mask)
-            pool_loss = F.kl_div(
-                F.log_softmax(pool_logits, dim=-1),
-                posterior_probs.detach(),
-                reduction="batchmean",
-            )
+            pool_teacher = pool_target_probs if pool_target_probs is not None else posterior_probs
+            pool_loss = F.kl_div(F.log_softmax(pool_logits, dim=-1), pool_teacher.detach(), reduction="batchmean")
             train_weights = posterior_probs
         elif latent_action_tokens is not None:
             posterior_logits = self.posterior(conditioning_tokens, latent_action_tokens)
             posterior_probs = torch.softmax(posterior_logits, dim=-1)
             route_loss = masked_kl_div(router_logits, posterior_probs, pool_mask)
-            pool_loss = F.kl_div(
-                F.log_softmax(pool_logits, dim=-1),
-                posterior_probs.detach(),
-                reduction="batchmean",
-            )
+            pool_teacher = pool_target_probs if pool_target_probs is not None else posterior_probs
+            pool_loss = F.kl_div(F.log_softmax(pool_logits, dim=-1), pool_teacher.detach(), reduction="batchmean")
             train_weights = posterior_probs
         else:
             posterior_probs = router_probs.detach()
