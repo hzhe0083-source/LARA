@@ -52,7 +52,7 @@ These files exist to make the next implementation steps concrete, but they are n
 - Utility calibration currently validates only the loss surface; it does not yet compute candidate route utility from value/progress/latent-state or closed-loop evaluator signals.
 - The new pytest static tests were not run in the system Python because that interpreter lacks `pytest`; run them inside the project environment with `python -m pytest tests/test_baseline_static.py`.
 - VJ2 video preprocessing still happens inside the forward path and may bottleneck training.
-- `pyproject.toml` does not declare the full runtime dependency set; `requirements.txt` remains the environment source of truth.
+- `pyproject.toml` and `requirements.txt` do not pin the torch/CUDA runtime; the project still depends on a compatible prebuilt PyTorch environment.
 
 ## Suggested Implementation Order
 
