@@ -53,6 +53,10 @@ def test_so101_batches_expose_future_actions():
     assert "trajectory_id=trajectory_name" in dataset_src
     assert "base_index=step" in dataset_src
     assert '"future_actions" if "future_actions" in examples[0] else "action"' in core_src
+    assert 'actions_are_future = action_key == "future_actions"' in core_src
+    assert 'past_actions = (' in core_src
+    assert "actions_are_future=actions_are_future" in core_src
+    assert "past_actions=past_actions" in core_src
     assert '"current_state" if "current_state" in examples[0] else "state"' in core_src
     assert '"future_actions" if "future_actions" in examples[0] else "action"' in trainer_src
     assert '"current_state" if "current_state" in examples[0] else "state"' in trainer_src
@@ -60,6 +64,16 @@ def test_so101_batches_expose_future_actions():
     assert "trajectory_ids=trajectory_ids" in core_src
     assert "execution_state_target=execution_state_target" in core_src
     assert "prediction_state_target=prediction_state_target" in core_src
+
+
+def test_action_head_future_windows_are_strict():
+    adapter_src = read("Lara/model/framework/act.py")
+    assert "actions_are_future: bool = False" in adapter_src
+    assert "past_actions=None" in adapter_src
+    assert "actions_are_future and actions.shape[1] != self.action_horizon" in adapter_src
+    assert "future_actions must have exactly {self.action_horizon} steps" in adapter_src
+    assert "not actions_are_future and actions.shape[1] < self.action_horizon" in adapter_src
+    assert "actions if actions_are_future else actions[:, -self.action_horizon :, :]" in adapter_src
 
 
 def test_aux_action_losses_are_not_double_counted_by_trainer():

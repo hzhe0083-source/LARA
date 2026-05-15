@@ -172,6 +172,7 @@ framework:
 ```
 
 `action_horizon` is the canonical prediction horizon. `future_action_window_size` is a legacy compatibility field and should stay equal to `action_horizon - 1` until it is removed.
+SO101 batches pass `future_actions` as an explicit future-only supervision window, and that window must have exactly `action_horizon` steps. The older `action` fallback can still carry wider context and is tail-sliced only for compatibility.
 
 At 30 Hz:
 
@@ -231,6 +232,7 @@ It:
 - prepends latent action tokens to embodied action tokens
 - adds token-type embeddings for latent/body token streams
 - trains the flow action head on the configured `action_horizon`
+- treats `future_actions` as a strict horizon-aligned target while keeping legacy `action` tail-slicing as a fallback
 
 The flow head implementation is in:
 

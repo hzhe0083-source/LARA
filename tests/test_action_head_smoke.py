@@ -82,6 +82,21 @@ class ActionHeadAdapterSmokeTest(unittest.TestCase):
         self.assertEqual(pred_actions.shape, (1, 3, 2))
         self.assertTrue(torch.isfinite(pred_actions).all().item())
 
+    def test_future_actions_must_match_configured_horizon(self):
+        adapter = ActionHeadAdapter(config=tiny_action_config(), context_hidden_size=16)
+        embodied_tokens = torch.randn(1, 2, 16)
+        latent_tokens = torch.randn(1, 1, 16)
+        short_future_actions = torch.randn(1, 2, 2)
+
+        with self.assertRaisesRegex(ValueError, "future_actions must have exactly 3 steps"):
+            adapter(
+                embodied_action_tokens=embodied_tokens,
+                latent_action_tokens=latent_tokens,
+                actions=short_future_actions,
+                actions_are_future=True,
+                return_aux=True,
+            )
+
     def test_forward_with_direct_moe_action_experts_adds_aux_loss(self):
         torch.manual_seed(0)
         adapter = ActionHeadAdapter(

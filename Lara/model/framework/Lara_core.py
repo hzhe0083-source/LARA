@@ -48,6 +48,12 @@ class Lara(baseframework):
         instructions = [example["lang"] for example in examples]
         action_key = "future_actions" if "future_actions" in examples[0] else "action"
         actions = [example[action_key] for example in examples] if action_key in examples[0] else None
+        actions_are_future = action_key == "future_actions"
+        past_actions = (
+            [example["past_actions"] for example in examples]
+            if all("past_actions" in example for example in examples)
+            else None
+        )
         state_key = "current_state" if "current_state" in examples[0] else "state"
         state = [example[state_key] for example in examples] if state_key in examples[0] else None
         trajectory_ids = [example["trajectory_id"] for example in examples] if "trajectory_id" in examples[0] else None
@@ -95,6 +101,8 @@ class Lara(baseframework):
                 embodied_action_tokens=qwen_context.embodied_action_tokens,
                 latent_action_tokens=qwen_context.action_tokens,
                 actions=actions,
+                actions_are_future=actions_are_future,
+                past_actions=past_actions,
                 state=state,
                 trajectory_ids=trajectory_ids,
                 execution_state_target=execution_state_target,

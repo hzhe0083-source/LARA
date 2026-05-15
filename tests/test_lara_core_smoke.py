@@ -79,8 +79,10 @@ class FakeActionHead(torch.nn.Module):
         embodied_action_tokens,
         latent_action_tokens,
         actions,
-        state,
-        trajectory_ids,
+        actions_are_future=False,
+        past_actions=None,
+        state=None,
+        trajectory_ids=None,
         execution_state_target=None,
         prediction_state_target=None,
         execution_state_target_mask=None,
@@ -92,6 +94,8 @@ class FakeActionHead(torch.nn.Module):
                 "embodied_action_tokens": embodied_action_tokens,
                 "latent_action_tokens": latent_action_tokens,
                 "actions": actions,
+                "actions_are_future": actions_are_future,
+                "past_actions": past_actions,
                 "state": state,
                 "trajectory_ids": trajectory_ids,
                 "execution_state_target": execution_state_target,
@@ -125,6 +129,7 @@ class LaraCoreSmokeTest(unittest.TestCase):
                 "lang": "pick",
                 "action": np.ones((3, 2), dtype=np.float32),
                 "future_actions": np.ones((3, 2), dtype=np.float32) * 5,
+                "past_actions": np.ones((2, 2), dtype=np.float32) * -5,
                 "state": np.ones((1, 3), dtype=np.float32),
                 "current_state": np.ones((1, 3), dtype=np.float32) * 9,
                 "execution_state_target": np.ones((1, 3), dtype=np.float32) * 10,
@@ -139,6 +144,7 @@ class LaraCoreSmokeTest(unittest.TestCase):
                 "lang": "place",
                 "action": np.ones((3, 2), dtype=np.float32) * 2,
                 "future_actions": np.ones((3, 2), dtype=np.float32) * 7,
+                "past_actions": np.ones((2, 2), dtype=np.float32) * -7,
                 "state": np.ones((1, 3), dtype=np.float32) * 2,
                 "current_state": np.ones((1, 3), dtype=np.float32) * 8,
                 "execution_state_target": np.ones((1, 3), dtype=np.float32) * 20,
@@ -162,8 +168,11 @@ class LaraCoreSmokeTest(unittest.TestCase):
         action_call = model.action_head.calls[0]
         self.assertEqual(action_call["trajectory_ids"], [11, 12])
         self.assertTrue(action_call["return_aux"])
+        self.assertTrue(action_call["actions_are_future"])
         self.assertTrue(np.all(action_call["actions"][0] == examples[0]["future_actions"]))
         self.assertTrue(np.all(action_call["actions"][1] == examples[1]["future_actions"]))
+        self.assertTrue(np.all(action_call["past_actions"][0] == examples[0]["past_actions"]))
+        self.assertTrue(np.all(action_call["past_actions"][1] == examples[1]["past_actions"]))
         self.assertTrue(np.all(action_call["state"][0] == examples[0]["current_state"]))
         self.assertTrue(np.all(action_call["state"][1] == examples[1]["current_state"]))
         self.assertTrue(np.all(action_call["execution_state_target"][0] == examples[0]["execution_state_target"]))

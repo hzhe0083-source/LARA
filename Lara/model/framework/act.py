@@ -261,6 +261,8 @@ class ActionHeadAdapter(nn.Module):
         self,
         embodied_action_tokens: torch.Tensor,
         actions,
+        actions_are_future: bool = False,
+        past_actions=None,
         state=None,
         trajectory_ids=None,
         initial_context_tokens=None,
@@ -281,13 +283,19 @@ class ActionHeadAdapter(nn.Module):
         return_aux: bool = False,
     ):
         actions = self._actions_to_tensor(actions, embodied_action_tokens)
-        if actions.shape[1] < self.action_horizon:
+        if actions_are_future and actions.shape[1] != self.action_horizon:
+            raise ValueError(
+                f"future_actions must have exactly {self.action_horizon} steps, got {actions.shape[1]}"
+            )
+        if not actions_are_future and actions.shape[1] < self.action_horizon:
             raise ValueError(
                 f"Expected at least {self.action_horizon} action steps, got {actions.shape[1]}"
             )
-        # Prefer passing an explicit future-only action window from the dataloader
-        # (`future_actions`). This fallback keeps older batches working.
-        actions_target = actions[:, -self.action_horizon :, :]
+        if past_actions is not None:
+            past_actions = self._actions_to_tensor(past_actions, embodied_action_tokens)
+        # Prefer explicit future-only windows from the dataloader. The legacy
+        # `action` fallback can still contain wider context, so it keeps tail slicing.
+        actions_target = actions if actions_are_future else actions[:, -self.action_horizon :, :]
         aux_losses = {}
         if self.latent_action_head is not None:
             latent_output = self.latent_action_head(embodied_action_tokens, actions_target)

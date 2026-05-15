@@ -36,6 +36,7 @@ These files exist to make the next implementation steps concrete, but they are n
 - Flow-matching timestep buckets are clamped to the valid range.
 - `ActionHeadAdapter` has a dummy-batch forward/predict smoke test for basic loss and output shape.
 - SO101 batches now expose `future_actions` and `current_state` explicitly, with `action` and `state` retained as compatibility aliases.
+- `future_actions` is now treated as a strict future-only target and must match `action_horizon`; only the legacy `action` fallback is tail-sliced.
 - The LeRobot v3 collator can be imported without the optional `lerobot` package and has unit coverage for explicit `future_actions/current_state` aliases.
 - Action labels remain fp32 in the adapter.
 - Static pytest coverage was added for the baseline guardrails in `tests/test_baseline_static.py`.
@@ -55,7 +56,7 @@ These files exist to make the next implementation steps concrete, but they are n
 
 ## Remaining Engineering Risks
 
-- Action target alignment is explicit for the current SO101 dataloader via `future_actions`. Future datasets that return past/current/future actions together must split out `future_actions` before calling the action adapter.
+- Action target alignment is explicit for the current SO101 dataloader via strict `future_actions`. Future datasets that return past/current/future actions together must split out an `action_horizon`-length `future_actions` window before calling the action adapter.
 - Full `Lara` model instantiation with real Qwen/V-JEPA checkpoints and real-component one-step training smoke tests now have a script entry point but still need to be run successfully in the full training environment.
 - The latent action head is currently a Stage-1 skeleton and still needs empirical validation, loss-weight tuning, and ablation against the token-conditioned flow baseline.
 - The MoE/router path is currently a Stage-2 scaffold and still needs full-train validation of the direct expert and per-expert action-loss posterior paths, resident-pool success evaluation, and closed-loop validation beyond server-side pool reuse.
@@ -69,7 +70,7 @@ These files exist to make the next implementation steps concrete, but they are n
 ## Suggested Implementation Order
 
 1. Run `scripts/smoke_lara_real_components.py --instantiate --run-step` in the full training environment and fix any real Qwen/V-JEPA integration issues it exposes.
-2. Add optional `past_actions` when a dataset needs history; `future_actions` and `current_state` are explicit for SO101.
+2. Use the optional `past_actions` interface when a dataset needs history; `future_actions` and `current_state` are explicit for SO101.
 3. Validate and tune the optional latent-action posterior/codebook/prior path.
 4. Validate the optional MoE/router path with real trajectory-id batches and route-quality diagnostics.
 5. Add complete router distillation/utility calibration losses.
