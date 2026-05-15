@@ -204,6 +204,7 @@ framework:
 `action_horizon` is the canonical prediction horizon. `future_action_window_size` is a legacy compatibility field and should stay equal to `action_horizon - 1` until it is removed.
 SO101 batches pass `future_actions` as an explicit future-only supervision window, and that window must have exactly `action_horizon` steps. The older `action` fallback can still carry wider context and is tail-sliced only for compatibility.
 When the optional latent-action head is enabled, its posterior/codebook/prior is trained on the first `latent_action_horizon` steps of that window, so the latent code stays aligned with the executable receding-horizon chunk while the flow/direct action heads still predict the full `action_horizon`.
+When the optional MoE/direct-expert path is enabled, posterior responsibility and pool-router targets use `router_horizon`, while action-loss utility proxies and value/progress/uncertainty component labels use `utility_horizon`.
 
 At 30 Hz:
 

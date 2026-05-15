@@ -86,6 +86,8 @@ class SmokeLaraRealComponentsTest(unittest.TestCase):
             self.assertTrue(summary["use_lara_moe_default_safe"])
             self.assertEqual(summary["action_horizon"], 3)
             self.assertEqual(summary["latent_action_horizon"], 1)
+            self.assertEqual(summary["router_horizon"], 1)
+            self.assertEqual(summary["utility_horizon"], 1)
             self.assertEqual(summary["num_world_model_views"], 2)
             self.assertFalse(summary["lara_use_direct_action_experts"])
             self.assertFalse(summary["lara_use_direct_action_output"])

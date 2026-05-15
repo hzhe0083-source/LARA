@@ -276,6 +276,79 @@ class ActionHeadAdapterSmokeTest(unittest.TestCase):
         self.assertEqual(output["moe_utility_value_scores"].shape, (2, 3))
         self.assertTrue(torch.isfinite(output["total_action_loss"]).item())
 
+    def test_direct_moe_uses_short_router_and_utility_horizons(self):
+        torch.manual_seed(0)
+        adapter = ActionHeadAdapter(
+            config=tiny_action_config(
+                use_lara_moe=True,
+                lara_num_experts=3,
+                lara_episode_pool_size=3,
+                lara_top_k=2,
+                lara_use_direct_action_experts=True,
+                lara_use_action_loss_utility=True,
+                router_horizon=1,
+                utility_horizon=2,
+            ),
+            context_hidden_size=16,
+        )
+        adapter.train()
+
+        embodied_tokens = torch.randn(2, 2, 16)
+        latent_tokens = torch.randn(2, 1, 16)
+        actions = torch.randn(2, 3, 2)
+        state = torch.randn(2, 1, 3)
+
+        output = adapter(
+            embodied_action_tokens=embodied_tokens,
+            latent_action_tokens=latent_tokens,
+            actions=actions,
+            actions_are_future=True,
+            state=state,
+            trajectory_ids=[4, 4],
+            return_aux=True,
+        )
+
+        self.assertEqual(adapter.router_horizon, 1)
+        self.assertEqual(adapter.utility_horizon, 2)
+        self.assertIn("moe_utility_scores", output)
+        self.assertEqual(output["moe_utility_scores"].shape, (2, 3))
+        self.assertTrue(torch.isfinite(output["total_action_loss"]).item())
+
+    def test_residual_moe_expert_loss_posterior_accepts_short_router_horizon(self):
+        torch.manual_seed(0)
+        adapter = ActionHeadAdapter(
+            config=tiny_action_config(
+                use_lara_moe=True,
+                lara_num_experts=3,
+                lara_episode_pool_size=3,
+                lara_top_k=2,
+                router_horizon=1,
+                utility_horizon=2,
+                lara_use_action_loss_utility=True,
+            ),
+            context_hidden_size=16,
+        )
+        adapter.train()
+
+        embodied_tokens = torch.randn(1, 2, 16)
+        latent_tokens = torch.randn(1, 1, 16)
+        actions = torch.randn(1, 3, 2)
+        state = torch.randn(1, 1, 3)
+
+        output = adapter(
+            embodied_action_tokens=embodied_tokens,
+            latent_action_tokens=latent_tokens,
+            actions=actions,
+            actions_are_future=True,
+            state=state,
+            trajectory_ids=[8],
+            return_aux=True,
+        )
+
+        self.assertIn("moe_route_distill_loss", output)
+        self.assertIn("moe_utility_scores", output)
+        self.assertTrue(torch.isfinite(output["total_action_loss"]).item())
+
     def test_predict_action_can_reuse_resident_pool_mask(self):
         torch.manual_seed(0)
         adapter = ActionHeadAdapter(

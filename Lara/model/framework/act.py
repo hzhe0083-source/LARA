@@ -40,12 +40,21 @@ class ActionHeadAdapter(nn.Module):
         self.action_model: FlowmatchingActionHead = get_action_model(config=self.config)
         self.future_action_window_size = action_cfg.future_action_window_size
         self.action_horizon = action_cfg.get("action_horizon", self.future_action_window_size + 1)
+        self.execution_horizon = action_cfg.get("execution_horizon", self.action_horizon)
         self.latent_action_horizon = action_cfg.get(
             "latent_action_horizon",
-            action_cfg.get("execution_horizon", self.action_horizon),
+            self.execution_horizon,
         )
-        if self.latent_action_horizon <= 0 or self.latent_action_horizon > self.action_horizon:
-            raise ValueError("latent_action_horizon must be in [1, action_horizon]")
+        self.router_horizon = action_cfg.get("router_horizon", self.execution_horizon)
+        self.utility_horizon = action_cfg.get("utility_horizon", self.execution_horizon)
+        for horizon_name, horizon_value in [
+            ("execution_horizon", self.execution_horizon),
+            ("latent_action_horizon", self.latent_action_horizon),
+            ("router_horizon", self.router_horizon),
+            ("utility_horizon", self.utility_horizon),
+        ]:
+            if horizon_value <= 0 or horizon_value > self.action_horizon:
+                raise ValueError(f"{horizon_name} must be in [1, action_horizon]")
         self.use_latent_action_tokens = action_cfg.get("use_latent_action_tokens", True)
         self.max_latent_action_tokens = action_cfg.get("max_latent_action_tokens", None)
         self.use_latent_action_head = action_cfg.get("use_latent_action_head", False)
@@ -331,27 +340,42 @@ class ActionHeadAdapter(nn.Module):
         actions_target_repeated = actions_target.repeat_interleave(self.repeated_diffusion_steps, dim=0)
         conditioning_tokens = self._conditioning_tokens(embodied_action_tokens, latent_action_tokens)
         state_tensor = self._state_to_tensor(state, embodied_action_tokens)
+        router_actions_target = actions_target[:, : self.router_horizon, :]
+        utility_actions_target = actions_target[:, : self.utility_horizon, :]
         direct_expert_actions = None
         direct_routed_action_loss = None
         if self.lara_moe is not None:
             direct_expert_loss = None
             direct_expert_losses = None
+            utility_expert_losses = None
             if self.direct_action_experts is not None:
                 direct_expert_actions = self.direct_action_experts(conditioning_tokens, state=state_tensor)
                 direct_expert_loss_components = self.direct_action_experts.reconstruction_loss_components(
                     direct_expert_actions,
                     actions_target,
-                    execution_horizon=self.config.framework.action_model.get("execution_horizon", self.action_horizon),
+                    execution_horizon=self.execution_horizon,
                     execution_loss_weight=self.config.framework.action_model.get("execution_loss_weight", 1.0),
                     prediction_loss_weight=self.config.framework.action_model.get("prediction_loss_weight", 1.0),
                 )
-                direct_expert_losses = direct_expert_loss_components["weighted"]
+                direct_expert_losses = self.direct_action_experts.reconstruction_losses(
+                    direct_expert_actions[:, :, : self.router_horizon, :],
+                    router_actions_target,
+                )
+                utility_expert_losses = self.direct_action_experts.reconstruction_losses(
+                    direct_expert_actions[:, :, : self.utility_horizon, :],
+                    utility_actions_target,
+                )
                 direct_utility_component_targets = None
                 if self.use_action_loss_utility_components:
+                    direct_utility_loss_components = self.direct_action_experts.reconstruction_loss_components(
+                        direct_expert_actions,
+                        actions_target,
+                        execution_horizon=self.utility_horizon,
+                    )
                     direct_utility_component_targets = utility_component_targets_from_expert_losses(
-                        value_losses=direct_expert_loss_components["full"],
-                        progress_losses=direct_expert_loss_components["execution"],
-                        uncertainty_losses=direct_expert_loss_components["prediction"],
+                        value_losses=utility_expert_losses,
+                        progress_losses=direct_utility_loss_components["execution"],
+                        uncertainty_losses=direct_utility_loss_components["prediction"],
                         temperature=self.action_loss_utility_temperature,
                         normalize=self.action_loss_utility_normalize,
                     )
@@ -361,25 +385,27 @@ class ActionHeadAdapter(nn.Module):
                     uniform_floor=self.lara_moe.posterior_uniform_floor,
                     top_r=self.lara_moe.posterior_top_r,
                 )
-                direct_expert_loss = (direct_expert_losses * direct_posterior).sum(dim=-1).mean()
+                direct_expert_loss = (direct_expert_loss_components["weighted"] * direct_posterior).sum(dim=-1).mean()
             else:
                 direct_utility_component_targets = None
             with torch.no_grad():
                 expert_action_losses = (
                     direct_expert_losses.detach()
                     if direct_expert_losses is not None
-                    else self._expert_action_losses(conditioning_tokens, actions_target, state)
+                    else self._expert_action_losses(conditioning_tokens, router_actions_target, state)
                     if self.use_expert_loss_posterior
                     else None
                 )
+                if utility_expert_losses is None and self.use_action_loss_utility:
+                    utility_expert_losses = self._expert_action_losses(conditioning_tokens, utility_actions_target, state)
             utility_scores = (
                 self._as_tensor(utility_scores, device=conditioning_tokens.device, dtype=conditioning_tokens.dtype)
                 if utility_scores is not None
                 else None
             )
-            if utility_scores is None and self.use_action_loss_utility and expert_action_losses is not None:
+            if utility_scores is None and self.use_action_loss_utility and utility_expert_losses is not None:
                 utility_scores = utility_from_expert_losses(
-                    expert_action_losses,
+                    utility_expert_losses,
                     temperature=self.action_loss_utility_temperature,
                     normalize=self.action_loss_utility_normalize,
                 ).to(dtype=conditioning_tokens.dtype)
@@ -522,7 +548,7 @@ class ActionHeadAdapter(nn.Module):
                 direct_routed_action_loss = ActionChunkExpertBank.action_chunk_loss(
                     direct_routed_actions,
                     actions_target,
-                    execution_horizon=self.config.framework.action_model.get("execution_horizon", self.action_horizon),
+                    execution_horizon=self.execution_horizon,
                     execution_loss_weight=self.config.framework.action_model.get("execution_loss_weight", 1.0),
                     prediction_loss_weight=self.config.framework.action_model.get("prediction_loss_weight", 1.0),
                 )

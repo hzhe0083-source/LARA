@@ -108,6 +108,8 @@ def smoke_config_summary(cfg: Any) -> dict[str, Any]:
         "action_horizon": int(action_cfg.action_horizon),
         "execution_horizon": int(action_cfg.execution_horizon),
         "latent_action_horizon": int(action_cfg.get("latent_action_horizon", action_cfg.execution_horizon)),
+        "router_horizon": int(action_cfg.get("router_horizon", action_cfg.execution_horizon)),
+        "utility_horizon": int(action_cfg.get("utility_horizon", action_cfg.execution_horizon)),
         "num_world_model_views": int(cfg.framework.vj2_model.get("num_world_model_views", 2)),
         "use_latent_action_head": bool(action_cfg.use_latent_action_head),
         "use_lara_moe": bool(action_cfg.use_lara_moe),

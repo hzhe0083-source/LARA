@@ -122,12 +122,20 @@ def test_optional_latent_action_head_stage_one_exists():
     assert "class LatentActionHead" in latent_src
     assert "class LatentActionTransitionHead" in latent_src
     assert "self.latent_action_horizon" in adapter_src
+    assert "self.router_horizon" in adapter_src
+    assert "self.utility_horizon" in adapter_src
     assert '"latent_action_horizon"' in adapter_src
+    assert '"router_horizon"' in adapter_src
+    assert '"utility_horizon"' in adapter_src
     assert "latent_actions_target = actions_target[:, : self.latent_action_horizon, :]" in adapter_src
+    assert "router_actions_target = actions_target[:, : self.router_horizon, :]" in adapter_src
+    assert "utility_actions_target = actions_target[:, : self.utility_horizon, :]" in adapter_src
     assert "use_latent_action_head" in adapter_src
     assert "self.latent_action_head.predict" in adapter_src
     assert "latent_action_code_usage_loss" in adapter_src
     assert "latent_action_horizon: 10" in config_src
+    assert "router_horizon: 10" in config_src
+    assert "utility_horizon: 10" in config_src
     assert "self.transition_head" in adapter_src
     assert "transition_state_loss" in adapter_src
     assert "use_latent_action_head: false" in config_src
@@ -228,6 +236,8 @@ def test_optional_moe_router_stage_two_exists():
     assert "self.use_direct_action_output" in adapter_src
     assert 'state_dim=action_cfg.get("state_dim", None)' in adapter_src
     assert "direct_action_experts(conditioning_tokens, state=state_tensor)" in adapter_src
+    assert "direct_expert_actions[:, :, : self.router_horizon, :]" in adapter_src
+    assert "direct_expert_actions[:, :, : self.utility_horizon, :]" in adapter_src
     assert "moe_direct_expert_loss" in adapter_src
     assert "moe_direct_routed_action_loss" in adapter_src
     assert "def _trajectory_ids_to_tensor" in adapter_src
