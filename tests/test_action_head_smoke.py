@@ -6,46 +6,46 @@ from omegaconf import OmegaConf
 from Lara.model.framework.act import ActionHeadAdapter
 
 
-def tiny_action_config():
+def tiny_action_config(**action_overrides):
+    action_model = {
+        "action_model_type": "DiT-B",
+        "hidden_size": 32,
+        "add_pos_embed": True,
+        "max_seq_len": 16,
+        "action_dim": 2,
+        "state_dim": 3,
+        "future_action_window_size": 2,
+        "action_horizon": 3,
+        "execution_horizon": 1,
+        "execution_loss_weight": 1.0,
+        "prediction_loss_weight": 0.5,
+        "past_action_window_size": 0,
+        "repeated_diffusion_steps": 1,
+        "use_latent_action_tokens": True,
+        "use_latent_action_head": False,
+        "use_lara_moe": False,
+        "noise_beta_alpha": 1.5,
+        "noise_beta_beta": 1.0,
+        "noise_s": 0.999,
+        "num_timestep_buckets": 16,
+        "num_inference_timesteps": 1,
+        "num_target_vision_tokens": 1,
+        "diffusion_model_cfg": {
+            "cross_attention_dim": 16,
+            "dropout": 0.0,
+            "final_dropout": False,
+            "interleave_self_attention": False,
+            "norm_type": "ada_norm",
+            "num_layers": 1,
+            "output_dim": 32,
+            "positional_embeddings": None,
+            "max_num_positional_embeddings": 16,
+        },
+    }
+    action_model.update(action_overrides)
     return OmegaConf.create(
         {
-            "framework": {
-                "action_model": {
-                    "action_model_type": "DiT-B",
-                    "hidden_size": 32,
-                    "add_pos_embed": True,
-                    "max_seq_len": 16,
-                    "action_dim": 2,
-                    "state_dim": 3,
-                    "future_action_window_size": 2,
-                    "action_horizon": 3,
-                    "execution_horizon": 1,
-                    "execution_loss_weight": 1.0,
-                    "prediction_loss_weight": 0.5,
-                    "past_action_window_size": 0,
-                    "repeated_diffusion_steps": 1,
-                    "use_latent_action_tokens": True,
-                    "use_latent_action_head": False,
-                    "use_lara_moe": False,
-                    "noise_beta_alpha": 1.5,
-                    "noise_beta_beta": 1.0,
-                    "noise_s": 0.999,
-                    "num_timestep_buckets": 16,
-                    "num_inference_timesteps": 1,
-                    "num_target_vision_tokens": 1,
-                    "diffusion_model_cfg": {
-                        "cross_attention_dim": 16,
-                        "dropout": 0.0,
-                        "final_dropout": False,
-                        "interleave_self_attention": False,
-                        "norm_type": "ada_norm",
-                        "num_layers": 1,
-                        "output_dim": 32,
-                        "positional_embeddings": None,
-                        "max_num_positional_embeddings": 16,
-                    },
-                }
-            },
+            "framework": {"action_model": action_model},
             "trainer": {"repeated_diffusion_steps": 1},
         }
     )
@@ -81,6 +81,40 @@ class ActionHeadAdapterSmokeTest(unittest.TestCase):
 
         self.assertEqual(pred_actions.shape, (1, 3, 2))
         self.assertTrue(torch.isfinite(pred_actions).all().item())
+
+    def test_forward_with_direct_moe_action_experts_adds_aux_loss(self):
+        torch.manual_seed(0)
+        adapter = ActionHeadAdapter(
+            config=tiny_action_config(
+                use_lara_moe=True,
+                lara_num_experts=3,
+                lara_episode_pool_size=2,
+                lara_top_k=1,
+                lara_use_direct_action_experts=True,
+                lara_direct_expert_loss_weight=0.5,
+            ),
+            context_hidden_size=16,
+        )
+        adapter.train()
+
+        embodied_tokens = torch.randn(1, 2, 16)
+        latent_tokens = torch.randn(1, 1, 16)
+        actions = torch.randn(1, 3, 2)
+        state = torch.randn(1, 1, 3)
+
+        output = adapter(
+            embodied_action_tokens=embodied_tokens,
+            latent_action_tokens=latent_tokens,
+            actions=actions,
+            state=state,
+            trajectory_ids=[7],
+            return_aux=True,
+        )
+
+        self.assertIn("moe_direct_expert_loss", output)
+        self.assertTrue(torch.isfinite(output["moe_direct_expert_loss"]).item())
+        expected_total = output["action_loss"] + output["moe_router_loss"] + output["moe_direct_expert_loss"]
+        self.assertTrue(torch.allclose(output["total_action_loss"], expected_total))
 
 
 if __name__ == "__main__":
