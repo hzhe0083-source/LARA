@@ -174,6 +174,7 @@ def test_optional_moe_router_stage_two_exists():
     protocol_src = read("Lara/evaluation/lara_protocol.py")
     protocol_cli_src = read("scripts/summarize_lara_protocol.py")
     utility_cli_src = read("scripts/build_counterfactual_utility_labels.py")
+    readiness_cli_src = read("scripts/audit_lara_paper_readiness.py")
     smoke_src = read("scripts/smoke_lara_real_components.py")
     config_src = read("scripts/config/lara_so101_ft.yaml")
     flow_src = read("Lara/model/modules/action_model/GR00T_ActionHeader.py")
@@ -234,6 +235,16 @@ def test_optional_moe_router_stage_two_exists():
     assert "counterfactual_utility_records_from_rollouts" in utility_cli_src
     assert "counterfactual_utility_matrix_from_records" in utility_cli_src
     assert "--min-candidates-per-context" in utility_cli_src
+    assert "def audit_lara_paper_readiness" in readiness_cli_src
+    assert "baseline_defaults_safe" in readiness_cli_src
+    assert "so101_horizon_contract" in readiness_cli_src
+    assert "counterfactual_utility_sidecar" in readiness_cli_src
+    assert "closed_loop_protocol_records" in readiness_cli_src
+    assert "full_so101_training_artifact" in readiness_cli_src
+    assert "closed_loop_robot_eval_artifact" in readiness_cli_src
+    assert "counterfactual_utility_matrix_from_records" in readiness_cli_src
+    assert "protocol_evidence_audit" in readiness_cli_src
+    assert "--allow-incomplete" in readiness_cli_src
     assert "def smoke_lara_real_components" in smoke_src
     assert "def _exception_status" in smoke_src
     assert "def apply_smoke_overrides" in smoke_src
@@ -391,6 +402,7 @@ def test_optional_moe_router_stage_two_exists():
     assert "Action-head route-quality metrics are emitted" in gap
     assert "matched-compute rows, matched-resident rows, budget-match flags, Pareto frontier flags" in gap
     assert "scripts/summarize_lara_protocol.py" in gap
+    assert "scripts/audit_lara_paper_readiness.py" in gap
     assert "route-sequence diagnostics" in gap
     assert "training-time randomized resident-pool size" in gap
     assert "scripts/smoke_lara_real_components.py" in gap

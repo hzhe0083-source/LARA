@@ -35,6 +35,7 @@ Experimental scaffolding exists but is not complete or validated:
 - Action-head MoE diagnostics include `metric/moe_route_quality_*` scalars for posterior/utility ranking, top-k consistency, route regret, and retained probability mass when MoE is enabled.
 - Matched-compute and matched-resident protocol helpers for subset-retention success aggregation, active/resident budget checks, result-table rows, compute-success Pareto flags, route-sequence diagnostics over receding-horizon chunks, automatic diagnostic extraction from raw `router_probs_sequence` / `active_mask_sequence` / `pool_mask_sequence` rollout fields, and JSON/JSONL rollout-record summarization via `scripts/summarize_lara_protocol.py`.
 - Strict protocol evidence audit via `scripts/summarize_lara_protocol.py --require-paper-metrics`, which fails when rollout records lack paper-required success, FLOPs, latency, VRAM, route diagnostics, or required resident fractions.
+- Paper-readiness audit via `scripts/audit_lara_paper_readiness.py`, which keeps the repository from treating default-off MoE/router scaffolding as the completed paper method until real utility sidecars, closed-loop protocol records, full SO101 training evidence, and real robot evaluation artifacts are present.
 - Minimal dummy-batch smoke coverage exists for `ActionHeadAdapter` forward and prediction shapes.
 - The real-component smoke script can temporarily enable the default-off Stage-1/Stage-2 scaffolds to prove they instantiate and complete a dummy forward/backward with local Qwen/V-JEPA checkpoints. This is an integration smoke check only; it is not full SO101 training or closed-loop validation.
 
@@ -71,6 +72,8 @@ Lara/
 scripts/
   config/lara_so101_ft.yaml   SO101 fine-tuning config
   summarize_lara_protocol.py  Summarize rollout JSON/JSONL into paper protocol rows
+  audit_lara_paper_readiness.py
+                                Fail paper-readiness claims when required evidence is missing
 models/                       local checkpoints, ignored by git
 ```
 
@@ -232,6 +235,19 @@ For counterfactual expert evaluation, pass `forced_expert_id` or `forced_router_
 The websocket deployment server also caches `resident_pool_mask` and `router_probs` by `session_id`, feeds cached router probabilities back as `previous_router_probs`, and clears the cache on a `reset` request. This lets closed-loop clients reuse an episode pool and, when `lara_inference_stickiness_weight > 0`, bias chunk-level routing toward the previous route without manually echoing those tensors on every inference call.
 For evaluation runs, start the server with `--rollout_trace_path /path/to/rollouts.jsonl`; each `infer` appends raw route outputs plus measured `latency_ms_sequence`, optional CUDA `vram_mb_sequence`, and any forced expert sequence to the session trace, and `reset` or `record_outcome` writes a JSONL record with `router_probs_sequence`, `active_mask_sequence`, `pool_mask_sequence`, aggregate latency/VRAM, and any provided outcome fields such as `success`, `return_score`, and `flops`.
 Use `scripts/build_counterfactual_utility_labels.py` to convert forced-expert rollout traces into the JSONL sidecar consumed by `counterfactual_utility_labels_path`; it validates that every context has the configured minimum number of candidate experts before writing labels.
+
+To check whether the repository has enough evidence to claim the full LARA paper method is complete, run:
+
+```bash
+python scripts/audit_lara_paper_readiness.py \
+  --config scripts/config/lara_so101_ft.yaml \
+  --counterfactual-utility-labels /path/to/utility.jsonl \
+  --rollout-records /path/to/closed_loop_rollouts.jsonl \
+  --full-so101-training-artifact /path/to/training_summary.json \
+  --closed-loop-robot-eval-artifact /path/to/robot_eval_summary.json
+```
+
+The command intentionally exits nonzero when required evidence is missing. For preflight logs where an incomplete report is still useful, add `--allow-incomplete`.
 
 ## Training
 
