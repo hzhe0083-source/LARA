@@ -42,13 +42,14 @@ These files exist to make the next implementation steps concrete, but they are n
 - Trajectory ids are now passed from the LeRobot dataloader through `Lara_core` into the action adapter so batch-local episode responsibility can supervise the pool router.
 - Utility calibration loss code was added behind zero default weights; it still needs a real utility-score producer before it can be considered the paper's counterfactual calibration stage.
 - Optional direct action-chunk expert heads were added behind `lara_use_direct_action_experts: false`; they still need real SO101 training validation.
+- Route-switch-rate and retained-probability-mass helpers were added for offline route diagnostics; closed-loop subset-retention success curves still need real evaluation rollouts.
 
 ## Remaining Engineering Risks
 
 - Action target alignment is explicit for the current SO101 dataloader via `future_actions`. Future datasets that return past/current/future actions together must split out `future_actions` before calling the action adapter.
 - Full `Lara` model instantiation with real Qwen/V-JEPA checkpoints and real-component one-step training smoke tests still need to be run; framework glue and fake action-head backprop are covered by checkpoint-free smoke tests.
 - The latent action head is currently a Stage-1 skeleton and still needs empirical validation, loss-weight tuning, and ablation against the token-conditioned flow baseline.
-- The MoE/router path is currently a Stage-2 scaffold and still needs full-train validation of the direct expert and per-expert action-loss posterior paths, resident-pool evaluation, and closed-loop validation.
+- The MoE/router path is currently a Stage-2 scaffold and still needs full-train validation of the direct expert and per-expert action-loss posterior paths, resident-pool success evaluation, and closed-loop validation.
 - Utility calibration currently validates only the loss surface; it does not yet compute candidate route utility from value/progress/latent-state or closed-loop evaluator signals.
 - The new pytest static tests were not run in the system Python because that interpreter lacks `pytest`; run them inside the project environment with `python -m pytest tests/test_baseline_static.py`.
 - VJ2 video preprocessing still happens inside the forward path and may bottleneck training.

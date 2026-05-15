@@ -9,6 +9,8 @@ from Lara.model.modules.action_model.lara_moe import (
     centered_utility_targets,
     masked_topk_softmax,
     posterior_from_expert_losses,
+    retained_probability_mass,
+    route_switch_rate,
     route_stickiness_loss,
     uniform_balance_loss,
     utility_calibration_objective,
@@ -302,6 +304,38 @@ class LatentActionMoETest(unittest.TestCase):
         self.assertTrue(torch.allclose(output.loss, expected))
         self.assertGreaterEqual(float(output.balance_loss), 0.0)
         self.assertGreaterEqual(float(output.stickiness_loss), 0.0)
+
+    def test_route_switch_rate_uses_valid_pairs(self):
+        route_ids = torch.tensor(
+            [
+                [1, 1, 2, 2],
+                [3, 4, 4, 5],
+            ]
+        )
+        valid_mask = torch.tensor(
+            [
+                [True, True, True, False],
+                [True, True, True, True],
+            ]
+        )
+
+        switch_rate = route_switch_rate(route_ids, valid_mask)
+
+        self.assertTrue(torch.allclose(switch_rate, torch.tensor(0.6)))
+
+    def test_retained_probability_mass_monotonic_with_retention_fraction(self):
+        probs = torch.tensor(
+            [
+                [0.7, 0.2, 0.1, 0.0],
+                [0.4, 0.3, 0.2, 0.1],
+            ]
+        )
+
+        curve = retained_probability_mass(probs, [0.25, 0.5, 1.0])
+
+        self.assertLessEqual(float(curve[0.25]), float(curve[0.5]))
+        self.assertLessEqual(float(curve[0.5]), float(curve[1.0]))
+        self.assertTrue(torch.allclose(curve[1.0], torch.tensor(1.0)))
 
 
 if __name__ == "__main__":

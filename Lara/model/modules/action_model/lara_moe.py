@@ -151,6 +151,38 @@ def route_stickiness_loss(router_probs: torch.Tensor, previous_router_probs: tor
     return torch.mean(torch.abs(router_probs - previous_router_probs.to(router_probs.device, router_probs.dtype)))
 
 
+def route_switch_rate(route_ids: torch.Tensor, valid_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+    if route_ids.ndim != 2:
+        raise ValueError(f"Expected route_ids [B, T], got {tuple(route_ids.shape)}")
+    if route_ids.shape[1] < 2:
+        return route_ids.new_zeros((), dtype=torch.float32)
+
+    switches = (route_ids[:, 1:] != route_ids[:, :-1]).float()
+    if valid_mask is None:
+        return switches.mean()
+    if valid_mask.shape != route_ids.shape:
+        raise ValueError(f"valid_mask must have shape {tuple(route_ids.shape)}, got {tuple(valid_mask.shape)}")
+    pair_mask = (valid_mask[:, 1:] & valid_mask[:, :-1]).to(dtype=switches.dtype)
+    return (switches * pair_mask).sum() / pair_mask.sum().clamp_min(1.0)
+
+
+def retained_probability_mass(probs: torch.Tensor, retention_fractions: list[float]) -> dict[float, torch.Tensor]:
+    if probs.ndim != 2:
+        raise ValueError(f"Expected probs [B, M], got {tuple(probs.shape)}")
+    if not retention_fractions:
+        raise ValueError("retention_fractions must not be empty")
+
+    results = {}
+    num_experts = probs.shape[-1]
+    for fraction in retention_fractions:
+        if fraction <= 0 or fraction > 1:
+            raise ValueError(f"retention fraction must be in (0, 1], got {fraction}")
+        keep_count = max(1, min(num_experts, int(round(num_experts * fraction))))
+        top_values, _ = torch.topk(probs, k=keep_count, dim=-1)
+        results[fraction] = top_values.sum(dim=-1).mean()
+    return results
+
+
 def aggregate_episode_responsibilities(
     posterior_probs: torch.Tensor,
     episode_ids: torch.Tensor,
