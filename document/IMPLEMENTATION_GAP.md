@@ -31,7 +31,7 @@ These files exist to make the next implementation steps concrete, but they are n
 
 - Training loop no longer zeroes gradients at the start of every `accelerator.accumulate` block.
 - Distributed barriers and rank checks are guarded for single-process execution.
-- Qwen latent/embodied special token counts are checked per sample before hidden-state reshaping.
+- Qwen latent/embodied special token counts are checked per sample before hidden-state reshaping and covered by a lightweight unit test.
 - Flow-matching timestep buckets are clamped to the valid range.
 - `ActionHeadAdapter` has a dummy-batch forward/predict smoke test for basic loss and output shape.
 - SO101 batches now expose `future_actions` explicitly, with `action` retained as a compatibility alias.
@@ -56,7 +56,7 @@ These files exist to make the next implementation steps concrete, but they are n
 
 ## Suggested Implementation Order
 
-1. Add full-framework smoke tests for tokenizer integration and one fake-batch train step.
+1. Add full-framework smoke tests for Qwen/V-JEPA integration and one fake-batch train step.
 2. Make action batches explicit: `future_actions`, optional `past_actions`, and `current_state`.
 3. Validate and tune the optional latent-action posterior/codebook/prior path.
 4. Validate the optional MoE/router path with real trajectory-id batches and route-quality diagnostics.
