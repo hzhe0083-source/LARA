@@ -461,6 +461,37 @@ class LatentActionMoETest(unittest.TestCase):
         self.assertGreater(float(output.utility_head_loss), 0.0)
         self.assertTrue(torch.allclose(output.loss, 0.5 * output.utility_head_loss))
 
+    def test_external_utility_scores_can_still_train_utility_head_components(self):
+        torch.manual_seed(0)
+        moe = LatentActionMoE(
+            hidden_size=8,
+            num_experts=3,
+            top_k=2,
+            episode_pool_size=3,
+            expert_hidden_size=16,
+            router_hidden_size=12,
+            use_utility_head=True,
+            utility_hidden_size=12,
+            utility_loss_weight=0.25,
+            utility_head_loss_weight=0.5,
+        )
+        conditioning_tokens = torch.randn(2, 4, 8)
+        utility_scores = torch.randn(2, 3)
+        value_targets = torch.zeros(2, 3)
+        progress_targets = torch.ones(2, 3)
+
+        output = moe(
+            conditioning_tokens,
+            utility_scores=utility_scores,
+            utility_value_targets=value_targets,
+            utility_progress_targets=progress_targets,
+        )
+
+        self.assertIsNotNone(output.utility_value_scores)
+        self.assertGreater(float(output.utility_loss), 0.0)
+        self.assertGreater(float(output.utility_head_loss), 0.0)
+        self.assertTrue(torch.allclose(output.loss, 0.25 * output.utility_loss + 0.5 * output.utility_head_loss))
+
     def test_action_chunk_expert_bank_produces_per_expert_losses(self):
         torch.manual_seed(0)
         experts = ActionChunkExpertBank(

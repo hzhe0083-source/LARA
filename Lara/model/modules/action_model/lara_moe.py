@@ -1285,9 +1285,18 @@ class LatentActionMoE(nn.Module):
         utility_value_scores = None
         utility_progress_scores = None
         utility_uncertainty_scores = None
-        if utility_scores is None and self.utility_head is not None:
+        has_utility_component_targets = any(
+            target is not None
+            for target in [
+                utility_value_targets,
+                utility_progress_targets,
+                utility_uncertainty_targets,
+            ]
+        )
+        if self.utility_head is not None and (utility_scores is None or has_utility_component_targets):
             utility_output = self.utility_head(conditioning_tokens, cost_scores=utility_cost_scores)
-            utility_scores = utility_output["utility_scores"]
+            if utility_scores is None:
+                utility_scores = utility_output["utility_scores"]
             utility_value_scores = utility_output["value_scores"]
             utility_progress_scores = utility_output["progress_scores"]
             utility_uncertainty_scores = utility_output["uncertainty_scores"]

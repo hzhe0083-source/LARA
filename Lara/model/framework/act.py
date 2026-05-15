@@ -7,6 +7,7 @@ from typing import Optional
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from Lara.model.modules.action_model.GR00T_ActionHeader import FlowmatchingActionHead, get_action_model
 from Lara.model.modules.action_model.lara_latent import LatentActionHead, LatentActionTransitionHead
@@ -68,6 +69,16 @@ class ActionHeadAdapter(nn.Module):
         self.use_action_loss_utility_components = action_cfg.get("lara_use_action_loss_utility_components", False)
         self.action_loss_utility_temperature = action_cfg.get("lara_action_loss_utility_temperature", 1.0)
         self.action_loss_utility_normalize = action_cfg.get("lara_action_loss_utility_normalize", True)
+        self.use_state_utility = action_cfg.get("lara_use_state_utility", False)
+        self.use_state_utility_components = action_cfg.get("lara_use_state_utility_components", False)
+        self.state_utility_temperature = action_cfg.get(
+            "lara_state_utility_temperature",
+            self.action_loss_utility_temperature,
+        )
+        self.state_utility_normalize = action_cfg.get(
+            "lara_state_utility_normalize",
+            self.action_loss_utility_normalize,
+        )
         route_retention_fractions = action_cfg.get("lara_route_retention_fractions", [0.25, 0.5, 1.0])
         self.route_retention_fractions = (
             list(route_retention_fractions) if route_retention_fractions is not None else None
@@ -348,6 +359,8 @@ class ActionHeadAdapter(nn.Module):
             direct_expert_loss = None
             direct_expert_losses = None
             utility_expert_losses = None
+            state_utility_losses = None
+            state_utility_component_targets = None
             if self.direct_action_experts is not None:
                 direct_expert_actions = self.direct_action_experts(conditioning_tokens, state=state_tensor)
                 direct_expert_loss_components = self.direct_action_experts.reconstruction_loss_components(
@@ -398,11 +411,38 @@ class ActionHeadAdapter(nn.Module):
                 )
                 if utility_expert_losses is None and self.use_action_loss_utility:
                     utility_expert_losses = self._expert_action_losses(conditioning_tokens, utility_actions_target, state)
+                if self.use_state_utility:
+                    state_utility_loss_components = self._expert_transition_loss_components(
+                        conditioning_tokens,
+                        latent_action_tokens,
+                        execution_state_target=execution_state_target,
+                        prediction_state_target=prediction_state_target,
+                        execution_state_target_mask=execution_state_target_mask,
+                        prediction_state_target_mask=prediction_state_target_mask,
+                    )
+                    if state_utility_loss_components is not None and torch.all(
+                        state_utility_loss_components["valid_mask"]
+                    ):
+                        state_utility_losses = state_utility_loss_components["weighted"]
+                        if self.use_state_utility_components:
+                            state_utility_component_targets = utility_component_targets_from_expert_losses(
+                                value_losses=state_utility_losses,
+                                progress_losses=state_utility_loss_components["execution"],
+                                uncertainty_losses=state_utility_loss_components["prediction"],
+                                temperature=self.state_utility_temperature,
+                                normalize=self.state_utility_normalize,
+                            )
             utility_scores = (
                 self._as_tensor(utility_scores, device=conditioning_tokens.device, dtype=conditioning_tokens.dtype)
                 if utility_scores is not None
                 else None
             )
+            if utility_scores is None and self.use_state_utility and state_utility_losses is not None:
+                utility_scores = utility_from_expert_losses(
+                    state_utility_losses,
+                    temperature=self.state_utility_temperature,
+                    normalize=self.state_utility_normalize,
+                ).to(dtype=conditioning_tokens.dtype)
             if utility_scores is None and self.use_action_loss_utility and utility_expert_losses is not None:
                 utility_scores = utility_from_expert_losses(
                     utility_expert_losses,
@@ -447,7 +487,7 @@ class ActionHeadAdapter(nn.Module):
                 if utility_target_mask is not None
                 else None
             )
-            if direct_utility_component_targets is not None:
+            if direct_utility_component_targets is not None and state_utility_component_targets is None:
                 if utility_value_targets is None:
                     utility_value_targets = direct_utility_component_targets["value"].to(
                         device=conditioning_tokens.device,
@@ -460,6 +500,24 @@ class ActionHeadAdapter(nn.Module):
                     )
                 if utility_uncertainty_targets is None:
                     utility_uncertainty_targets = direct_utility_component_targets["uncertainty"].to(
+                        device=conditioning_tokens.device,
+                        dtype=conditioning_tokens.dtype,
+                    )
+                if utility_target_mask is None:
+                    utility_target_mask = torch.ones_like(utility_value_targets, dtype=torch.bool)
+            if state_utility_component_targets is not None:
+                if utility_value_targets is None:
+                    utility_value_targets = state_utility_component_targets["value"].to(
+                        device=conditioning_tokens.device,
+                        dtype=conditioning_tokens.dtype,
+                    )
+                if utility_progress_targets is None:
+                    utility_progress_targets = state_utility_component_targets["progress"].to(
+                        device=conditioning_tokens.device,
+                        dtype=conditioning_tokens.dtype,
+                    )
+                if utility_uncertainty_targets is None:
+                    utility_uncertainty_targets = state_utility_component_targets["uncertainty"].to(
                         device=conditioning_tokens.device,
                         dtype=conditioning_tokens.dtype,
                     )
@@ -540,6 +598,8 @@ class ActionHeadAdapter(nn.Module):
                 aux_losses[f"moe_route_quality_{safe_metric_name}"] = metric_value
             if direct_expert_loss is not None:
                 aux_losses["moe_direct_expert_loss"] = self.direct_expert_loss_weight * direct_expert_loss
+            if state_utility_losses is not None:
+                aux_losses["moe_state_utility_error"] = state_utility_losses.mean().detach()
             if self.use_direct_action_output:
                 direct_routed_actions = ActionChunkExpertBank.routed_actions(
                     direct_expert_actions,
@@ -618,6 +678,78 @@ class ActionHeadAdapter(nn.Module):
                 * self._masked_boundary_loss(pred_states[:, 1, :], prediction_target, prediction_mask)
             )
         return torch.stack(losses).sum()
+
+    def _expert_transition_loss_components(
+        self,
+        conditioning_tokens: torch.Tensor,
+        latent_action_tokens: Optional[torch.Tensor],
+        execution_state_target=None,
+        prediction_state_target=None,
+        execution_state_target_mask=None,
+        prediction_state_target_mask=None,
+    ) -> Optional[dict[str, torch.Tensor]]:
+        if self.transition_head is None or self.lara_moe is None or latent_action_tokens is None:
+            return None
+        execution_target = self._boundary_state_to_tensor(execution_state_target, conditioning_tokens)
+        prediction_target = self._boundary_state_to_tensor(prediction_state_target, conditioning_tokens)
+        if execution_target is None and prediction_target is None:
+            return None
+
+        batch_size = conditioning_tokens.shape[0]
+        execution_mask = self._boundary_mask_to_tensor(execution_state_target_mask, conditioning_tokens, batch_size)
+        prediction_mask = self._boundary_mask_to_tensor(prediction_state_target_mask, conditioning_tokens, batch_size)
+        if execution_mask is None and execution_target is not None:
+            execution_mask = torch.ones(batch_size, device=conditioning_tokens.device, dtype=torch.bool)
+        if prediction_mask is None and prediction_target is not None:
+            prediction_mask = torch.ones(batch_size, device=conditioning_tokens.device, dtype=torch.bool)
+
+        expert_tokens = self.lara_moe.expert_conditioning_tokens(conditioning_tokens)
+        _, num_experts, token_count, hidden_size = expert_tokens.shape
+        flat_tokens = expert_tokens.reshape(batch_size * num_experts, token_count, hidden_size)
+        flat_latents = latent_action_tokens[:, None, :, :].expand(-1, num_experts, -1, -1)
+        flat_latents = flat_latents.reshape(
+            batch_size * num_experts,
+            latent_action_tokens.shape[1],
+            latent_action_tokens.shape[2],
+        )
+        pred_states = self.transition_head(flat_tokens, flat_latents).float()
+        pred_states = pred_states.view(batch_size, num_experts, pred_states.shape[1], pred_states.shape[2])
+
+        execution_loss = conditioning_tokens.new_zeros(batch_size, num_experts, dtype=torch.float32)
+        prediction_loss = conditioning_tokens.new_zeros(batch_size, num_experts, dtype=torch.float32)
+        weighted_loss = conditioning_tokens.new_zeros(batch_size, num_experts, dtype=torch.float32)
+        weight_denom = conditioning_tokens.new_zeros(batch_size, 1, dtype=torch.float32)
+        valid_mask = torch.zeros(batch_size, device=conditioning_tokens.device, dtype=torch.bool)
+
+        if execution_target is not None:
+            execution_loss = F.smooth_l1_loss(
+                pred_states[:, :, 0, :],
+                execution_target[:, None, :].expand(-1, num_experts, -1),
+                reduction="none",
+            ).mean(dim=-1)
+            execution_weight = execution_mask.to(device=conditioning_tokens.device, dtype=torch.float32).view(-1, 1)
+            weighted_loss = weighted_loss + self.execution_transition_loss_weight * execution_loss * execution_weight
+            weight_denom = weight_denom + self.execution_transition_loss_weight * execution_weight
+            valid_mask = valid_mask | execution_mask.to(device=conditioning_tokens.device, dtype=torch.bool)
+
+        if prediction_target is not None:
+            prediction_loss = F.smooth_l1_loss(
+                pred_states[:, :, 1, :],
+                prediction_target[:, None, :].expand(-1, num_experts, -1),
+                reduction="none",
+            ).mean(dim=-1)
+            prediction_weight = prediction_mask.to(device=conditioning_tokens.device, dtype=torch.float32).view(-1, 1)
+            weighted_loss = weighted_loss + self.prediction_transition_loss_weight * prediction_loss * prediction_weight
+            weight_denom = weight_denom + self.prediction_transition_loss_weight * prediction_weight
+            valid_mask = valid_mask | prediction_mask.to(device=conditioning_tokens.device, dtype=torch.bool)
+
+        weighted_loss = weighted_loss / weight_denom.clamp_min(1.0)
+        return {
+            "weighted": weighted_loss,
+            "execution": execution_loss,
+            "prediction": prediction_loss,
+            "valid_mask": valid_mask,
+        }
 
     @staticmethod
     def _masked_boundary_loss(

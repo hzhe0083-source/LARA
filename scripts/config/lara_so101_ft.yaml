@@ -62,6 +62,10 @@ framework:
     lara_use_action_loss_utility_components: false
     lara_action_loss_utility_temperature: 1.0
     lara_action_loss_utility_normalize: true
+    lara_use_state_utility: false
+    lara_use_state_utility_components: false
+    lara_state_utility_temperature: 1.0
+    lara_state_utility_normalize: true
     lara_route_retention_fractions: [0.25, 0.5, 1.0]
     lara_use_utility_head: false
     lara_utility_hidden_dim: 1024

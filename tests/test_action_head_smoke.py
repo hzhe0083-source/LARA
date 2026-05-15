@@ -276,6 +276,56 @@ class ActionHeadAdapterSmokeTest(unittest.TestCase):
         self.assertEqual(output["moe_utility_value_scores"].shape, (2, 3))
         self.assertTrue(torch.isfinite(output["total_action_loss"]).item())
 
+    def test_moe_can_use_transition_state_consistency_as_utility(self):
+        torch.manual_seed(0)
+        adapter = ActionHeadAdapter(
+            config=tiny_action_config(
+                use_lara_moe=True,
+                lara_num_experts=3,
+                lara_episode_pool_size=3,
+                lara_top_k=2,
+                lara_use_transition_head=True,
+                lara_transition_hidden_dim=16,
+                lara_transition_loss_weight=0.25,
+                lara_use_state_utility=True,
+                lara_use_state_utility_components=True,
+                lara_use_utility_head=True,
+                lara_utility_loss_weight=0.25,
+                lara_utility_head_loss_weight=0.5,
+            ),
+            context_hidden_size=16,
+        )
+        adapter.train()
+
+        embodied_tokens = torch.randn(2, 2, 16)
+        latent_tokens = torch.randn(2, 1, 16)
+        actions = torch.randn(2, 3, 2)
+        state = torch.randn(2, 1, 3)
+        execution_target = torch.randn(2, 3)
+        prediction_target = torch.randn(2, 3)
+
+        output = adapter(
+            embodied_action_tokens=embodied_tokens,
+            latent_action_tokens=latent_tokens,
+            actions=actions,
+            state=state,
+            trajectory_ids=[9, 9],
+            execution_state_target=execution_target,
+            prediction_state_target=prediction_target,
+            execution_state_target_mask=[True, True],
+            prediction_state_target_mask=[True, True],
+            return_aux=True,
+        )
+
+        self.assertIn("moe_state_utility_error", output)
+        self.assertIn("moe_utility_scores", output)
+        self.assertIn("moe_utility_head_loss", output)
+        self.assertGreater(float(output["moe_state_utility_error"]), 0.0)
+        self.assertGreater(float(output["moe_utility_loss"]), 0.0)
+        self.assertGreater(float(output["moe_utility_head_loss"]), 0.0)
+        self.assertEqual(output["moe_utility_scores"].shape, (2, 3))
+        self.assertTrue(torch.isfinite(output["total_action_loss"]).item())
+
     def test_direct_moe_uses_short_router_and_utility_horizons(self):
         torch.manual_seed(0)
         adapter = ActionHeadAdapter(
