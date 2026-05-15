@@ -50,6 +50,7 @@ def apply_smoke_overrides(
     use_action_loss_utility_components: bool | None = None,
     use_state_utility: bool | None = None,
     use_state_utility_components: bool | None = None,
+    include_episode_start: bool | None = None,
 ) -> Any:
     if attn_implementation is not None:
         cfg.framework.qwenvl.attn_implementation = attn_implementation
@@ -104,6 +105,8 @@ def apply_smoke_overrides(
                 action_cfg.lara_utility_loss_weight = 1.0
             if float(action_cfg.get("lara_utility_head_loss_weight", 0.0)) == 0.0:
                 action_cfg.lara_utility_head_loss_weight = 1.0
+    if include_episode_start is not None:
+        cfg.datasets.vla_data.include_episode_start = bool(include_episode_start)
     return cfg
 
 
@@ -146,6 +149,7 @@ def smoke_config_summary(cfg: Any) -> dict[str, Any]:
         "lara_use_state_utility_components": bool(action_cfg.get("lara_use_state_utility_components", False)),
         "lara_use_utility_head": bool(action_cfg.get("lara_use_utility_head", False)),
         "lara_use_transition_head": bool(action_cfg.get("lara_use_transition_head", False)),
+        "include_episode_start": bool(cfg.datasets.vla_data.get("include_episode_start", False)),
         "use_lara_moe_default_safe": not bool(action_cfg.use_lara_moe),
         "attn_implementation": cfg.framework.qwenvl.get("attn_implementation", None),
         "reload_modules": cfg.trainer.get("reload_modules", None),
@@ -165,21 +169,22 @@ def build_dummy_examples(cfg: Any, batch_size: int = 1) -> list[dict[str, Any]]:
     video = np.zeros((num_world_model_views, num_frames, video_size, video_size, 3), dtype=np.uint8)
     examples = []
     for idx in range(batch_size):
-        examples.append(
-            {
-                "image": [image],
-                "video": video.copy(),
-                "lang": "move the follower arm safely",
-                "future_actions": np.zeros((action_horizon, action_dim), dtype=np.float32),
-                "future_action_mask": np.ones(action_horizon, dtype=bool),
-                "current_state": np.zeros((1, state_dim), dtype=np.float32),
-                "execution_state_target": np.zeros((1, state_dim), dtype=np.float32),
-                "execution_state_target_mask": True,
-                "prediction_state_target": np.zeros((1, state_dim), dtype=np.float32),
-                "prediction_state_target_mask": True,
-                "trajectory_id": idx,
-            }
-        )
+        example = {
+            "image": [image],
+            "video": video.copy(),
+            "lang": "move the follower arm safely",
+            "future_actions": np.zeros((action_horizon, action_dim), dtype=np.float32),
+            "future_action_mask": np.ones(action_horizon, dtype=bool),
+            "current_state": np.zeros((1, state_dim), dtype=np.float32),
+            "execution_state_target": np.zeros((1, state_dim), dtype=np.float32),
+            "execution_state_target_mask": True,
+            "prediction_state_target": np.zeros((1, state_dim), dtype=np.float32),
+            "prediction_state_target_mask": True,
+            "trajectory_id": idx,
+        }
+        if cfg.datasets.vla_data.get("include_episode_start", False):
+            example["episode_start_image"] = [image]
+        examples.append(example)
     return examples
 
 
@@ -229,6 +234,7 @@ def summarize_examples(examples: list[dict[str, Any]]) -> dict[str, Any]:
         "batch_size": len(examples),
         "keys": keys,
         "fields": fields,
+        "has_episode_start_image": "episode_start_image" in examples[0],
         "trajectory_ids": [_json_safe_scalar(example.get("trajectory_id")) for example in examples],
         "base_indices": [_json_safe_scalar(example.get("base_index")) for example in examples],
     }
@@ -356,6 +362,7 @@ def smoke_lara_real_components(
     use_action_loss_utility_components: bool | None = None,
     use_state_utility: bool | None = None,
     use_state_utility_components: bool | None = None,
+    include_episode_start: bool | None = None,
     use_real_batch: bool = False,
     real_batch_size: int = 1,
     real_batch_start_index: int = 0,
@@ -375,6 +382,7 @@ def smoke_lara_real_components(
         use_action_loss_utility_components=use_action_loss_utility_components,
         use_state_utility=use_state_utility,
         use_state_utility_components=use_state_utility_components,
+        include_episode_start=include_episode_start,
     )
     summary = smoke_config_summary(cfg)
     path_status = check_required_paths(required_component_paths(cfg, require_data=require_data or use_real_batch))
@@ -501,6 +509,14 @@ def main() -> int:
             "per-expert transition-state consistency components."
         ),
     )
+    parser.add_argument(
+        "--include-episode-start",
+        action="store_true",
+        help=(
+            "Temporarily request episode_start_image from the SO101 dataloader so "
+            "the episode-level pool router can condition on the first observation."
+        ),
+    )
     args = parser.parse_args()
 
     result = smoke_lara_real_components(
@@ -518,6 +534,7 @@ def main() -> int:
         use_action_loss_utility_components=args.use_action_loss_utility_components or None,
         use_state_utility=args.use_state_utility or None,
         use_state_utility_components=args.use_state_utility_components or None,
+        include_episode_start=args.include_episode_start or None,
         use_real_batch=args.use_real_batch,
         real_batch_size=args.real_batch_size,
         real_batch_start_index=args.real_batch_start_index,

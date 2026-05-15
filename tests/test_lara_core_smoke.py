@@ -73,7 +73,12 @@ class FakeActionHead(torch.nn.Module):
         self.context_hidden_size = context_hidden_size
         self.loss_scale = torch.nn.Parameter(torch.tensor(1.0))
         self.calls = []
-        self.lara_moe = None
+        self.lara_moe = object() if config.framework.action_model.get("use_lara_moe", False) else None
+
+    def conditioning_tokens(self, embodied_action_tokens, latent_action_tokens=None):
+        if latent_action_tokens is None:
+            return embodied_action_tokens
+        return torch.cat([latent_action_tokens, embodied_action_tokens], dim=1)
 
     def forward(
         self,
@@ -98,6 +103,7 @@ class FakeActionHead(torch.nn.Module):
         execution_state_target_mask=None,
         prediction_state_target_mask=None,
         previous_router_probs=None,
+        initial_context_tokens=None,
         return_aux=False,
     ):
         self.calls.append(
@@ -123,6 +129,7 @@ class FakeActionHead(torch.nn.Module):
                 "execution_state_target_mask": execution_state_target_mask,
                 "prediction_state_target_mask": prediction_state_target_mask,
                 "previous_router_probs": previous_router_probs,
+                "initial_context_tokens": initial_context_tokens,
                 "return_aux": return_aux,
             }
         )
@@ -233,6 +240,7 @@ class LaraCoreSmokeTest(unittest.TestCase):
         self.assertTrue(torch.allclose(output["metric/moe_route_regret"], torch.tensor(0.5)))
         self.assertNotIn("metric/moe_utility_scores", output)
         self.assertEqual(model.qwen.num_prediction_steps, 2)
+        self.assertEqual(len(model.qwen.encode_calls), 1)
         self.assertTrue(model.qwen.encode_calls[0]["include_embodied_tokens"])
         self.assertEqual(model.qwen.encode_calls[0]["prompt_template"], "act {actions} {e_actions}")
 
@@ -261,6 +269,48 @@ class LaraCoreSmokeTest(unittest.TestCase):
         self.assertTrue(np.all(action_call["prediction_state_target"][1] == examples[1]["prediction_state_target"]))
         self.assertEqual(action_call["execution_state_target_mask"], [True, True])
         self.assertEqual(action_call["prediction_state_target_mask"], [False, True])
+        self.assertIsNone(action_call["initial_context_tokens"])
+
+    def test_forward_uses_episode_start_image_for_moe_pool_context(self):
+        config = tiny_framework_config()
+        config.framework.action_model.use_lara_moe = True
+        with (
+            patch.object(Lara_core, "QwenActionTokenizer", FakeQwen),
+            patch.object(Lara_core, "VJ2WorldModel", FakeVJ2),
+            patch.object(Lara_core, "ActionHeadAdapter", FakeActionHead),
+        ):
+            model = Lara_core.Lara(config=config)
+
+        examples = [
+            {
+                "image": ["current-0"],
+                "episode_start_image": ["start-0"],
+                "video": np.zeros((1, 2, 2, 2, 3), dtype=np.uint8),
+                "lang": "pick",
+                "future_actions": np.ones((3, 2), dtype=np.float32),
+                "current_state": np.ones((1, 3), dtype=np.float32),
+                "trajectory_id": 11,
+            },
+            {
+                "image": ["current-1"],
+                "episode_start_image": ["start-1"],
+                "video": np.zeros((1, 2, 2, 2, 3), dtype=np.uint8),
+                "lang": "place",
+                "future_actions": np.ones((3, 2), dtype=np.float32),
+                "current_state": np.ones((1, 3), dtype=np.float32),
+                "trajectory_id": 12,
+            },
+        ]
+
+        model(examples)
+
+        self.assertEqual(len(model.qwen.encode_calls), 2)
+        self.assertEqual(model.qwen.encode_calls[0]["images"], [["current-0"], ["current-1"]])
+        self.assertEqual(model.qwen.encode_calls[1]["images"], [["start-0"], ["start-1"]])
+        self.assertTrue(model.qwen.encode_calls[1]["include_embodied_tokens"])
+        action_call = model.action_head.calls[0]
+        self.assertIsNotNone(action_call["initial_context_tokens"])
+        self.assertEqual(tuple(action_call["initial_context_tokens"].shape), (2, 5, 8))
 
     def test_fake_batch_loss_can_update_action_head_parameter(self):
         config = tiny_framework_config()

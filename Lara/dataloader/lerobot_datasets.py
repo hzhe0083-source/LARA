@@ -96,6 +96,7 @@ def get_vla_dataset(
         video_resolution_size=data_cfg.get("video_resolution_size", 256),
         action_horizon=action_horizon,
         execution_horizon=execution_horizon,
+        include_episode_start=data_cfg.get("include_episode_start", False),
         seed=seed,
         **kwargs,
     )

@@ -312,6 +312,17 @@ class ActionHeadAdapter(nn.Module):
         )
         return torch.cat([latent_action_tokens, embodied_action_tokens], dim=1)
 
+    def conditioning_tokens(
+        self,
+        embodied_action_tokens: torch.Tensor,
+        latent_action_tokens: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        target_dtype = self.condition_norm.weight.dtype
+        embodied_action_tokens = embodied_action_tokens.to(dtype=target_dtype)
+        if latent_action_tokens is not None:
+            latent_action_tokens = latent_action_tokens.to(dtype=target_dtype)
+        return self._conditioning_tokens(embodied_action_tokens, latent_action_tokens)
+
     def forward(
         self,
         embodied_action_tokens: torch.Tensor,

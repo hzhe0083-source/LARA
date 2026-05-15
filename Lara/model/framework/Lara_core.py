@@ -80,6 +80,7 @@ class Lara(baseframework):
         utility_target_mask = optional_batch_field("utility_target_mask")
         previous_router_probs = optional_batch_field("previous_router_probs")
         pool_mask = optional_batch_field("pool_mask")
+        episode_start_images = optional_batch_field("episode_start_image")
 
         if actions is not None:
             prompt_template = self.config.datasets.vla_data.get("CoT_prompt", "")
@@ -92,6 +93,24 @@ class Lara(baseframework):
             prompt_template=prompt_template,
             include_embodied_tokens=actions is not None,
         )
+
+        initial_context_tokens = None
+        if actions is not None and self.action_head.lara_moe is not None and episode_start_images is not None:
+            # The episode-start context conditions the resident pool router; it
+            # is not an action reconstruction target, so keep this second Qwen
+            # encode stop-gradient to avoid doubling the training activation graph.
+            with torch.no_grad():
+                episode_start_context = self.qwen.encode(
+                    images=episode_start_images,
+                    instructions=instructions,
+                    prompt_template=prompt_template,
+                    include_embodied_tokens=True,
+                )
+            initial_context_tokens = self.action_head.conditioning_tokens(
+                embodied_action_tokens=episode_start_context.embodied_action_tokens,
+                latent_action_tokens=episode_start_context.action_tokens,
+            ).detach()
+            del episode_start_context
 
         with torch.autocast("cuda", dtype=torch.bfloat16):
             wm_loss = self.vj2(batch_videos, qwen_context.action_tokens)
@@ -109,6 +128,7 @@ class Lara(baseframework):
                 past_actions=past_actions,
                 state=state,
                 trajectory_ids=trajectory_ids,
+                initial_context_tokens=initial_context_tokens,
                 pool_mask=pool_mask,
                 utility_scores=utility_scores,
                 utility_candidate_mask=utility_candidate_mask,

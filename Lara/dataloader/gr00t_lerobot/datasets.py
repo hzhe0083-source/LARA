@@ -1381,6 +1381,7 @@ class LeRobotMixtureDataset(Dataset):
         video_resolution_size: int = 256,
         action_horizon: int | None = None,
         execution_horizon: int | None = None,
+        include_episode_start: bool = False,
         seed: int = 42,
         metadata_config: dict = {
             "percentile_mixing_method": "min_max",
@@ -1419,6 +1420,7 @@ class LeRobotMixtureDataset(Dataset):
         self.video_resolution_size = video_resolution_size
         self.action_horizon = action_horizon
         self.execution_horizon = execution_horizon
+        self.include_episode_start = include_episode_start
 
         # Set properties for sampling
 
@@ -1610,6 +1612,19 @@ class LeRobotMixtureDataset(Dataset):
         trajectory_length = dataset.trajectory_lengths[trajectory_index]
         return ((step_indices >= 0) & (step_indices < trajectory_length)).astype(bool)
 
+    def _episode_start_images(
+        self,
+        dataset: LeRobotSingleDataset,
+        trajectory_id: int,
+    ) -> list[Image.Image]:
+        data = dataset.transforms(dataset.get_step_data(trajectory_id, 0))
+        images = []
+        for video_key in dataset.modality_keys["video"]:
+            video = data[video_key]
+            video = self.resize_video_opencv(video, self.video_resolution_size)
+            images.append(Image.fromarray(video[0]).resize((self.resolution_size, self.resolution_size)))
+        return images
+
     def __getitem__(self, index: int) -> dict:
         """Get the data for a single trajectory and start index.
 
@@ -1665,6 +1680,8 @@ class LeRobotMixtureDataset(Dataset):
                     lang=language,
                     video=videos,
                 )
+                if self.include_episode_start:
+                    return_dict["episode_start_image"] = self._episode_start_images(dataset, trajectory_name)
                 if self.with_state:
                     state = []
                     for state_key in dataset.modality_keys["state"]:

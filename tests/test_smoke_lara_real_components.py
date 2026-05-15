@@ -94,6 +94,7 @@ class SmokeLaraRealComponentsTest(unittest.TestCase):
             self.assertFalse(summary["lara_use_action_loss_utility_components"])
             self.assertFalse(summary["lara_use_utility_head"])
             self.assertFalse(summary["lara_use_transition_head"])
+            self.assertFalse(summary["include_episode_start"])
 
     def test_attention_override_updates_smoke_summary(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -104,6 +105,16 @@ class SmokeLaraRealComponentsTest(unittest.TestCase):
             summary = smoke_config_summary(cfg)
 
             self.assertEqual(summary["attn_implementation"], "sdpa")
+
+    def test_include_episode_start_override_updates_data_config_and_summary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = tiny_smoke_config(Path(tmp))
+
+            apply_smoke_overrides(cfg, include_episode_start=True)
+            summary = smoke_config_summary(cfg)
+
+            self.assertTrue(cfg.datasets.vla_data.include_episode_start)
+            self.assertTrue(summary["include_episode_start"])
 
     def test_stage_scaffold_overrides_update_config_and_summary(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -192,6 +203,17 @@ class SmokeLaraRealComponentsTest(unittest.TestCase):
             self.assertEqual(examples[0]["prediction_state_target"].shape, (1, 4))
             self.assertTrue(examples[0]["prediction_state_target_mask"])
             self.assertEqual(examples[0]["video"].shape, (2, 8, 16, 16, 3))
+            self.assertNotIn("episode_start_image", examples[0])
+
+    def test_build_dummy_examples_can_include_episode_start_image(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = tiny_smoke_config(Path(tmp))
+            cfg.datasets.vla_data.include_episode_start = True
+
+            examples = build_dummy_examples(cfg, batch_size=1)
+
+            self.assertIn("episode_start_image", examples[0])
+            self.assertEqual(len(examples[0]["episode_start_image"]), 1)
 
     def test_build_real_examples_uses_configured_so101_horizons(self):
         class FakeDataset:
@@ -235,6 +257,7 @@ class SmokeLaraRealComponentsTest(unittest.TestCase):
                 "future_action_mask": np.array([True, True, False], dtype=bool),
                 "current_state": np.zeros((1, 4), dtype=np.float16),
                 "video": np.zeros((2, 8, 16, 16, 3), dtype=np.uint8),
+                "episode_start_image": ["start"],
                 "trajectory_id": np.int64(7),
                 "base_index": np.int64(9),
             }
@@ -246,6 +269,7 @@ class SmokeLaraRealComponentsTest(unittest.TestCase):
         self.assertEqual(summary["fields"]["future_actions"]["shape"], [3, 2])
         self.assertEqual(summary["fields"]["future_action_mask"]["shape"], [3])
         self.assertEqual(summary["fields"]["video"]["dtype"], "uint8")
+        self.assertTrue(summary["has_episode_start_image"])
         self.assertEqual(summary["trajectory_ids"], [7])
         self.assertEqual(summary["base_indices"], [9])
 
@@ -324,9 +348,11 @@ class SmokeLaraRealComponentsTest(unittest.TestCase):
                     use_transition_head=True,
                     transition_loss_weight=0.5,
                     use_direct_action_output=True,
+                    include_episode_start=True,
                 )
 
             action_cfg = instantiate.call_args.args[0].framework.action_model
+            data_cfg = instantiate.call_args.args[0].datasets.vla_data
             self.assertEqual(result["instantiate"]["status"], "error")
             self.assertTrue(action_cfg.use_latent_action_head)
             self.assertTrue(action_cfg.lara_use_transition_head)
@@ -334,6 +360,7 @@ class SmokeLaraRealComponentsTest(unittest.TestCase):
             self.assertTrue(action_cfg.use_lara_moe)
             self.assertTrue(action_cfg.lara_use_direct_action_experts)
             self.assertTrue(action_cfg.lara_use_direct_action_output)
+            self.assertTrue(data_cfg.include_episode_start)
 
     def test_smoke_entrypoint_can_report_real_batch_without_instantiating_model(self):
         with tempfile.TemporaryDirectory() as tmp:

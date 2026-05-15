@@ -126,6 +126,10 @@ datasets:
     per_device_batch_size: 8
     load_all_data_for_training: true
     with_state: true
+    # Default-off: when enabled, dataloader returns the episode's first image so
+    # the optional episode-level MoE pool router can condition on h_1 instead of
+    # the current chunk context.
+    include_episode_start: false
 
 trainer:
   epochs: 100

@@ -508,6 +508,9 @@ extracted from the token stream, and a flow-matching action head predicts the
 continuous follower-arm action chunk. The SO101 dataloader and action adapter
 also propagate future-action validity masks so trajectory-end padding does not
 supervise action, latent, transition, utility-proxy, or direct-expert losses.
+For the optional MoE path, the dataloader can also return the episode's first
+image so the episode-level pool router can condition on an encoded initial
+context $h_1$ rather than reusing the current chunk context as a proxy.
 This is not yet the full LARA algorithm in this manuscript. In particular,
 production-ready latent-action training, validated MoE action experts,
 posterior-responsibility training, the episode-level pool router, the

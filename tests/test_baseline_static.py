@@ -61,6 +61,8 @@ def test_so101_batches_expose_future_actions():
     trainer_src = read("Lara/training/train_lara.py")
     assert "future_actions=action" in dataset_src
     assert "future_action_mask=self._future_action_mask" in dataset_src
+    assert "include_episode_start: bool = False" in dataset_src
+    assert 'return_dict["episode_start_image"] = self._episode_start_images' in dataset_src
     assert 'return_dict["current_state"] = state[0:1]' in dataset_src
     assert 'example["future_actions"] = example["action"]' in v3_dataset_src
     assert 'example["future_action_mask"]' in v3_dataset_src
@@ -88,9 +90,13 @@ def test_so101_batches_expose_future_actions():
     assert 'utility_scores = optional_batch_field("utility_scores")' in core_src
     assert 'utility_value_targets = optional_batch_field("utility_value_targets")' in core_src
     assert 'previous_router_probs = optional_batch_field("previous_router_probs")' in core_src
+    assert 'episode_start_images = optional_batch_field("episode_start_image")' in core_src
+    assert "self.action_head.lara_moe is not None and episode_start_images is not None" in core_src
+    assert "initial_context_tokens = self.action_head.conditioning_tokens" in core_src
     assert "utility_scores=utility_scores" in core_src
     assert "utility_value_targets=utility_value_targets" in core_src
     assert "previous_router_probs=previous_router_probs" in core_src
+    assert "initial_context_tokens=initial_context_tokens" in core_src
     assert "execution_state_target=execution_state_target" in core_src
     assert "prediction_state_target=prediction_state_target" in core_src
 
@@ -323,6 +329,7 @@ def test_optional_moe_router_stage_two_exists():
     assert "lara_posterior_uniform_floor: 0.0" in config_src
     assert "lara_posterior_top_r:" in config_src
     assert "lara_use_expert_loss_posterior: true" in config_src
+    assert "include_episode_start: false" in config_src
     assert "Stage-2 MoE/router scaffold" in gap
     assert "expert-diversity/entropy stabilizers" in gap
     assert "route-quality aggregation metrics" in gap
