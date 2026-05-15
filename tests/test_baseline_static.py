@@ -81,8 +81,10 @@ def test_optional_moe_router_stage_two_exists():
     assert "def posterior_from_expert_losses" in moe_src
     assert "def route_diagnostics" in moe_src
     assert "def aggregate_episode_responsibilities" in moe_src
+    assert "def utility_calibration_objective" in moe_src
     assert "expert_action_losses" in moe_src
     assert "pool_target_probs" in moe_src
+    assert "utility_scores" in moe_src
     assert "def expert_conditioning_tokens" in moe_src
     assert "def _trajectory_ids_to_tensor" in adapter_src
     assert "aggregate_episode_responsibilities(posterior_probs, trajectory_tensor)" in adapter_src
@@ -102,6 +104,8 @@ def test_optional_moe_router_stage_two_exists():
     assert "moe_route_regret" in adapter_src
     assert "use_lara_moe: false" in config_src
     assert "lara_episode_pool_size: 4" in config_src
+    assert "lara_utility_loss_weight: 0.0" in config_src
+    assert "lara_utility_rank_loss_weight: 0.0" in config_src
     assert "lara_posterior_temperature: 1.0" in config_src
     assert "lara_use_expert_loss_posterior: true" in config_src
     assert "Stage-2 MoE/router scaffold" in gap

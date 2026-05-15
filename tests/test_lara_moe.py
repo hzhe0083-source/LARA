@@ -5,8 +5,10 @@ import torch
 from Lara.model.modules.action_model.lara_moe import (
     LatentActionMoE,
     aggregate_episode_responsibilities,
+    centered_utility_targets,
     masked_topk_softmax,
     posterior_from_expert_losses,
+    utility_calibration_objective,
 )
 
 
@@ -162,6 +164,69 @@ class LatentActionMoETest(unittest.TestCase):
 
         self.assertGreaterEqual(float(output.pool_loss), 0.0)
         self.assertEqual(output.pool_probs.shape, pool_target.shape)
+
+    def test_centered_utility_targets_respect_candidate_mask(self):
+        utilities = torch.tensor(
+            [
+                [1.0, 3.0, 100.0],
+                [2.0, 4.0, 6.0],
+            ]
+        )
+        candidate_mask = torch.tensor(
+            [
+                [True, True, False],
+                [False, True, True],
+            ]
+        )
+
+        targets, mask = centered_utility_targets(utilities, candidate_mask)
+
+        self.assertTrue(torch.equal(mask, candidate_mask))
+        self.assertTrue(torch.allclose(targets[0], torch.tensor([-1.0, 1.0, 0.0])))
+        self.assertTrue(torch.allclose(targets[1], torch.tensor([0.0, -1.0, 1.0])))
+
+    def test_utility_calibration_objective_trains_router_logits(self):
+        router_logits = torch.tensor([[0.0, 0.5, -0.5]], requires_grad=True)
+        utilities = torch.tensor([[0.0, 2.0, -1.0]])
+
+        loss, rank_loss, calibration_error = utility_calibration_objective(
+            router_logits,
+            utilities,
+            rank_loss_weight=0.5,
+        )
+
+        self.assertGreater(float(loss.detach()), 0.0)
+        self.assertGreaterEqual(float(rank_loss.detach()), 0.0)
+        self.assertGreaterEqual(float(calibration_error.detach()), 0.0)
+        loss.backward()
+        self.assertIsNotNone(router_logits.grad)
+
+    def test_forward_accepts_utility_scores(self):
+        torch.manual_seed(0)
+        moe = LatentActionMoE(
+            hidden_size=8,
+            num_experts=3,
+            top_k=2,
+            episode_pool_size=3,
+            expert_hidden_size=16,
+            router_hidden_size=12,
+            utility_loss_weight=1.0,
+            utility_rank_loss_weight=0.25,
+        )
+        conditioning_tokens = torch.randn(2, 4, 8)
+        utility_scores = torch.tensor(
+            [
+                [1.0, 0.0, -1.0],
+                [-0.5, 0.5, 1.5],
+            ]
+        )
+
+        output = moe(conditioning_tokens, utility_scores=utility_scores)
+
+        self.assertGreater(float(output.utility_loss), 0.0)
+        self.assertGreaterEqual(float(output.utility_rank_loss), 0.0)
+        self.assertGreaterEqual(float(output.utility_calibration_error), 0.0)
+        self.assertTrue(torch.allclose(output.loss, output.utility_loss))
 
 
 if __name__ == "__main__":

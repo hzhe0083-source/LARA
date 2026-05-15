@@ -17,13 +17,14 @@ These files exist to make the next implementation steps concrete, but they are n
 
 - Stage-1 latent action head scaffold: posterior encoder, VQ codebook, and context-only prior (`use_latent_action_head: false`).
 - Stage-2 MoE/router scaffold: residual experts, posterior responsibility from latent tokens or per-expert action reconstruction losses, episode-level resident pool targets from aggregated chunk responsibility, chunk-level top-k routing constrained to the resident pool, posterior-to-router distillation losses, and route collapse diagnostics (`use_lara_moe: false`).
+- Utility calibration scaffold: centered utility regression and pairwise ranking losses for externally supplied candidate route utilities (`lara_utility_loss_weight: 0.0`).
 
 ## Missing Paper Components
 
 - Production-ready latent action training and validation.
 - MoE action experts that directly produce or adapt action chunks.
 - Closed-loop route diagnostics and subset-retention curves.
-- Counterfactual utility calibration.
+- Real counterfactual utility scoring from value/progress/latent-state or closed-loop evaluator signals.
 - Matched-compute and matched-resident-expert evaluation protocol.
 
 ## Baseline Reliability Fixes Applied
@@ -38,6 +39,7 @@ These files exist to make the next implementation steps concrete, but they are n
 - Stage-1 latent action head code was added behind `use_latent_action_head`; it is not yet validated in a full training run.
 - Stage-2 MoE/router code was added behind `use_lara_moe`; it now has torch tests for resident-pool routing, chunk top-k routing, per-expert action-loss posterior responsibility, and episode-level pool target aggregation, but it is not yet validated in a full training run.
 - Trajectory ids are now passed from the LeRobot dataloader through `Lara_core` into the action adapter so batch-local episode responsibility can supervise the pool router.
+- Utility calibration loss code was added behind zero default weights; it still needs a real utility-score producer before it can be considered the paper's counterfactual calibration stage.
 
 ## Remaining Engineering Risks
 
@@ -45,6 +47,7 @@ These files exist to make the next implementation steps concrete, but they are n
 - Full model instantiation and one-step training smoke tests still need to be run in a Python environment with `torch`, `transformers`, `diffusers`, `omegaconf`, and local checkpoints.
 - The latent action head is currently a Stage-1 skeleton and still needs empirical validation, loss-weight tuning, and ablation against the token-conditioned flow baseline.
 - The MoE/router path is currently a Stage-2 scaffold and still needs full-train validation of the per-expert action-loss posterior path, resident-pool evaluation, and closed-loop validation.
+- Utility calibration currently validates only the loss surface; it does not yet compute candidate route utility from value/progress/latent-state or closed-loop evaluator signals.
 - The new pytest static tests were not run in the system Python because that interpreter lacks `pytest`; run them inside the project environment with `python -m pytest tests/test_baseline_static.py`.
 - VJ2 video preprocessing still happens inside the forward path and may bottleneck training.
 - `pyproject.toml` does not declare the full runtime dependency set; `requirements.txt` remains the environment source of truth.

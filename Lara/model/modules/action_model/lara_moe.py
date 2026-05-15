@@ -12,6 +12,9 @@ class MoEConditionerOutput:
     loss: torch.Tensor
     route_loss: torch.Tensor
     pool_loss: torch.Tensor
+    utility_loss: torch.Tensor
+    utility_rank_loss: torch.Tensor
+    utility_calibration_error: torch.Tensor
     router_entropy: torch.Tensor
     posterior_entropy: torch.Tensor
     pool_entropy: torch.Tensor
@@ -148,6 +151,55 @@ def aggregate_episode_responsibilities(
     return targets / targets.sum(dim=-1, keepdim=True).clamp_min(1e-8)
 
 
+def centered_utility_targets(
+    utility_scores: torch.Tensor,
+    candidate_mask: Optional[torch.Tensor] = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if utility_scores.ndim != 2:
+        raise ValueError(f"Expected utility_scores [B, M], got {tuple(utility_scores.shape)}")
+    if candidate_mask is None:
+        candidate_mask = torch.ones_like(utility_scores, dtype=torch.bool)
+    else:
+        candidate_mask = _validate_expert_mask(candidate_mask, utility_scores, "candidate_mask")
+
+    mask_float = candidate_mask.to(dtype=utility_scores.dtype)
+    mean_score = (utility_scores * mask_float).sum(dim=-1, keepdim=True)
+    mean_score = mean_score / mask_float.sum(dim=-1, keepdim=True).clamp_min(1.0)
+    targets = (utility_scores - mean_score) * mask_float
+    return targets, candidate_mask
+
+
+def utility_calibration_objective(
+    router_logits: torch.Tensor,
+    utility_scores: torch.Tensor,
+    candidate_mask: Optional[torch.Tensor] = None,
+    rank_loss_weight: float = 0.0,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    if router_logits.shape != utility_scores.shape:
+        raise ValueError(
+            f"utility_scores must have shape {tuple(router_logits.shape)}, got {tuple(utility_scores.shape)}"
+        )
+    if rank_loss_weight < 0:
+        raise ValueError("rank_loss_weight must be non-negative")
+
+    targets, candidate_mask = centered_utility_targets(utility_scores, candidate_mask)
+    regression_loss = F.smooth_l1_loss(router_logits[candidate_mask], targets.detach()[candidate_mask])
+    calibration_error = (router_logits.detach()[candidate_mask] - targets.detach()[candidate_mask]).abs().mean()
+
+    if rank_loss_weight == 0:
+        rank_loss = router_logits.new_zeros(())
+        return regression_loss, rank_loss, calibration_error
+
+    utility_diff = targets[:, :, None] - targets[:, None, :]
+    logit_diff = router_logits[:, :, None] - router_logits[:, None, :]
+    pair_mask = candidate_mask[:, :, None] & candidate_mask[:, None, :] & (utility_diff.abs() > 1e-8)
+    if not torch.any(pair_mask):
+        rank_loss = router_logits.new_zeros(())
+    else:
+        rank_loss = F.softplus(-(utility_diff.detach() * logit_diff)[pair_mask]).mean()
+    return regression_loss + rank_loss_weight * rank_loss, rank_loss, calibration_error
+
+
 class ResidualActionExpert(nn.Module):
     """Small token adapter used as a lightweight action expert."""
 
@@ -237,6 +289,8 @@ class LatentActionMoE(nn.Module):
         router_hidden_size: int = 1024,
         router_loss_weight: float = 1.0,
         pool_loss_weight: float = 1.0,
+        utility_loss_weight: float = 0.0,
+        utility_rank_loss_weight: float = 0.0,
         posterior_temperature: float = 1.0,
         residual_scale: float = 0.1,
     ):
@@ -248,6 +302,8 @@ class LatentActionMoE(nn.Module):
         self.episode_pool_size = episode_pool_size if episode_pool_size is not None else num_experts
         self.router_loss_weight = router_loss_weight
         self.pool_loss_weight = pool_loss_weight
+        self.utility_loss_weight = utility_loss_weight
+        self.utility_rank_loss_weight = utility_rank_loss_weight
         self.posterior_temperature = posterior_temperature
         self.experts = nn.ModuleList(
             [
@@ -329,6 +385,8 @@ class LatentActionMoE(nn.Module):
         pool_mask: Optional[torch.Tensor] = None,
         expert_action_losses: Optional[torch.Tensor] = None,
         pool_target_probs: Optional[torch.Tensor] = None,
+        utility_scores: Optional[torch.Tensor] = None,
+        utility_candidate_mask: Optional[torch.Tensor] = None,
     ) -> MoEConditionerOutput:
         self._validate_inputs(conditioning_tokens, latent_action_tokens)
         if initial_context_tokens is not None and initial_context_tokens.shape[0] != conditioning_tokens.shape[0]:
@@ -376,7 +434,22 @@ class LatentActionMoE(nn.Module):
         has_training_teacher = expert_action_losses is not None or latent_action_tokens is not None
         weights = train_weights if self.training and has_training_teacher else router_probs
         tokens = conditioning_tokens + self._expert_residual(conditioning_tokens, weights)
-        total_loss = self.router_loss_weight * route_loss + self.pool_loss_weight * pool_loss
+        if utility_scores is None:
+            utility_loss = router_logits.new_zeros(())
+            utility_rank_loss = router_logits.new_zeros(())
+            utility_calibration_error = router_logits.new_zeros(())
+        else:
+            utility_loss, utility_rank_loss, utility_calibration_error = utility_calibration_objective(
+                router_logits=router_logits,
+                utility_scores=utility_scores,
+                candidate_mask=utility_candidate_mask,
+                rank_loss_weight=self.utility_rank_loss_weight,
+            )
+        total_loss = (
+            self.router_loss_weight * route_loss
+            + self.pool_loss_weight * pool_loss
+            + self.utility_loss_weight * utility_loss
+        )
         diagnostics = route_diagnostics(
             router_probs=router_probs.detach(),
             posterior_probs=posterior_probs.detach(),
@@ -388,6 +461,9 @@ class LatentActionMoE(nn.Module):
             loss=total_loss,
             route_loss=route_loss.detach(),
             pool_loss=pool_loss.detach(),
+            utility_loss=utility_loss.detach(),
+            utility_rank_loss=utility_rank_loss.detach(),
+            utility_calibration_error=utility_calibration_error.detach(),
             router_entropy=entropy(router_probs).detach(),
             posterior_entropy=entropy(posterior_probs).detach(),
             pool_entropy=entropy(pool_probs).detach(),

@@ -47,6 +47,8 @@ framework:
     lara_router_hidden_dim: 1024
     lara_router_loss_weight: 1.0
     lara_pool_loss_weight: 1.0
+    lara_utility_loss_weight: 0.0
+    lara_utility_rank_loss_weight: 0.0
     lara_posterior_temperature: 1.0
     lara_use_expert_loss_posterior: true
     lara_expert_residual_scale: 0.1
