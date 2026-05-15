@@ -38,7 +38,7 @@ These files exist to make the next implementation steps concrete, but they are n
 - The LeRobot v3 collator can be imported without the optional `lerobot` package and has unit coverage for explicit `future_actions/current_state` aliases.
 - Action labels remain fp32 in the adapter.
 - Static pytest coverage was added for the baseline guardrails in `tests/test_baseline_static.py`.
-- Stage-1 latent action head code was added behind `use_latent_action_head`; it is not yet validated in a full training run.
+- Stage-1 latent action head code was added behind `use_latent_action_head`; posterior/VQ/prior shape and loss paths have unit coverage, but it is not yet validated in a full training run.
 - Stage-2 MoE/router code was added behind `use_lara_moe`; it now has torch tests for resident-pool routing, chunk top-k routing, per-expert action-loss posterior responsibility, and episode-level pool target aggregation, but it is not yet validated in a full training run.
 - Trajectory ids are now passed from the LeRobot dataloader through `Lara_core` into the action adapter so batch-local episode responsibility can supervise the pool router.
 - Utility calibration loss code, a generic candidate utility scorer, and an optional supervised route utility head were added behind zero default weights; they still need real counterfactual labels or closed-loop evaluator signals before they can be considered the paper's calibration stage.
