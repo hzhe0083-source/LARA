@@ -51,6 +51,26 @@ class Lara(baseframework):
         state_key = "current_state" if "current_state" in examples[0] else "state"
         state = [example[state_key] for example in examples] if state_key in examples[0] else None
         trajectory_ids = [example["trajectory_id"] for example in examples] if "trajectory_id" in examples[0] else None
+        execution_state_target = (
+            [example["execution_state_target"] for example in examples]
+            if all("execution_state_target" in example for example in examples)
+            else None
+        )
+        prediction_state_target = (
+            [example["prediction_state_target"] for example in examples]
+            if all("prediction_state_target" in example for example in examples)
+            else None
+        )
+        execution_state_target_mask = (
+            [example.get("execution_state_target_mask", True) for example in examples]
+            if execution_state_target is not None
+            else None
+        )
+        prediction_state_target_mask = (
+            [example.get("prediction_state_target_mask", True) for example in examples]
+            if prediction_state_target is not None
+            else None
+        )
 
         if actions is not None:
             prompt_template = self.config.datasets.vla_data.get("CoT_prompt", "")
@@ -77,6 +97,10 @@ class Lara(baseframework):
                 actions=actions,
                 state=state,
                 trajectory_ids=trajectory_ids,
+                execution_state_target=execution_state_target,
+                prediction_state_target=prediction_state_target,
+                execution_state_target_mask=execution_state_target_mask,
+                prediction_state_target_mask=prediction_state_target_mask,
                 return_aux=True,
             )
 

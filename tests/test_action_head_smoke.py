@@ -220,6 +220,8 @@ class ActionHeadAdapterSmokeTest(unittest.TestCase):
             state=state,
             execution_state_target=execution_target,
             prediction_state_target=prediction_target,
+            execution_state_target_mask=[True, True],
+            prediction_state_target_mask=[True, False],
             return_aux=True,
         )
 

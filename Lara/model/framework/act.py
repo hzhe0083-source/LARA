@@ -184,6 +184,19 @@ class ActionHeadAdapter(nn.Module):
             raise ValueError(f"Expected boundary state with shape [B, D] or [B, 1, D], got {tuple(state_tensor.shape)}")
         return state_tensor
 
+    def _boundary_mask_to_tensor(
+        self,
+        mask,
+        context_tokens: torch.Tensor,
+        batch_size: int,
+    ) -> Optional[torch.Tensor]:
+        if mask is None:
+            return None
+        mask_tensor = self._as_tensor(mask, device=context_tokens.device, dtype=torch.bool).view(-1)
+        if mask_tensor.shape[0] != batch_size:
+            raise ValueError(f"Expected boundary mask with B={batch_size}, got {tuple(mask_tensor.shape)}")
+        return mask_tensor
+
     def _conditioning_tokens(
         self,
         embodied_action_tokens: torch.Tensor,
@@ -247,6 +260,8 @@ class ActionHeadAdapter(nn.Module):
         utility_target_mask=None,
         execution_state_target=None,
         prediction_state_target=None,
+        execution_state_target_mask=None,
+        prediction_state_target_mask=None,
         previous_router_probs=None,
         latent_action_tokens: Optional[torch.Tensor] = None,
         return_aux: bool = False,
@@ -275,6 +290,8 @@ class ActionHeadAdapter(nn.Module):
                 latent_action_tokens,
                 execution_state_target=execution_state_target,
                 prediction_state_target=prediction_state_target,
+                execution_state_target_mask=execution_state_target_mask,
+                prediction_state_target_mask=prediction_state_target_mask,
             )
             if transition_loss is not None:
                 aux_losses["transition_state_loss"] = self.transition_loss_weight * transition_loss
@@ -466,6 +483,8 @@ class ActionHeadAdapter(nn.Module):
         latent_action_tokens: Optional[torch.Tensor],
         execution_state_target=None,
         prediction_state_target=None,
+        execution_state_target_mask=None,
+        prediction_state_target_mask=None,
     ) -> Optional[torch.Tensor]:
         if self.transition_head is None:
             return None
@@ -475,20 +494,39 @@ class ActionHeadAdapter(nn.Module):
         prediction_target = self._boundary_state_to_tensor(prediction_state_target, context_tokens)
         if execution_target is None and prediction_target is None:
             return None
+        batch_size = context_tokens.shape[0]
+        execution_mask = self._boundary_mask_to_tensor(execution_state_target_mask, context_tokens, batch_size)
+        prediction_mask = self._boundary_mask_to_tensor(prediction_state_target_mask, context_tokens, batch_size)
 
         pred_states = self.transition_head(context_tokens, latent_action_tokens).float()
         losses = []
         if execution_target is not None:
             losses.append(
                 self.execution_transition_loss_weight
-                * torch.nn.functional.smooth_l1_loss(pred_states[:, 0, :], execution_target.detach())
+                * self._masked_boundary_loss(pred_states[:, 0, :], execution_target, execution_mask)
             )
         if prediction_target is not None:
             losses.append(
                 self.prediction_transition_loss_weight
-                * torch.nn.functional.smooth_l1_loss(pred_states[:, 1, :], prediction_target.detach())
+                * self._masked_boundary_loss(pred_states[:, 1, :], prediction_target, prediction_mask)
             )
         return torch.stack(losses).sum()
+
+    @staticmethod
+    def _masked_boundary_loss(
+        predicted: torch.Tensor,
+        target: torch.Tensor,
+        valid_mask: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        per_sample_loss = torch.nn.functional.smooth_l1_loss(
+            predicted,
+            target.detach(),
+            reduction="none",
+        ).mean(dim=-1)
+        if valid_mask is None:
+            return per_sample_loss.mean()
+        mask = valid_mask.to(device=predicted.device, dtype=per_sample_loss.dtype)
+        return (per_sample_loss * mask).sum() / mask.sum().clamp_min(1.0)
 
     def _pool_target_probs(self, expert_action_losses, trajectory_ids):
         if expert_action_losses is None or trajectory_ids is None:

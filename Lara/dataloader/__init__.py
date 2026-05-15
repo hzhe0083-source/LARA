@@ -43,7 +43,8 @@ def build_dataloader(cfg, dataset_py="lerobot_datasets_oxe"): # TODO now here on
         vla_dataset = get_vla_dataset(
             data_cfg=vla_dataset_cfg,
             action_horizon=cfg.framework.action_model.action_horizon,
-            video_horizon=cfg.framework.vj2_model.num_frames)
+            video_horizon=cfg.framework.vj2_model.num_frames,
+            execution_horizon=cfg.framework.action_model.get("execution_horizon", None))
         
         vla_train_dataloader = DataLoader(
             vla_dataset,
@@ -75,7 +76,9 @@ def build_dataloader(cfg, dataset_py="lerobot_datasets_oxe"): # TODO now here on
             state_key=cfg.datasets.vla_data.state_key if "state_key" in cfg.datasets.vla_data else None,
             action_key=cfg.datasets.vla_data.action_key if cfg.datasets.vla_data.action_key else None,
             task_key=cfg.datasets.vla_data.task_key if cfg.datasets.vla_data.task_key else None,
-            resize_size=cfg.datasets.vla_data.resize_size)
+            resize_size=cfg.datasets.vla_data.resize_size,
+            execution_horizon=cfg.framework.action_model.get("execution_horizon", None),
+            prediction_horizon=cfg.framework.action_model.action_horizon)
 
 
 

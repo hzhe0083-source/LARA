@@ -24,6 +24,8 @@ class LeRobotV3CollateTest(unittest.TestCase):
             action_key="action",
             task_key="task",
             resize_size=8,
+            execution_horizon=1,
+            prediction_horizon=2,
         )
 
         self.assertEqual(len(examples), 1)
@@ -32,6 +34,10 @@ class LeRobotV3CollateTest(unittest.TestCase):
         self.assertTrue(np.array_equal(examples[0]["future_actions"], examples[0]["action"]))
         self.assertTrue(np.array_equal(examples[0]["current_state"], examples[0]["state"]))
         self.assertEqual(examples[0]["current_state"].shape, (1, 3))
+        self.assertTrue(np.array_equal(examples[0]["execution_state_target"], np.array([[3, 4, 5]], dtype=np.float32)))
+        self.assertTrue(np.array_equal(examples[0]["prediction_state_target"], np.array([[3, 4, 5]], dtype=np.float32)))
+        self.assertTrue(examples[0]["execution_state_target_mask"])
+        self.assertFalse(examples[0]["prediction_state_target_mask"])
 
 
 if __name__ == "__main__":

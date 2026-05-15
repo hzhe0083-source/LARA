@@ -22,7 +22,7 @@ These files exist to make the next implementation steps concrete, but they are n
 ## Missing Paper Components
 
 - Production-ready latent action training and validation.
-- Dataloader-provided execution/prediction boundary state targets for the optional transition head.
+- Validated transition-state training with real SO101 boundary targets.
 - Validated MoE action experts that directly produce or adapt action chunks in full SO101 training.
 - Closed-loop route diagnostics and subset-retention curves.
 - Real counterfactual utility scoring from value/progress/latent-state or closed-loop evaluator signals.
@@ -40,6 +40,7 @@ These files exist to make the next implementation steps concrete, but they are n
 - Action labels remain fp32 in the adapter.
 - Static pytest coverage was added for the baseline guardrails in `tests/test_baseline_static.py`.
 - Stage-1 latent action head code was added behind `use_latent_action_head`; posterior/VQ/prior and optional transition-state shape/loss paths have unit coverage, but it is not yet validated in a full training run.
+- SO101 and LeRobot v3 batch builders emit execution/prediction boundary state targets with valid masks for the optional transition head.
 - Stage-2 MoE/router code was added behind `use_lara_moe`; it now has torch tests for resident-pool routing, resident-pool mask reuse across chunks, chunk top-k routing, per-expert action-loss posterior responsibility with optional floor/top-r smoothing, routed direct-expert action output, and episode-level pool target aggregation, but it is not yet validated in a full training run.
 - Trajectory ids are now passed from the LeRobot dataloader through `Lara_core` into the action adapter so batch-local episode responsibility can supervise the pool router.
 - Utility calibration loss code, a generic candidate utility scorer, and an optional supervised route utility head were added behind zero default weights; they still need real counterfactual labels or closed-loop evaluator signals before they can be considered the paper's calibration stage.
@@ -54,7 +55,7 @@ These files exist to make the next implementation steps concrete, but they are n
 - The latent action head is currently a Stage-1 skeleton and still needs empirical validation, loss-weight tuning, and ablation against the token-conditioned flow baseline.
 - The MoE/router path is currently a Stage-2 scaffold and still needs full-train validation of the direct expert and per-expert action-loss posterior paths, resident-pool success evaluation, and closed-loop validation.
 - Utility calibration currently validates generic utility composition, a trainable utility-head interface, and loss surfaces; it does not yet supervise value/progress/uncertainty from latent-state or closed-loop evaluator labels.
-- The optional transition head can consume boundary state targets when supplied, but the SO101 dataloaders do not yet emit execution/prediction boundary targets.
+- The optional transition head and dataloader boundary targets are wired, but transition-state training still needs empirical validation and loss-weight tuning.
 - Matched-compute support currently covers expert-budget accounting only; it does not measure real FLOPs, latency, VRAM, or closed-loop success.
 - The new pytest static tests were not run in the system Python because that interpreter lacks `pytest`; run them inside the project environment with `python -m pytest tests/test_baseline_static.py`.
 - VJ2 video preprocessing still happens inside the forward path and may bottleneck training.

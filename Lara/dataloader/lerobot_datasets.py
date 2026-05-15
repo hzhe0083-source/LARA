@@ -58,6 +58,7 @@ def get_vla_dataset(
     delete_pause_frame: bool = True,
     action_horizon: int = 7,
     video_horizon: int = 16,
+    execution_horizon: int | None = None,
     **kwargs: dict,
 ) -> LeRobotMixtureDataset:
     """
@@ -93,6 +94,8 @@ def get_vla_dataset(
         with_state=data_cfg.get("with_state", False),
         resolution_size=data_cfg.get("resolution_size", 224),
         video_resolution_size=data_cfg.get("video_resolution_size", 256),
+        action_horizon=action_horizon,
+        execution_horizon=execution_horizon,
         seed=seed,
         **kwargs,
     )

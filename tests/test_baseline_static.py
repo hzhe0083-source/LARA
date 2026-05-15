@@ -39,11 +39,17 @@ def test_so101_batches_expose_future_actions():
     dataset_src = read("Lara/dataloader/gr00t_lerobot/datasets.py")
     v3_dataset_src = read("Lara/dataloader/lerobot_v3_datasets.py")
     core_src = read("Lara/model/framework/Lara_core.py")
+    dataloader_src = read("Lara/dataloader/__init__.py")
     trainer_src = read("Lara/training/train_lara.py")
     assert "future_actions=action" in dataset_src
     assert 'return_dict["current_state"] = state[0:1]' in dataset_src
     assert 'example["future_actions"] = example["action"]' in v3_dataset_src
     assert 'example["current_state"] = example["state"]' in v3_dataset_src
+    assert 'return_dict["execution_state_target"] = execution_state' in dataset_src
+    assert 'return_dict["prediction_state_target"] = prediction_state' in dataset_src
+    assert 'example["execution_state_target"] = execution_state' in v3_dataset_src
+    assert 'example["prediction_state_target"] = prediction_state' in v3_dataset_src
+    assert 'execution_horizon=cfg.framework.action_model.get("execution_horizon", None)' in dataloader_src
     assert "trajectory_id=trajectory_name" in dataset_src
     assert "base_index=step" in dataset_src
     assert '"future_actions" if "future_actions" in examples[0] else "action"' in core_src
@@ -52,6 +58,8 @@ def test_so101_batches_expose_future_actions():
     assert '"current_state" if "current_state" in examples[0] else "state"' in trainer_src
     assert 'trajectory_ids = [example["trajectory_id"] for example in examples] if "trajectory_id" in examples[0] else None' in core_src
     assert "trajectory_ids=trajectory_ids" in core_src
+    assert "execution_state_target=execution_state_target" in core_src
+    assert "prediction_state_target=prediction_state_target" in core_src
 
 
 def test_aux_action_losses_are_not_double_counted_by_trainer():

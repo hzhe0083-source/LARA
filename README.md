@@ -38,7 +38,7 @@ Described in the paper but not implemented yet:
 - production-ready latent action training
 - validated MoE action experts that directly model or adapt action chunks in full SO101 training
 - real counterfactual utility scoring from value/progress/latent-state or closed-loop evaluator signals
-- dataloader-provided execution/prediction boundary state targets for the optional transition head
+- validated transition-state training with real SO101 boundary targets
 - full resident-pool training/evaluation beyond static and unit tests
 - matched-compute and matched-resident-expert experiments
 

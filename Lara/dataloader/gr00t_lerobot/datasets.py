@@ -1379,6 +1379,8 @@ class LeRobotMixtureDataset(Dataset):
         with_state: bool = False,
         resolution_size: int = 224,
         video_resolution_size: int = 256,
+        action_horizon: int | None = None,
+        execution_horizon: int | None = None,
         seed: int = 42,
         metadata_config: dict = {
             "percentile_mixing_method": "min_max",
@@ -1415,6 +1417,8 @@ class LeRobotMixtureDataset(Dataset):
         self.with_state = with_state
         self.resolution_size = resolution_size
         self.video_resolution_size = video_resolution_size
+        self.action_horizon = action_horizon
+        self.execution_horizon = execution_horizon
 
         # Set properties for sampling
 
@@ -1575,6 +1579,22 @@ class LeRobotMixtureDataset(Dataset):
         
         return resized_video
 
+    def _boundary_state(
+        self,
+        dataset: LeRobotSingleDataset,
+        trajectory_id: int,
+        base_index: int,
+        offset: int,
+    ) -> tuple[np.ndarray, bool]:
+        boundary_index = base_index + offset
+        trajectory_index = dataset.get_trajectory_index(trajectory_id)
+        valid = boundary_index < dataset.trajectory_lengths[trajectory_index]
+        state_parts = []
+        for state_key in dataset.modality_keys["state"]:
+            state_parts.append(dataset.get_data_by_modality(trajectory_id, "state", state_key, boundary_index))
+        state = np.concatenate(state_parts, axis=1).astype(np.float16)
+        return state[0:1], bool(valid)
+
     def __getitem__(self, index: int) -> dict:
         """Get the data for a single trajectory and start index.
 
@@ -1631,6 +1651,26 @@ class LeRobotMixtureDataset(Dataset):
                     state = np.concatenate(state, axis=1).astype(np.float16)
                     return_dict["state"] = state[0:1]
                     return_dict["current_state"] = state[0:1]
+                    prediction_offset = self.action_horizon if self.action_horizon is not None else action.shape[0]
+                    execution_offset = (
+                        self.execution_horizon if self.execution_horizon is not None else prediction_offset
+                    )
+                    execution_state, execution_valid = self._boundary_state(
+                        dataset,
+                        trajectory_name,
+                        step,
+                        execution_offset,
+                    )
+                    prediction_state, prediction_valid = self._boundary_state(
+                        dataset,
+                        trajectory_name,
+                        step,
+                        prediction_offset,
+                    )
+                    return_dict["execution_state_target"] = execution_state
+                    return_dict["execution_state_target_mask"] = execution_valid
+                    return_dict["prediction_state_target"] = prediction_state
+                    return_dict["prediction_state_target_mask"] = prediction_valid
                 #print(videos[0].shape) #[horizon, H, W, 3]
                 #print(action.shape) #[horizon, action_dim]
                 #print(images[0]) #PIL.Image

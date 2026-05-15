@@ -10,7 +10,22 @@ from Lara.dataloader.gr00t_lerobot.mixtures import DATASET_NAMED_MIXTURES
 to_pil = T.ToPILImage()
 
 
-def collate_fn(batch, img_keys, state_key, action_key, task_key, resize_size):
+def _boundary_state_from_sequence(state_sequence, boundary_index: int):
+    valid = boundary_index < state_sequence.shape[0]
+    safe_index = min(boundary_index, state_sequence.shape[0] - 1)
+    return state_sequence[safe_index : safe_index + 1], bool(valid)
+
+
+def collate_fn(
+    batch,
+    img_keys,
+    state_key,
+    action_key,
+    task_key,
+    resize_size,
+    execution_horizon=None,
+    prediction_horizon=None,
+):
     examples = []
     for _, b in enumerate(batch):
         example = {"image": []}
@@ -24,8 +39,17 @@ def collate_fn(batch, img_keys, state_key, action_key, task_key, resize_size):
 
         for k in b.keys():
             if k == state_key:
-                example["state"] = b[k][0:1].cpu().numpy()
+                state_sequence = b[k].cpu().numpy()
+                example["state"] = state_sequence[0:1]
                 example["current_state"] = example["state"]
+                prediction_index = prediction_horizon if prediction_horizon is not None else state_sequence.shape[0] - 1
+                execution_index = execution_horizon if execution_horizon is not None else prediction_index
+                execution_state, execution_valid = _boundary_state_from_sequence(state_sequence, execution_index)
+                prediction_state, prediction_valid = _boundary_state_from_sequence(state_sequence, prediction_index)
+                example["execution_state_target"] = execution_state
+                example["execution_state_target_mask"] = execution_valid
+                example["prediction_state_target"] = prediction_state
+                example["prediction_state_target_mask"] = prediction_valid
         examples.append(example)
     return examples
 

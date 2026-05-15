@@ -81,7 +81,11 @@ class FakeActionHead(torch.nn.Module):
         actions,
         state,
         trajectory_ids,
-        return_aux,
+        execution_state_target=None,
+        prediction_state_target=None,
+        execution_state_target_mask=None,
+        prediction_state_target_mask=None,
+        return_aux=False,
     ):
         self.calls.append(
             {
@@ -90,6 +94,10 @@ class FakeActionHead(torch.nn.Module):
                 "actions": actions,
                 "state": state,
                 "trajectory_ids": trajectory_ids,
+                "execution_state_target": execution_state_target,
+                "prediction_state_target": prediction_state_target,
+                "execution_state_target_mask": execution_state_target_mask,
+                "prediction_state_target_mask": prediction_state_target_mask,
                 "return_aux": return_aux,
             }
         )
@@ -115,6 +123,10 @@ class LaraCoreSmokeTest(unittest.TestCase):
                 "future_actions": np.ones((3, 2), dtype=np.float32) * 5,
                 "state": np.ones((1, 3), dtype=np.float32),
                 "current_state": np.ones((1, 3), dtype=np.float32) * 9,
+                "execution_state_target": np.ones((1, 3), dtype=np.float32) * 10,
+                "execution_state_target_mask": True,
+                "prediction_state_target": np.ones((1, 3), dtype=np.float32) * 11,
+                "prediction_state_target_mask": False,
                 "trajectory_id": 11,
             },
             {
@@ -125,6 +137,10 @@ class LaraCoreSmokeTest(unittest.TestCase):
                 "future_actions": np.ones((3, 2), dtype=np.float32) * 7,
                 "state": np.ones((1, 3), dtype=np.float32) * 2,
                 "current_state": np.ones((1, 3), dtype=np.float32) * 8,
+                "execution_state_target": np.ones((1, 3), dtype=np.float32) * 20,
+                "execution_state_target_mask": True,
+                "prediction_state_target": np.ones((1, 3), dtype=np.float32) * 21,
+                "prediction_state_target_mask": True,
                 "trajectory_id": 12,
             },
         ]
@@ -144,6 +160,10 @@ class LaraCoreSmokeTest(unittest.TestCase):
         self.assertTrue(np.all(action_call["actions"][1] == examples[1]["future_actions"]))
         self.assertTrue(np.all(action_call["state"][0] == examples[0]["current_state"]))
         self.assertTrue(np.all(action_call["state"][1] == examples[1]["current_state"]))
+        self.assertTrue(np.all(action_call["execution_state_target"][0] == examples[0]["execution_state_target"]))
+        self.assertTrue(np.all(action_call["prediction_state_target"][1] == examples[1]["prediction_state_target"]))
+        self.assertEqual(action_call["execution_state_target_mask"], [True, True])
+        self.assertEqual(action_call["prediction_state_target_mask"], [False, True])
 
     def test_fake_batch_loss_can_update_action_head_parameter(self):
         config = tiny_framework_config()
