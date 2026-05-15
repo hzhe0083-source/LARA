@@ -14,6 +14,55 @@ class LatentActionOutput:
     perplexity: torch.Tensor
 
 
+class LatentActionTransitionHead(nn.Module):
+    """Predicts chunk-boundary control state from context and latent action tokens."""
+
+    def __init__(
+        self,
+        context_dim: int,
+        state_dim: int,
+        hidden_dim: int,
+        num_boundaries: int = 2,
+    ):
+        super().__init__()
+        if state_dim <= 0:
+            raise ValueError("state_dim must be positive")
+        if num_boundaries <= 0:
+            raise ValueError("num_boundaries must be positive")
+        self.state_dim = state_dim
+        self.num_boundaries = num_boundaries
+        self.context_norm = nn.LayerNorm(context_dim)
+        self.latent_norm = nn.LayerNorm(context_dim)
+        self.net = nn.Sequential(
+            nn.Linear(context_dim * 2, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, num_boundaries * state_dim),
+        )
+
+    def forward(self, context_tokens: torch.Tensor, latent_action_tokens: torch.Tensor) -> torch.Tensor:
+        if context_tokens.ndim != 3:
+            raise ValueError(f"Expected context_tokens [B, T, D], got {tuple(context_tokens.shape)}")
+        if latent_action_tokens.ndim != 3:
+            raise ValueError(f"Expected latent_action_tokens [B, L, D], got {tuple(latent_action_tokens.shape)}")
+        if latent_action_tokens.shape[0] != context_tokens.shape[0]:
+            raise ValueError(
+                "latent_action_tokens batch size must match context_tokens: "
+                f"{latent_action_tokens.shape[0]} != {context_tokens.shape[0]}"
+            )
+        if latent_action_tokens.shape[-1] != context_tokens.shape[-1]:
+            raise ValueError(
+                "latent_action_tokens hidden size must match context_tokens: "
+                f"{latent_action_tokens.shape[-1]} != {context_tokens.shape[-1]}"
+            )
+
+        context_summary = self.context_norm(context_tokens).mean(dim=1)
+        latent_summary = self.latent_norm(latent_action_tokens).mean(dim=1)
+        output = self.net(torch.cat([context_summary, latent_summary], dim=-1))
+        return output.view(context_tokens.shape[0], self.num_boundaries, self.state_dim)
+
+
 class PosteriorLatentActionEncoder(nn.Module):
     """Encodes demonstrated future actions into latent action tokens."""
 

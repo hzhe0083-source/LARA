@@ -4,6 +4,7 @@ import torch
 
 from Lara.model.modules.action_model.lara_latent import (
     LatentActionHead,
+    LatentActionTransitionHead,
     PosteriorLatentActionEncoder,
     VectorQuantizer,
 )
@@ -71,6 +72,22 @@ class LatentActionHeadTest(unittest.TestCase):
         self.assertGreaterEqual(float(output.vq_loss), 0.0)
         self.assertGreaterEqual(float(output.prior_loss), 0.0)
         self.assertEqual(predicted_tokens.shape, (2, 2, 8))
+
+    def test_transition_head_predicts_execution_and_prediction_boundary_states(self):
+        torch.manual_seed(0)
+        head = LatentActionTransitionHead(
+            context_dim=8,
+            state_dim=5,
+            hidden_dim=16,
+            num_boundaries=2,
+        )
+        context_tokens = torch.randn(2, 5, 8)
+        latent_tokens = torch.randn(2, 2, 8)
+
+        predicted_states = head(context_tokens, latent_tokens)
+
+        self.assertEqual(predicted_states.shape, (2, 2, 5))
+        self.assertTrue(torch.isfinite(predicted_states).all().item())
 
 
 if __name__ == "__main__":

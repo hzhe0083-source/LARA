@@ -68,9 +68,14 @@ def test_optional_latent_action_head_stage_one_exists():
     assert "class VectorQuantizer" in latent_src
     assert "class LatentActionPrior" in latent_src
     assert "class LatentActionHead" in latent_src
+    assert "class LatentActionTransitionHead" in latent_src
     assert "use_latent_action_head" in adapter_src
     assert "self.latent_action_head.predict" in adapter_src
+    assert "self.transition_head" in adapter_src
+    assert "transition_state_loss" in adapter_src
     assert "use_latent_action_head: false" in config_src
+    assert "lara_use_transition_head: false" in config_src
+    assert "lara_transition_loss_weight: 0.0" in config_src
 
 
 def test_optional_moe_router_stage_two_exists():

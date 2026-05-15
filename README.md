@@ -28,7 +28,7 @@ Completed in code:
 
 Experimental scaffolding exists but is not complete or validated:
 
-- Stage-1 latent action head scaffold with posterior encoder, VQ codebook, and context-only prior (`use_latent_action_head: false` by default).
+- Stage-1 latent action head scaffold with posterior encoder, VQ codebook, context-only prior, and optional execution/prediction boundary-state transition loss (`use_latent_action_head: false`, `lara_use_transition_head: false` by default).
 - Stage-2 MoE/router scaffold with residual token experts, optional direct action-chunk experts, optional routed direct-expert action output, posterior responsibility from latent tokens or per-expert action reconstruction losses, optional posterior floor/top-r smoothing, LeRobot trajectory ids for episode-level resident pool targets, reusable episode-level resident pool masks, chunk-level top-k routing inside the resident pool, optional balance/stickiness stabilizers, and route collapse diagnostics (`use_lara_moe: false` by default).
 - Utility calibration scaffold with an optional supervised route utility head, candidate value/progress/uncertainty/cost scoring helpers, centered utility regression, and pairwise ranking losses (`lara_utility_loss_weight: 0.0`, `lara_utility_head_loss_weight: 0.0`, `lara_use_utility_head: false` by default).
 - Minimal dummy-batch smoke coverage exists for `ActionHeadAdapter` forward and prediction shapes.
@@ -38,6 +38,7 @@ Described in the paper but not implemented yet:
 - production-ready latent action training
 - validated MoE action experts that directly model or adapt action chunks in full SO101 training
 - real counterfactual utility scoring from value/progress/latent-state or closed-loop evaluator signals
+- dataloader-provided execution/prediction boundary state targets for the optional transition head
 - full resident-pool training/evaluation beyond static and unit tests
 - matched-compute and matched-resident-expert experiments
 

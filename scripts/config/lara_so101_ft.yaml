@@ -39,6 +39,11 @@ framework:
     lara_commitment_weight: 0.25
     lara_vq_loss_weight: 1.0
     lara_prior_loss_weight: 1.0
+    lara_use_transition_head: false
+    lara_transition_hidden_dim: 1024
+    lara_transition_loss_weight: 0.0
+    lara_execution_transition_loss_weight: 1.0
+    lara_prediction_transition_loss_weight: 1.0
     use_lara_moe: false
     lara_num_experts: 8
     lara_episode_pool_size: 4

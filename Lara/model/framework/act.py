@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 
 from Lara.model.modules.action_model.GR00T_ActionHeader import FlowmatchingActionHead, get_action_model
-from Lara.model.modules.action_model.lara_latent import LatentActionHead
+from Lara.model.modules.action_model.lara_latent import LatentActionHead, LatentActionTransitionHead
 from Lara.model.modules.action_model.lara_moe import (
     ActionChunkExpertBank,
     LatentActionMoE,
@@ -40,6 +40,10 @@ class ActionHeadAdapter(nn.Module):
         self.use_latent_action_tokens = action_cfg.get("use_latent_action_tokens", True)
         self.max_latent_action_tokens = action_cfg.get("max_latent_action_tokens", None)
         self.use_latent_action_head = action_cfg.get("use_latent_action_head", False)
+        self.use_transition_head = action_cfg.get("lara_use_transition_head", False)
+        self.transition_loss_weight = action_cfg.get("lara_transition_loss_weight", 0.0)
+        self.execution_transition_loss_weight = action_cfg.get("lara_execution_transition_loss_weight", 1.0)
+        self.prediction_transition_loss_weight = action_cfg.get("lara_prediction_transition_loss_weight", 1.0)
         self.use_lara_moe = action_cfg.get("use_lara_moe", False)
         self.use_expert_loss_posterior = action_cfg.get("lara_use_expert_loss_posterior", True)
         self.use_direct_action_experts = action_cfg.get("lara_use_direct_action_experts", False)
@@ -71,6 +75,16 @@ class ActionHeadAdapter(nn.Module):
                 prior_loss_weight=action_cfg.get("lara_prior_loss_weight", 1.0),
             )
             if self.use_latent_action_head
+            else None
+        )
+        self.transition_head = (
+            LatentActionTransitionHead(
+                context_dim=context_hidden_size,
+                state_dim=action_cfg.state_dim,
+                hidden_dim=action_cfg.get("lara_transition_hidden_dim", action_cfg.get("hidden_size", context_hidden_size)),
+                num_boundaries=2,
+            )
+            if self.use_transition_head
             else None
         )
         self.lara_moe = (
@@ -160,6 +174,16 @@ class ActionHeadAdapter(nn.Module):
             raise ValueError(f"Expected state with shape [B, D] or [B, T, D], got {tuple(state_tensor.shape)}")
         return state_tensor
 
+    def _boundary_state_to_tensor(self, state, context_tokens: torch.Tensor) -> Optional[torch.Tensor]:
+        if state is None:
+            return None
+        state_tensor = self._as_tensor(state, device=context_tokens.device, dtype=torch.float32)
+        if state_tensor.ndim == 3 and state_tensor.shape[1] == 1:
+            state_tensor = state_tensor[:, 0, :]
+        if state_tensor.ndim != 2:
+            raise ValueError(f"Expected boundary state with shape [B, D] or [B, 1, D], got {tuple(state_tensor.shape)}")
+        return state_tensor
+
     def _conditioning_tokens(
         self,
         embodied_action_tokens: torch.Tensor,
@@ -221,6 +245,8 @@ class ActionHeadAdapter(nn.Module):
         utility_progress_targets=None,
         utility_uncertainty_targets=None,
         utility_target_mask=None,
+        execution_state_target=None,
+        prediction_state_target=None,
         previous_router_probs=None,
         latent_action_tokens: Optional[torch.Tensor] = None,
         return_aux: bool = False,
@@ -243,6 +269,15 @@ class ActionHeadAdapter(nn.Module):
                 "latent_action_prior_loss": latent_output.prior_loss,
                 "latent_action_perplexity": latent_output.perplexity,
             }
+        if self.transition_head is not None:
+            transition_loss = self._transition_loss(
+                embodied_action_tokens,
+                latent_action_tokens,
+                execution_state_target=execution_state_target,
+                prediction_state_target=prediction_state_target,
+            )
+            if transition_loss is not None:
+                aux_losses["transition_state_loss"] = self.transition_loss_weight * transition_loss
         actions_target_repeated = actions_target.repeat_interleave(self.repeated_diffusion_steps, dim=0)
         conditioning_tokens = self._conditioning_tokens(embodied_action_tokens, latent_action_tokens)
         state_tensor = self._state_to_tensor(state, embodied_action_tokens)
@@ -411,6 +446,7 @@ class ActionHeadAdapter(nn.Module):
             return (
                 action_loss
                 + aux_losses.get("latent_action_loss", 0.0)
+                + aux_losses.get("transition_state_loss", 0.0)
                 + aux_losses.get("moe_router_loss", 0.0)
                 + aux_losses.get("moe_direct_expert_loss", 0.0)
             )
@@ -418,10 +454,41 @@ class ActionHeadAdapter(nn.Module):
         aux_losses["total_action_loss"] = (
             action_loss
             + aux_losses.get("latent_action_loss", 0.0)
+            + aux_losses.get("transition_state_loss", 0.0)
             + aux_losses.get("moe_router_loss", 0.0)
             + aux_losses.get("moe_direct_expert_loss", 0.0)
         )
         return aux_losses
+
+    def _transition_loss(
+        self,
+        context_tokens: torch.Tensor,
+        latent_action_tokens: Optional[torch.Tensor],
+        execution_state_target=None,
+        prediction_state_target=None,
+    ) -> Optional[torch.Tensor]:
+        if self.transition_head is None:
+            return None
+        if latent_action_tokens is None:
+            return None
+        execution_target = self._boundary_state_to_tensor(execution_state_target, context_tokens)
+        prediction_target = self._boundary_state_to_tensor(prediction_state_target, context_tokens)
+        if execution_target is None and prediction_target is None:
+            return None
+
+        pred_states = self.transition_head(context_tokens, latent_action_tokens).float()
+        losses = []
+        if execution_target is not None:
+            losses.append(
+                self.execution_transition_loss_weight
+                * torch.nn.functional.smooth_l1_loss(pred_states[:, 0, :], execution_target.detach())
+            )
+        if prediction_target is not None:
+            losses.append(
+                self.prediction_transition_loss_weight
+                * torch.nn.functional.smooth_l1_loss(pred_states[:, 1, :], prediction_target.detach())
+            )
+        return torch.stack(losses).sum()
 
     def _pool_target_probs(self, expert_action_losses, trajectory_ids):
         if expert_action_losses is None or trajectory_ids is None:

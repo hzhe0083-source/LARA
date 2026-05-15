@@ -194,6 +194,40 @@ class ActionHeadAdapterSmokeTest(unittest.TestCase):
         self.assertEqual(pred_actions.shape, (1, 3, 2))
         self.assertTrue(torch.isfinite(pred_actions).all().item())
 
+    def test_transition_head_adds_boundary_state_loss_when_targets_exist(self):
+        torch.manual_seed(0)
+        adapter = ActionHeadAdapter(
+            config=tiny_action_config(
+                lara_use_transition_head=True,
+                lara_transition_hidden_dim=16,
+                lara_transition_loss_weight=0.25,
+            ),
+            context_hidden_size=16,
+        )
+        adapter.train()
+
+        embodied_tokens = torch.randn(2, 2, 16)
+        latent_tokens = torch.randn(2, 1, 16)
+        actions = torch.randn(2, 3, 2)
+        state = torch.randn(2, 1, 3)
+        execution_target = torch.randn(2, 3)
+        prediction_target = torch.randn(2, 3)
+
+        output = adapter(
+            embodied_action_tokens=embodied_tokens,
+            latent_action_tokens=latent_tokens,
+            actions=actions,
+            state=state,
+            execution_state_target=execution_target,
+            prediction_state_target=prediction_target,
+            return_aux=True,
+        )
+
+        self.assertIn("transition_state_loss", output)
+        self.assertGreater(float(output["transition_state_loss"].detach()), 0.0)
+        expected_total = output["action_loss"] + output["transition_state_loss"]
+        self.assertTrue(torch.allclose(output["total_action_loss"], expected_total))
+
 
 if __name__ == "__main__":
     unittest.main()
