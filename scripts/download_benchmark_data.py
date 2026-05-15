@@ -144,12 +144,13 @@ def run_logged(cmd: list[str], env: dict[str, str], log_path: Path) -> int:
     print(f"command: {' '.join(cmd)}")
     print(f"log: {log_path}")
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("w", encoding="utf-8") as log:
+    with log_path.open("w", encoding="utf-8", buffering=1) as log:
         log.write(f"$ {' '.join(cmd)}\n")
         log.write(f"HF_HOME={env.get('HF_HOME', '')}\n")
         log.write(f"HF_HUB_CACHE={env.get('HF_HUB_CACHE', '')}\n")
         log.write(f"HF_XET_CACHE={env.get('HF_XET_CACHE', '')}\n")
         log.write(f"HF_HUB_DISABLE_XET={env.get('HF_HUB_DISABLE_XET', '')}\n\n")
+        log.flush()
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -160,8 +161,9 @@ def run_logged(cmd: list[str], env: dict[str, str], log_path: Path) -> int:
         )
         assert proc.stdout is not None
         for line in proc.stdout:
-            print(line, end="")
+            print(line, end="", flush=True)
             log.write(line)
+            log.flush()
         return proc.wait()
 
 
