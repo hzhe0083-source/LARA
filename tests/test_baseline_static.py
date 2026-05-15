@@ -173,6 +173,7 @@ def test_optional_moe_router_stage_two_exists():
     server_policy_src = read("deployment/model_server/server_policy.py")
     protocol_src = read("Lara/evaluation/lara_protocol.py")
     protocol_cli_src = read("scripts/summarize_lara_protocol.py")
+    utility_cli_src = read("scripts/build_counterfactual_utility_labels.py")
     smoke_src = read("scripts/smoke_lara_real_components.py")
     config_src = read("scripts/config/lara_so101_ft.yaml")
     flow_src = read("Lara/model/modules/action_model/GR00T_ActionHeader.py")
@@ -210,6 +211,7 @@ def test_optional_moe_router_stage_two_exists():
     assert "def pareto_frontier_flags" in protocol_src
     assert "def protocol_summary_from_records" in protocol_src
     assert "def protocol_evidence_audit" in protocol_src
+    assert "def counterfactual_utility_records_from_rollouts" in protocol_src
     assert "def counterfactual_utility_matrix_from_records" in protocol_src
     assert "def step_context_id" in protocol_src
     assert "trajectory_key: str = \"trajectory_id\"" in protocol_src
@@ -229,6 +231,9 @@ def test_optional_moe_router_stage_two_exists():
     assert "--require-paper-metrics" in protocol_cli_src
     assert "--required-resident-fractions" in protocol_cli_src
     assert "JSON or JSONL rollout records" in protocol_cli_src
+    assert "counterfactual_utility_records_from_rollouts" in utility_cli_src
+    assert "counterfactual_utility_matrix_from_records" in utility_cli_src
+    assert "--min-candidates-per-context" in utility_cli_src
     assert "def smoke_lara_real_components" in smoke_src
     assert "def _exception_status" in smoke_src
     assert "def apply_smoke_overrides" in smoke_src

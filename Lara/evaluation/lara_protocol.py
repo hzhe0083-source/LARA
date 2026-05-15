@@ -129,6 +129,156 @@ def _record_expert_id(
     return expert_id
 
 
+def _as_expert_id(value: object, *, record_index: int, num_experts: Optional[int]) -> int:
+    try:
+        expert_float = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"record {record_index} has non-numeric expert_id: {value!r}") from exc
+    if not math.isfinite(expert_float) or not expert_float.is_integer():
+        raise ValueError(f"record {record_index} expert_id must be an integer, got {value!r}")
+    expert_id = int(expert_float)
+    if expert_id < 0:
+        raise ValueError(f"record {record_index} expert_id must be non-negative, got {expert_id}")
+    if num_experts is not None and expert_id >= num_experts:
+        raise ValueError(f"record {record_index} expert_id must be in [0, {num_experts}), got {expert_id}")
+    return expert_id
+
+
+def _flatten_forced_experts(value: object) -> list[object]:
+    if isinstance(value, (str, bytes)):
+        return [value]
+    if isinstance(value, Sequence):
+        flattened = []
+        for item in value:
+            flattened.extend(_flatten_forced_experts(item))
+        return flattened
+    return [value]
+
+
+def _candidate_expert_from_record(
+    record: Mapping[str, object],
+    *,
+    record_index: int,
+    expert_keys: Sequence[str],
+    forced_sequence_key: str,
+    num_experts: Optional[int],
+) -> int:
+    direct_value = _record_value(record, *expert_keys)
+    if direct_value is not None:
+        return _as_expert_id(direct_value, record_index=record_index, num_experts=num_experts)
+
+    sequence_value = record.get(forced_sequence_key)
+    if sequence_value is None:
+        raise ValueError(f"record {record_index} must define expert_id or {forced_sequence_key}")
+    expert_ids = {
+        _as_expert_id(value, record_index=record_index, num_experts=num_experts)
+        for value in _flatten_forced_experts(sequence_value)
+    }
+    if len(expert_ids) != 1:
+        raise ValueError(f"record {record_index} must contain exactly one forced expert, got {sorted(expert_ids)}")
+    return next(iter(expert_ids))
+
+
+def _context_id_from_record(
+    record: Mapping[str, object],
+    *,
+    record_index: int,
+    context_key: str,
+    trajectory_key: str,
+    base_index_key: str,
+) -> object:
+    context_id = _record_value(record, context_key)
+    if context_id is None:
+        trajectory_id = _record_value(record, trajectory_key)
+        base_index = _record_value(record, base_index_key)
+        if trajectory_id is not None and base_index is not None:
+            context_id = step_context_id(trajectory_id, base_index)
+    if context_id is None:
+        raise ValueError(
+            f"record {record_index} must define {context_key} or both {trajectory_key} and {base_index_key}"
+        )
+    return context_id
+
+
+def counterfactual_utility_records_from_rollouts(
+    records: Sequence[Mapping[str, object]],
+    *,
+    num_experts: Optional[int] = None,
+    context_key: str = "context_id",
+    trajectory_key: str = "trajectory_id",
+    base_index_key: str = "base_index",
+    expert_keys: str | Sequence[str] = ("expert_id", "candidate_expert_id", "forced_expert_id"),
+    forced_sequence_key: str = "forced_expert_id_sequence",
+    value_keys: str | Sequence[str] = (
+        "utility_score",
+        "utility",
+        "return_score",
+        "return",
+        "success",
+        "success_rate",
+    ),
+    cost_keys: str | Sequence[str] = ("utility_cost", "cost", "flops", "latency_ms"),
+) -> list[dict[str, object]]:
+    """Normalize forced-expert rollout traces into utility sidecar records."""
+
+    if not records:
+        raise ValueError("records must not be empty")
+    if num_experts is not None and num_experts <= 0:
+        raise ValueError("num_experts must be positive")
+    expert_keys = _key_aliases(expert_keys, "expert_keys")
+    value_keys = _key_aliases(value_keys, "value_keys")
+    cost_keys = _key_aliases(cost_keys, "cost_keys")
+
+    candidates = []
+    for record_index, record in enumerate(records):
+        if not isinstance(record, Mapping):
+            raise ValueError("records must contain mapping objects")
+        context_id = _context_id_from_record(
+            record,
+            record_index=record_index,
+            context_key=context_key,
+            trajectory_key=trajectory_key,
+            base_index_key=base_index_key,
+        )
+        expert_id = _candidate_expert_from_record(
+            record,
+            record_index=record_index,
+            expert_keys=expert_keys,
+            forced_sequence_key=forced_sequence_key,
+            num_experts=num_experts,
+        )
+        utility_score = _finite_record_float(
+            record,
+            record_index=record_index,
+            keys=value_keys,
+            label="utility value",
+            required=True,
+        )
+        utility_cost = _finite_record_float(
+            record,
+            record_index=record_index,
+            keys=cost_keys,
+            label="utility cost",
+            required=False,
+        )
+
+        candidate = {
+            "context_id": str(context_id),
+            "expert_id": expert_id,
+            "utility_score": utility_score,
+        }
+        trajectory_id = _record_value(record, trajectory_key)
+        base_index = _record_value(record, base_index_key)
+        if trajectory_id is not None:
+            candidate["trajectory_id"] = trajectory_id
+        if base_index is not None:
+            candidate["base_index"] = int(base_index)
+        if utility_cost is not None:
+            candidate["utility_cost"] = utility_cost
+        candidates.append(candidate)
+    return candidates
+
+
 def counterfactual_utility_matrix_from_records(
     records: Sequence[Mapping[str, object]],
     *,
@@ -178,16 +328,13 @@ def counterfactual_utility_matrix_from_records(
     for record_index, record in enumerate(records):
         if not isinstance(record, Mapping):
             raise ValueError("records must contain mapping objects")
-        context_id = _record_value(record, context_key)
-        if context_id is None:
-            trajectory_id = _record_value(record, trajectory_key)
-            base_index = _record_value(record, base_index_key)
-            if trajectory_id is not None and base_index is not None:
-                context_id = step_context_id(trajectory_id, base_index)
-        if context_id is None:
-            raise ValueError(
-                f"record {record_index} must define {context_key} or both {trajectory_key} and {base_index_key}"
-            )
+        context_id = _context_id_from_record(
+            record,
+            record_index=record_index,
+            context_key=context_key,
+            trajectory_key=trajectory_key,
+            base_index_key=base_index_key,
+        )
         try:
             row_index = context_to_row.get(context_id)
         except TypeError as exc:

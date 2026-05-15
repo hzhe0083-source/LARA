@@ -231,6 +231,7 @@ For MoE experiments, pass the returned `resident_pool_mask` back into later `pre
 For counterfactual expert evaluation, pass `forced_expert_id` or `forced_router_probs` to `predict_action`; this forces the MoE route for that request and returns the forced route fields so the evaluator can record candidate outcomes for the utility sidecar.
 The websocket deployment server also caches `resident_pool_mask` and `router_probs` by `session_id`, feeds cached router probabilities back as `previous_router_probs`, and clears the cache on a `reset` request. This lets closed-loop clients reuse an episode pool and, when `lara_inference_stickiness_weight > 0`, bias chunk-level routing toward the previous route without manually echoing those tensors on every inference call.
 For evaluation runs, start the server with `--rollout_trace_path /path/to/rollouts.jsonl`; each `infer` appends raw route outputs plus measured `latency_ms_sequence`, optional CUDA `vram_mb_sequence`, and any forced expert sequence to the session trace, and `reset` or `record_outcome` writes a JSONL record with `router_probs_sequence`, `active_mask_sequence`, `pool_mask_sequence`, aggregate latency/VRAM, and any provided outcome fields such as `success`, `return_score`, and `flops`.
+Use `scripts/build_counterfactual_utility_labels.py` to convert forced-expert rollout traces into the JSONL sidecar consumed by `counterfactual_utility_labels_path`; it validates that every context has the configured minimum number of candidate experts before writing labels.
 
 ## Training
 

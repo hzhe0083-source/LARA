@@ -7,6 +7,7 @@ import torch
 
 from Lara.evaluation.lara_protocol import (
     counterfactual_utility_matrix_from_records,
+    counterfactual_utility_records_from_rollouts,
     matched_budget_flags,
     matched_compute_row,
     matched_expert_budget_flags,
@@ -403,6 +404,46 @@ class LARAProtocolTest(unittest.TestCase):
         self.assertEqual(step_context_id(7, 20), "7:20")
         self.assertEqual(labels["context_ids"], ["7:20"])
         self.assertTrue(torch.equal(labels["utility_candidate_mask"][0], torch.tensor([True, True, False])))
+
+    def test_counterfactual_records_from_forced_rollouts_build_sidecar_records(self):
+        records = counterfactual_utility_records_from_rollouts(
+            [
+                {
+                    "trajectory_id": 7,
+                    "base_index": 20,
+                    "forced_expert_id_sequence": [1, 1],
+                    "success": 1,
+                    "latency_ms": 12.5,
+                },
+                {
+                    "trajectory_id": 7,
+                    "base_index": 20,
+                    "candidate_expert_id": 2,
+                    "return_score": 0.25,
+                },
+            ],
+            num_experts=3,
+        )
+
+        self.assertEqual(records[0]["context_id"], "7:20")
+        self.assertEqual(records[0]["expert_id"], 1)
+        self.assertEqual(records[0]["utility_score"], 1.0)
+        self.assertEqual(records[0]["utility_cost"], 12.5)
+        self.assertEqual(records[1]["expert_id"], 2)
+        self.assertEqual(records[1]["utility_score"], 0.25)
+
+    def test_counterfactual_records_from_forced_rollouts_reject_ambiguous_routes(self):
+        with self.assertRaisesRegex(ValueError, "exactly one forced expert"):
+            counterfactual_utility_records_from_rollouts(
+                [
+                    {
+                        "context_id": "ep0:0",
+                        "forced_expert_id_sequence": [1, 2],
+                        "success": 1,
+                    }
+                ],
+                num_experts=3,
+            )
 
     def test_lerobot_utility_label_loader_indexes_by_step_context(self):
         from Lara.dataloader.gr00t_lerobot.datasets import load_counterfactual_utility_label_index
