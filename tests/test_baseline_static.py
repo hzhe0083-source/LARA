@@ -259,6 +259,10 @@ def test_optional_moe_router_stage_two_exists():
     assert "episode_pool_size" in moe_src
     assert "episode_pool_size_min" in moe_src
     assert "def _episode_pool_top_k" in moe_src
+    assert "budget_features" in moe_src
+    assert "self.budget_proj" in moe_src
+    assert "def _pool_budget_features" in moe_src
+    assert "def _pool_size_from_mask" in moe_src
     assert "active_mask = topk_mask(router_logits, top_k=self.top_k, allowed_mask=pool_mask)" in moe_src
     assert "pool_loss_weight" in moe_src
     assert "posterior_temperature" in moe_src

@@ -5,6 +5,7 @@ import torch
 
 from Lara.model.modules.action_model.lara_moe import (
     ActionChunkExpertBank,
+    EpisodePoolRouter,
     LatentActionMoE,
     RouteUtilityHead,
     aggregate_episode_responsibilities,
@@ -32,6 +33,24 @@ from Lara.model.modules.action_model.lara_moe import (
 
 
 class LatentActionMoETest(unittest.TestCase):
+    def test_episode_pool_router_accepts_budget_features(self):
+        torch.manual_seed(0)
+        router = EpisodePoolRouter(hidden_size=8, num_experts=4, router_hidden_size=12)
+        tokens = torch.randn(2, 3, 8)
+        budget_features = torch.tensor(
+            [
+                [0.5, 0.5],
+                [1.0, 0.25],
+            ]
+        )
+
+        logits = router(tokens, budget_features=budget_features)
+
+        self.assertEqual(logits.shape, (2, 4))
+        self.assertEqual(router.budget_proj.in_features, 2)
+        with self.assertRaisesRegex(ValueError, "budget_features"):
+            router(tokens, budget_features=torch.zeros(2, 3))
+
     def test_masked_topk_softmax_respects_allowed_pool(self):
         logits = torch.tensor([[4.0, 3.0, 2.0, 1.0]])
         allowed = torch.tensor([[False, True, True, False]])
@@ -138,10 +157,40 @@ class LatentActionMoETest(unittest.TestCase):
         conditioning_tokens = torch.randn(2, 3, 8)
 
         with patch("Lara.model.modules.action_model.lara_moe.torch.randint", return_value=torch.tensor([2])):
-            output = moe(conditioning_tokens)
+            with patch.object(moe.pool_router, "forward", wraps=moe.pool_router.forward) as pool_router_forward:
+                output = moe(conditioning_tokens)
 
         self.assertTrue(torch.all(output.pool_mask.sum(dim=-1) == 2))
         self.assertTrue(torch.all(output.active_mask <= output.pool_mask))
+        budget_features = pool_router_forward.call_args.kwargs["budget_features"]
+        expected = torch.tensor([[2.0 / 5.0, 1.0 / 2.0], [2.0 / 5.0, 1.0 / 2.0]])
+        self.assertTrue(torch.allclose(budget_features, expected))
+
+    def test_external_pool_mask_conditions_pool_router_budget(self):
+        torch.manual_seed(0)
+        moe = LatentActionMoE(
+            hidden_size=8,
+            num_experts=4,
+            top_k=2,
+            episode_pool_size=3,
+            expert_hidden_size=16,
+            router_hidden_size=12,
+        )
+        conditioning_tokens = torch.randn(2, 3, 8)
+        pool_mask = torch.tensor(
+            [
+                [True, False, False, False],
+                [True, True, True, False],
+            ]
+        )
+
+        with patch.object(moe.pool_router, "forward", wraps=moe.pool_router.forward) as pool_router_forward:
+            output = moe(conditioning_tokens, pool_mask=pool_mask)
+
+        budget_features = pool_router_forward.call_args.kwargs["budget_features"]
+        expected = torch.tensor([[1.0 / 4.0, 1.0], [3.0 / 4.0, 2.0 / 3.0]])
+        self.assertTrue(torch.equal(output.pool_mask, pool_mask))
+        self.assertTrue(torch.allclose(budget_features, expected))
 
     def test_eval_uses_max_episode_pool_size_even_when_training_range_exists(self):
         torch.manual_seed(0)

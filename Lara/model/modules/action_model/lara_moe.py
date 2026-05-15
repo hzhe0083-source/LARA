@@ -895,14 +895,31 @@ class EpisodePoolRouter(nn.Module):
     def __init__(self, hidden_size: int, num_experts: int, router_hidden_size: int):
         super().__init__()
         self.context_norm = nn.LayerNorm(hidden_size)
+        self.budget_proj = nn.Linear(2, hidden_size, bias=False)
         self.net = nn.Sequential(
             nn.Linear(hidden_size, router_hidden_size),
             nn.GELU(),
             nn.Linear(router_hidden_size, num_experts),
         )
+        nn.init.zeros_(self.budget_proj.weight)
 
-    def forward(self, initial_context_tokens: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        initial_context_tokens: torch.Tensor,
+        budget_features: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        if initial_context_tokens.ndim != 3:
+            raise ValueError(f"Expected initial_context_tokens [B, T, D], got {tuple(initial_context_tokens.shape)}")
         context_summary = self.context_norm(initial_context_tokens).mean(dim=1)
+        if budget_features is None:
+            budget_features = context_summary.new_zeros(context_summary.shape[0], 2)
+        if budget_features.ndim != 2 or budget_features.shape != (context_summary.shape[0], 2):
+            raise ValueError(
+                f"budget_features must have shape ({context_summary.shape[0]}, 2), "
+                f"got {tuple(budget_features.shape)}"
+            )
+        budget_summary = self.budget_proj(budget_features.to(device=context_summary.device, dtype=context_summary.dtype))
+        context_summary = context_summary + budget_summary
         return self.net(context_summary)
 
 
@@ -1075,6 +1092,41 @@ class LatentActionMoE(nn.Module):
             )
         return self.episode_pool_size
 
+    def _pool_budget_features(
+        self,
+        pool_top_k: int | torch.Tensor,
+        batch_size: int,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        if isinstance(pool_top_k, torch.Tensor):
+            pool_sizes = pool_top_k.to(device=device, dtype=dtype).view(-1)
+            if pool_sizes.numel() == 1:
+                pool_sizes = pool_sizes.expand(batch_size)
+            if pool_sizes.shape[0] != batch_size:
+                raise ValueError(f"pool_top_k must have {batch_size} values, got {pool_sizes.shape[0]}")
+        else:
+            pool_sizes = torch.full((batch_size,), float(pool_top_k), device=device, dtype=dtype)
+
+        if torch.any(pool_sizes <= 0) or torch.any(pool_sizes > self.num_experts):
+            raise ValueError(f"pool_top_k must be in [1, {self.num_experts}]")
+
+        active_sizes = torch.minimum(
+            torch.full_like(pool_sizes, float(self.top_k)),
+            pool_sizes,
+        )
+        resident_fraction = pool_sizes / float(self.num_experts)
+        active_within_resident = active_sizes / pool_sizes.clamp_min(1.0)
+        return torch.stack([resident_fraction, active_within_resident], dim=-1)
+
+    def _pool_size_from_mask(self, pool_mask: torch.Tensor, batch_size: int) -> torch.Tensor:
+        if pool_mask.ndim != 2 or pool_mask.shape != (batch_size, self.num_experts):
+            raise ValueError(f"pool_mask must have shape ({batch_size}, {self.num_experts}), got {tuple(pool_mask.shape)}")
+        pool_mask = pool_mask.to(dtype=torch.bool)
+        if not torch.all(pool_mask.any(dim=-1)):
+            raise ValueError("pool_mask must select at least one expert for every sample")
+        return pool_mask.sum(dim=-1)
+
     def _expert_outputs(self, tokens: torch.Tensor) -> torch.Tensor:
         return torch.stack([expert(tokens) for expert in self.experts], dim=1)
 
@@ -1115,9 +1167,19 @@ class LatentActionMoE(nn.Module):
         pool_mask: Optional[torch.Tensor],
     ):
         pool_context = initial_context_tokens if initial_context_tokens is not None else conditioning_tokens
-        pool_logits = self.pool_router(pool_context)
         if pool_mask is None:
-            pool_mask = topk_mask(pool_logits, top_k=self._episode_pool_top_k(pool_logits.device))
+            pool_top_k = self._episode_pool_top_k(pool_context.device)
+        else:
+            pool_top_k = self._pool_size_from_mask(pool_mask, pool_context.shape[0])
+        budget_features = self._pool_budget_features(
+            pool_top_k,
+            batch_size=pool_context.shape[0],
+            device=pool_context.device,
+            dtype=pool_context.dtype,
+        )
+        pool_logits = self.pool_router(pool_context, budget_features=budget_features)
+        if pool_mask is None:
+            pool_mask = topk_mask(pool_logits, top_k=int(pool_top_k))
         else:
             pool_mask = _validate_expert_mask(pool_mask, pool_logits, "pool_mask")
         pool_probs = masked_softmax(pool_logits, pool_mask)
