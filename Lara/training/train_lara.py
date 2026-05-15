@@ -184,10 +184,11 @@ class VLATrainer(TrainerUtils):
         self.print_trainable_parameters(self.model)
 
         # initialize distributed training components
-        self.model, self.optimizer, self.vla_train_dataloader = self.setup_distributed_training(
+        self.model, self.optimizer, self.lr_scheduler, self.vla_train_dataloader = self.setup_distributed_training(
             self.accelerator,  # must be the first param
             self.model,
             self.optimizer,
+            self.lr_scheduler,
             self.vla_train_dataloader,
             # self.vlm_train_dataloader
         )

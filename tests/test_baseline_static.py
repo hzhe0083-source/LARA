@@ -46,6 +46,8 @@ def test_training_entrypoints_share_safe_gradient_accumulation_pattern():
         src = read(path)
         assert "with self.accelerator.accumulate(self.model):\n            self.optimizer.zero_grad()" not in src
         assert "if self.accelerator.sync_gradients and self.config.trainer.gradient_clipping is not None:" in src
+        assert "self.model, self.optimizer, self.lr_scheduler" in src
+        assert "self.lr_scheduler," in src
         assert "self.optimizer.zero_grad(set_to_none=True)" in src
         assert "\n        if accelerator.is_main_process:" not in src
         assert "\n        accelerator.wait_for_everyone()" not in src
