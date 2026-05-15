@@ -1,4 +1,4 @@
-run_id: so101_latent_action
+run_id: so101_vla_baseline
 run_root_dir: checkpoints
 seed: 42
 trackers:

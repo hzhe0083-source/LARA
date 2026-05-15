@@ -70,7 +70,7 @@ Lara/
   model/modules/world_model/  V-JEPA latent world model pieces
   training/                   Accelerate/DeepSpeed training loops
 scripts/
-  config/lara_so101_ft.yaml   SO101 fine-tuning config
+  config/lara_so101_ft.yaml   SO101 VLA baseline fine-tuning config
   config/lara_libero100_baseline.yaml
                                 LIBERO100 VLA baseline config
   config/lara_metaworld_mt50_baseline.yaml
