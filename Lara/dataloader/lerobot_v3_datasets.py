@@ -18,17 +18,18 @@ def _boundary_state_from_sequence(state_sequence, boundary_index: int):
 
 def collate_fn(
     batch,
-    img_keys,
-    state_key,
-    action_key,
-    task_key,
-    resize_size,
+    img_keys=None,
+    state_key="observation.state",
+    action_key="action",
+    task_key="task",
+    resize_size=224,
     execution_horizon=None,
     prediction_horizon=None,
 ):
     examples = []
     for _, b in enumerate(batch):
         example = {"image": []}
+        img_keys = img_keys or []
         example["action"] = b[action_key].cpu().numpy()
         example["future_actions"] = example["action"]
         action_pad_key = f"{action_key}_is_pad"
@@ -36,7 +37,14 @@ def collate_fn(
             example["future_action_mask"] = (~b[action_pad_key].bool()).cpu().numpy()
         else:
             example["future_action_mask"] = torch.ones(b[action_key].shape[0], dtype=torch.bool).cpu().numpy()
-        example["lang"] = b[task_key]
+        if task_key in b:
+            example["lang"] = b[task_key]
+        elif "task" in b:
+            example["lang"] = b["task"]
+        elif "task_index" in b:
+            example["lang"] = f"task_{int(torch.as_tensor(b['task_index']).flatten()[0])}"
+        else:
+            example["lang"] = "perform the task"
 
         for k in img_keys:
             img_primary = to_pil(b[k][0]).resize((resize_size, resize_size))
@@ -90,12 +98,16 @@ class MixtureDataset(Dataset):
 
 def get_lerobot_v3_datasets(
     data_cfg: dict,
+    action_horizon: int | None = None,
 ):
     from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 
     data_root_dir = data_cfg.data_root_dir
     data_mix = data_cfg.data_mix
-    action_horizon = data_cfg.action_horizon
+    action_horizon = action_horizon if action_horizon is not None else data_cfg.get("action_horizon", 60)
+    state_key = data_cfg.get("state_key", "observation.state")
+    action_key = data_cfg.get("action_key", "action")
+    img_keys_override = data_cfg.get("img_keys", None)
     mixture_spec = DATASET_NAMED_MIXTURES[data_mix]
 
     included_datasets, filtered_mixture_spec = set(), []
@@ -113,15 +125,27 @@ def get_lerobot_v3_datasets(
         repo_id = os.path.join(data_root_dir, d_name)
         ds_meta = LeRobotDatasetMetadata(repo_id)
 
-        observation_keys = []
-        for k in ds_meta.features.keys():
-            if "observation" in k:
-                observation_keys.append(k)
+        if img_keys_override:
+            image_keys = list(img_keys_override)
+        else:
+            image_keys = [
+                k
+                for k, feature in ds_meta.features.items()
+                if isinstance(feature, dict) and feature.get("dtype") == "image"
+            ]
+        missing_img_keys = [k for k in image_keys if k not in ds_meta.features]
+        if missing_img_keys:
+            raise KeyError(f"Configured image keys are missing from {repo_id}: {missing_img_keys}")
+        if action_key not in ds_meta.features:
+            raise KeyError(f"Configured action key {action_key!r} is missing from {repo_id}")
+        if state_key not in ds_meta.features:
+            raise KeyError(f"Configured state key {state_key!r} is missing from {repo_id}")
         delta_timestamps = {
             # loads 64 action vectors: current frame, 1 frame in the future, 2 frames, ... 63 frames in the future
-            "action": [t / ds_meta.fps for t in range(action_horizon)],
+            action_key: [t / ds_meta.fps for t in range(action_horizon)],
+            state_key: [t / ds_meta.fps for t in range(action_horizon + 1)],
         }
-        for k in observation_keys:
+        for k in image_keys:
             delta_timestamps[k] = [t / ds_meta.fps for t in range(action_horizon+1)]
         dataset_mixture.append(
             LeRobotDataset(

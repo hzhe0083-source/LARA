@@ -20,6 +20,14 @@ DATASET_NAMED_MIXTURES = {
                 # ("libero_90_no_noops_lerobot", 1.0, "libero_franka"),
     ],
 
+    "libero100": [
+        ("kevin_libero100_lerobot", 1.0, "libero_franka"),
+    ],
+
+    "metaworld_mt50": [
+        ("lerobot_metaworld_mt50", 1.0, "metaworld"),
+    ],
+
     "droid": [
         ("", 1.0, "libero_franka"),
     ],

@@ -72,6 +72,7 @@ def test_so101_batches_expose_future_actions():
     assert 'example["execution_state_target"] = execution_state' in v3_dataset_src
     assert 'example["prediction_state_target"] = prediction_state' in v3_dataset_src
     assert 'execution_horizon=cfg.framework.action_model.get("execution_horizon", None)' in dataloader_src
+    assert "action_horizon=cfg.framework.action_model.action_horizon" in dataloader_src
     assert "trajectory_id=trajectory_name" in dataset_src
     assert "base_index=step" in dataset_src
     assert "def load_counterfactual_utility_label_index" in dataset_src
@@ -105,6 +106,43 @@ def test_so101_batches_expose_future_actions():
     assert "initial_context_tokens=initial_context_tokens" in core_src
     assert "execution_state_target=execution_state_target" in core_src
     assert "prediction_state_target=prediction_state_target" in core_src
+
+
+def test_benchmark_dataset_entrypoints_are_explicit():
+    mixture_src = read("Lara/dataloader/gr00t_lerobot/mixtures.py")
+    v3_dataset_src = read("Lara/dataloader/lerobot_v3_datasets.py")
+    downloader_src = read("scripts/download_benchmark_data.py")
+    libero_cfg = read("scripts/config/lara_libero100_baseline.yaml")
+    metaworld_cfg = read("scripts/config/lara_metaworld_mt50_baseline.yaml")
+    readme = read("README.md")
+    assert '"libero100"' in mixture_src
+    assert '("kevin_libero100_lerobot", 1.0, "libero_franka")' in mixture_src
+    assert '"metaworld_mt50"' in mixture_src
+    assert '("lerobot_metaworld_mt50", 1.0, "metaworld")' in mixture_src
+    assert 'feature.get("dtype") == "image"' in v3_dataset_src
+    assert "Configured image keys are missing" in v3_dataset_src
+    assert "Configured action key" in v3_dataset_src
+    assert "Configured state key" in v3_dataset_src
+    assert "action_horizon: int | None = None" in v3_dataset_src
+    assert 'data_cfg.get("action_horizon", 60)' in v3_dataset_src
+    assert "kevin-ys-zhang/libero100_lerobot" in downloader_src
+    assert "lerobot/metaworld_mt50" in downloader_src
+    assert 'DEFAULT_INCLUDE_PATTERNS = ["meta/**", "data/chunk-*/*.parquet"]' in downloader_src
+    assert "expected_data_parquet_files=279" in downloader_src
+    assert "expected_data_parquet_files=492" in downloader_src
+    assert "expected {dataset.expected_data_parquet_files} data parquet files" in downloader_src
+    assert "HF_HUB_DISABLE_XET" in downloader_src
+    assert "missing data/**/*.parquet" in downloader_src
+    assert "dataset_py: lerobot_v3_datasets" in libero_cfg
+    assert "data_mix: libero100" in libero_cfg
+    assert "state_dim: 9" in libero_cfg
+    assert "action_dim: 7" in libero_cfg
+    assert "use_lara_moe: false" in libero_cfg
+    assert "data_mix: metaworld_mt50" in metaworld_cfg
+    assert "state_dim: 4" in metaworld_cfg
+    assert "action_dim: 4" in metaworld_cfg
+    assert "use_lara_moe: false" in metaworld_cfg
+    assert "scripts/download_benchmark_data.py --dataset all --preflight-only" in readme
 
 
 def test_action_head_future_windows_are_strict():

@@ -71,6 +71,11 @@ Lara/
   training/                   Accelerate/DeepSpeed training loops
 scripts/
   config/lara_so101_ft.yaml   SO101 fine-tuning config
+  config/lara_libero100_baseline.yaml
+                                LIBERO100 VLA baseline config
+  config/lara_metaworld_mt50_baseline.yaml
+                                MetaWorld MT50 VLA baseline config
+  download_benchmark_data.py   Download/preflight benchmark LeRobot datasets
   summarize_lara_protocol.py  Summarize rollout JSON/JSONL into paper protocol rows
   audit_lara_paper_readiness.py
                                 Fail paper-readiness claims when required evidence is missing
@@ -235,6 +240,36 @@ For counterfactual expert evaluation, pass `forced_expert_id` or `forced_router_
 The websocket deployment server also caches `resident_pool_mask` and `router_probs` by `session_id`, feeds cached router probabilities back as `previous_router_probs`, and clears the cache on a `reset` request. This lets closed-loop clients reuse an episode pool and, when `lara_inference_stickiness_weight > 0`, bias chunk-level routing toward the previous route without manually echoing those tensors on every inference call.
 For evaluation runs, start the server with `--rollout_trace_path /path/to/rollouts.jsonl`; each `infer` appends raw route outputs plus measured `latency_ms_sequence`, optional CUDA `vram_mb_sequence`, and any forced expert sequence to the session trace, and `reset` or `record_outcome` writes a JSONL record with `router_probs_sequence`, `active_mask_sequence`, `pool_mask_sequence`, aggregate latency/VRAM, and any provided outcome fields such as `success`, `return_score`, and `flops`.
 Use `scripts/build_counterfactual_utility_labels.py` to convert forced-expert rollout traces into the JSONL sidecar consumed by `counterfactual_utility_labels_path`; it validates that every context has the configured minimum number of candidate experts before writing labels.
+
+## Benchmark Datasets
+
+Benchmark data is kept outside the git repository under:
+
+```text
+/home/ryan/Documents/robot/benchmark_data
+```
+
+The first benchmark targets are:
+
+| Benchmark | Hugging Face dataset | Local directory | Config |
+| --- | --- | --- | --- |
+| LIBERO100 | `kevin-ys-zhang/libero100_lerobot` | `/home/ryan/Documents/robot/benchmark_data/raw/libero100/kevin_libero100_lerobot` | `scripts/config/lara_libero100_baseline.yaml` |
+| MetaWorld MT50 | `lerobot/metaworld_mt50` | `/home/ryan/Documents/robot/benchmark_data/raw/metaworld/lerobot_metaworld_mt50` | `scripts/config/lara_metaworld_mt50_baseline.yaml` |
+
+Download or resume with low concurrency:
+
+```bash
+python scripts/download_benchmark_data.py --dataset libero100 --download --max-workers 1
+python scripts/download_benchmark_data.py --dataset metaworld --download --max-workers 1
+```
+
+The script fixes `HF_HOME`, `HF_HUB_CACHE`, and `HF_XET_CACHE` under `benchmark_data`, disables Xet by default, writes logs to `benchmark_data/logs`, and defaults to dry-run unless `--download` is passed. By default it downloads only the LeRobot v3 local-training layout: `meta/**` and `data/chunk-*/*.parquet`, not duplicate Hugging Face viewer split files such as `data/train-*`. Check local readiness without downloading:
+
+```bash
+python scripts/download_benchmark_data.py --dataset all --preflight-only
+```
+
+A dataset is not considered ready until `meta/info.json`, `meta/stats.json`, and the expected LeRobot v3 chunk parquet count are present: 279 `data/chunk-*/*.parquet` files for LIBERO100 and 492 for MetaWorld MT50. The current benchmark configs use the baseline VLA path only; MoE and two-level routing remain disabled by default.
 
 To check whether the repository has enough evidence to claim the full LARA paper method is complete, run:
 

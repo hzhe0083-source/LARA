@@ -502,33 +502,38 @@ utility calibration, not as the next round's real closed-loop input.
 
 \subsection*{Current Repository Implementation Status}
 
-The current repository implements the SO101 VLA-JEPA action baseline: the
-pretrained VLA representation is reused, latent and embodied action tokens are
-extracted from the token stream, and a flow-matching action head predicts the
-continuous follower-arm action chunk. The SO101 dataloader and action adapter
-also propagate future-action validity masks so trajectory-end padding does not
-supervise action, latent, transition, utility-proxy, or direct-expert losses.
-For the optional MoE path, the dataloader can also return the episode's first
-image so the episode-level pool router can condition on an encoded initial
-context $h_1$ rather than reusing the current chunk context as a proxy.
+The current repository has completed only the SO101 VLA-JEPA action-baseline
+path. It reuses the pretrained VLA representation, extracts latent and embodied
+action tokens from the Qwen/V-JEPA token stream, and adapts those tokens to a
+flow-matching action head that predicts continuous follower-arm action chunks.
+The SO101 dataloader and action adapter also propagate future-action validity
+masks so trajectory-end padding does not supervise the action loss or any
+default-off latent, transition, utility-proxy, or direct-expert losses.
+
+The latent-action, MoE, and two-level routing components described in the
+preceding sections are not yet completed as a validated implementation of
+LARA. The codebase contains experimental scaffolding for a posterior latent
+action head, residual or direct action experts, posterior-responsibility
+signals, an episode-level resident-pool router, a chunk-level top-$k$ router
+inside that pool, route diagnostics, and counterfactual-utility sidecar
+plumbing. These paths remain disabled by default and should be treated as
+research hooks rather than completed paper evidence. In particular, the current
+repository does not yet provide a trained and validated MoE action head, a
+validated two-level routing policy, real counterfactual utility labels, or
+closed-loop SO101 results demonstrating resident-pool reuse and sparse expert
+selection under matched compute.
+
 Protocol tooling can summarize rollout JSON/JSONL records into matched-budget
-rows, subset-retention curves, and compute-success Pareto flags, but it does
-not itself produce real FLOP, latency, memory, or closed-loop success
-measurements. It also includes route-sequence diagnostics for resident-pool
-reuse across receding-horizon chunks, but those diagnostics are only meaningful
-once attached to raw router-probability and route-mask traces from real
-closed-loop rollouts. The deployment websocket server can optionally write
-those raw route traces and server-side latency/VRAM measurements to JSONL, but
-the repository still lacks completed closed-loop SO101 evaluation runs. A
-strict evidence-audit mode can reject incomplete rollout records, which helps
-prevent protocol summaries from being mistaken for completed paper evidence.
-This is not yet the full LARA algorithm in this manuscript. In particular,
-production-ready latent-action training, validated MoE action experts,
-posterior-responsibility training, the episode-level pool router, the
-chunk-level top-$k$ router inside the resident pool, and counterfactual utility
-calibration remain future implementation work. Any current latent-action or
-MoE/router code should be treated as default-off experimental scaffolding until
-it has full training, diagnostic, matched-budget, and closed-loop validation.
+rows, subset-retention curves, route-sequence diagnostics, and compute-success
+Pareto flags, but it does not itself produce real FLOP, latency, memory, or
+closed-loop success measurements. The deployment websocket server can
+optionally write raw route traces and server-side latency/VRAM measurements to
+JSONL, and a strict evidence-audit mode can reject incomplete rollout records.
+These tools are intended to prevent protocol summaries from being mistaken for
+completed LARA evidence. Full latent-action training, MoE expert validation,
+posterior-to-router distillation, episode-pool routing, chunk-level routing,
+and counterfactual utility calibration remain future implementation and
+evaluation work.
 
 \section{Experimental Protocol}
 

@@ -70,7 +70,10 @@ def build_dataloader(cfg, dataset_py="lerobot_datasets_oxe"): # TODO now here on
         from Lara.dataloader.lerobot_v3_datasets import get_lerobot_v3_datasets, collate_fn
         vla_dataset_cfg = cfg.datasets.vla_data
 
-        vla_dataset = get_lerobot_v3_datasets(data_cfg=vla_dataset_cfg)
+        vla_dataset = get_lerobot_v3_datasets(
+            data_cfg=vla_dataset_cfg,
+            action_horizon=cfg.framework.action_model.action_horizon,
+        )
 
         custom_collate_fn = partial(collate_fn, 
             img_keys=cfg.datasets.vla_data.img_keys,
