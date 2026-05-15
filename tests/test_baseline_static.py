@@ -164,6 +164,7 @@ def test_optional_moe_router_stage_two_exists():
     adapter_src = read("Lara/model/framework/act.py")
     core_src = read("Lara/model/framework/Lara_core.py")
     server_src = read("deployment/model_server/tools/websocket_policy_server.py")
+    server_policy_src = read("deployment/model_server/server_policy.py")
     protocol_src = read("Lara/evaluation/lara_protocol.py")
     protocol_cli_src = read("scripts/summarize_lara_protocol.py")
     smoke_src = read("scripts/smoke_lara_real_components.py")
@@ -287,6 +288,13 @@ def test_optional_moe_router_stage_two_exists():
     assert "previous_router_probs" in server_src
     assert '"router_probs"' in server_src
     assert 'mtype == "reset"' in server_src
+    assert "rollout_trace_path" in server_src
+    assert "--rollout_trace_path" in server_policy_src
+    assert "rollout_trace_path=args.rollout_trace_path" in server_policy_src
+    assert "record_outcome" in server_src
+    assert "router_probs_sequence" in server_src
+    assert "active_mask_sequence" in server_src
+    assert "pool_mask_sequence" in server_src
     assert "has_training_teacher = expert_action_losses is not None or latent_action_tokens is not None" in moe_src
     assert "episode_pool_size" in moe_src
     assert "episode_pool_size_min" in moe_src

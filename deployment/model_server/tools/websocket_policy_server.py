@@ -3,7 +3,9 @@
 # Implemented by [Jinhui YE / HKUST University] in [2025].
 
 import asyncio
+import json
 import logging
+from pathlib import Path
 import traceback
 
 import websockets.asyncio.server
@@ -32,11 +34,13 @@ class WebsocketPolicyServer:
         host: str = "0.0.0.0",
         port: int = 8000,
         metadata: dict | None = None,
+        rollout_trace_path: str | None = None,
     ) -> None:
         self._policy = policy  #
         self._host = host
         self._port = port
         self._metadata = metadata or {}
+        self._rollout_trace_path = Path(rollout_trace_path) if rollout_trace_path else None
         self._session_state: dict[str, dict] = {}
         logging.getLogger("websockets.server").setLevel(logging.INFO)
 
@@ -82,7 +86,7 @@ class WebsocketPolicyServer:
         """
         Route rules (fault-tolerant):
         - Supports messages of form:
-            {"type": "ping|init|infer|reset", "request_id": "...", "payload": {...}}
+            {"type": "ping|init|infer|reset|record_outcome", "request_id": "...", "payload": {...}}
           or a flat dict (will be treated as payload).
         - Always returns a dict containing:
             {
@@ -109,8 +113,45 @@ class WebsocketPolicyServer:
             return {"status": "ok", "ok": True, "type": "ping", "request_id": req_id, "session_id": session_id}
 
         if mtype == "reset":
+            trace_written = self._write_rollout_trace(
+                session_id,
+                self._session_state.get(session_id, {}),
+                payload if isinstance(payload, dict) else {},
+            )
             self._session_state.pop(session_id, None)
-            return {"status": "ok", "ok": True, "type": "reset", "request_id": req_id, "session_id": session_id}
+            return {
+                "status": "ok",
+                "ok": True,
+                "type": "reset",
+                "request_id": req_id,
+                "session_id": session_id,
+                "rollout_trace_written": trace_written,
+            }
+
+        if mtype == "record_outcome":
+            if not isinstance(payload, dict):
+                return {
+                    "status": "error",
+                    "ok": False,
+                    "type": "record_outcome",
+                    "request_id": req_id,
+                    "session_id": session_id,
+                    "error": {"message": "Payload must be a dict"},
+                }
+            trace_written = self._write_rollout_trace(
+                session_id,
+                self._session_state.get(session_id, {}),
+                payload,
+            )
+            self._session_state.pop(session_id, None)
+            return {
+                "status": "ok",
+                "ok": True,
+                "type": "record_outcome",
+                "request_id": req_id,
+                "session_id": session_id,
+                "rollout_trace_written": trace_written,
+            }
 
         # infer
         elif mtype == "infer":
@@ -140,6 +181,7 @@ class WebsocketPolicyServer:
                         session["resident_pool_probs"] = ouput_dict["resident_pool_probs"]
                     if "router_probs" in ouput_dict:
                         session["router_probs"] = ouput_dict["router_probs"]
+                    self._append_rollout_trace(session, ouput_dict)
             except Exception as e:
                 logging.exception("Policy inference error (request_id=%s)", req_id)
                 logging.exception(e)
@@ -173,6 +215,104 @@ class WebsocketPolicyServer:
                 "request_id": req_id,
                 "error": {"message": f"Unsupported message type '{mtype}'"},
             }
+
+    @staticmethod
+    def _jsonable(value):
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        if hasattr(value, "detach"):
+            value = value.detach().cpu()
+        if hasattr(value, "tolist"):
+            return value.tolist()
+        if hasattr(value, "item"):
+            return value.item()
+        if isinstance(value, dict):
+            return {str(k): WebsocketPolicyServer._jsonable(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [WebsocketPolicyServer._jsonable(v) for v in value]
+        return value
+
+    @staticmethod
+    def _is_matrix(value) -> bool:
+        return isinstance(value, list) and bool(value) and isinstance(value[0], list)
+
+    @classmethod
+    def _sequence_from_steps(cls, steps: list):
+        if not steps:
+            return None
+        steps = [cls._jsonable(step) for step in steps]
+        if all(cls._is_matrix(step) and len(step) == 1 for step in steps):
+            return [step[0] for step in steps]
+        if all(cls._is_matrix(step) for step in steps):
+            batch_size = len(steps[0])
+            if all(len(step) == batch_size for step in steps):
+                return [[step[batch_idx] for step in steps] for batch_idx in range(batch_size)]
+        return steps
+
+    @staticmethod
+    def _resident_fraction_from_pool_sequence(pool_sequence) -> float | None:
+        if not isinstance(pool_sequence, list) or not pool_sequence:
+            return None
+        first = pool_sequence[0]
+        if isinstance(first, list) and first and isinstance(first[0], list):
+            first = first[0]
+        if not isinstance(first, list) or not first:
+            return None
+        return float(sum(1 for value in first if bool(value)) / len(first))
+
+    @staticmethod
+    def _route_sequence_length(sequence) -> int | None:
+        if not isinstance(sequence, list):
+            return None
+        if sequence and isinstance(sequence[0], list) and sequence[0] and isinstance(sequence[0][0], list):
+            return len(sequence[0])
+        return len(sequence)
+
+    def _append_rollout_trace(self, session: dict, output: dict) -> None:
+        if self._rollout_trace_path is None:
+            return
+        trace = session.setdefault("rollout_trace", {})
+        for output_key, trace_key in [
+            ("router_probs", "router_probs_sequence"),
+            ("active_expert_mask", "active_mask_sequence"),
+            ("resident_pool_mask", "pool_mask_sequence"),
+        ]:
+            if output_key in output:
+                trace.setdefault(trace_key, []).append(self._jsonable(output[output_key]))
+
+    def _rollout_trace_record(self, session_id: str, session: dict, outcome: dict) -> dict:
+        record = {"session_id": session_id}
+        for key, value in outcome.items():
+            if key != "session_id":
+                record[key] = self._jsonable(value)
+
+        trace = session.get("rollout_trace", {})
+        for key in ["router_probs_sequence", "active_mask_sequence", "pool_mask_sequence"]:
+            sequence = self._sequence_from_steps(trace.get(key, []))
+            if sequence is not None:
+                record[key] = sequence
+        router_sequence = record.get("router_probs_sequence")
+        route_sequence_length = self._route_sequence_length(router_sequence)
+        if route_sequence_length is not None:
+            record["num_route_chunks"] = route_sequence_length
+        if "resident_fraction" not in record and "resident_fraction_requested" not in record:
+            resident_fraction = self._resident_fraction_from_pool_sequence(record.get("pool_mask_sequence"))
+            if resident_fraction is not None:
+                record["resident_fraction"] = resident_fraction
+        return record
+
+    def _write_rollout_trace(self, session_id: str, session: dict, outcome: dict) -> bool:
+        if self._rollout_trace_path is None:
+            return False
+        record = self._rollout_trace_record(session_id, session, outcome)
+        has_trace = any(key.endswith("_sequence") for key in record)
+        has_outcome = any(key in record for key in ["success", "success_rate", "return_score", "return"])
+        if not has_trace and not has_outcome:
+            return False
+        self._rollout_trace_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._rollout_trace_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, sort_keys=True) + "\n")
+        return True
 
 
 if __name__ == "__main__":

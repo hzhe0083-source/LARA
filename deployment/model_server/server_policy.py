@@ -36,6 +36,7 @@ def main(args) -> None:
         host="0.0.0.0",
         port=args.port,
         metadata={"env": "simpler_env"},
+        rollout_trace_path=args.rollout_trace_path,
     )
     logging.info("server running ...")
     server.serve_forever()
@@ -47,6 +48,12 @@ def build_argparser():
     parser.add_argument("--port", type=int, default=10093)
     parser.add_argument("--use_bf16", action="store_true")
     parser.add_argument("--cuda", default=0)
+    parser.add_argument(
+        "--rollout_trace_path",
+        type=str,
+        default=None,
+        help="Optional JSONL path for LARA rollout route traces and outcome records.",
+    )
     return parser
 
 
