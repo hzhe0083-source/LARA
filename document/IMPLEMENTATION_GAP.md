@@ -47,7 +47,7 @@ These files exist to make the next implementation steps concrete, but they are n
 - Optional direct action-chunk expert heads and routed direct-expert action output were added behind `lara_use_direct_action_experts: false` and `lara_use_direct_action_output: false`; they still need real SO101 training validation.
 - Route-quality aggregation metrics were added for offline diagnostics: Spearman/Kendall ranking fidelity, top-k consistency, route regret, route-switch-rate, and retained probability mass; closed-loop subset-retention success curves still need real evaluation rollouts.
 - Action-head route-quality metrics are emitted as scalar `metric/moe_route_quality_*` values by the trainers when MoE is enabled.
-- Sparse active/resident expert budget helpers were added for matched-budget reporting; real FLOPs, latency, VRAM, and success measurements still require benchmark runs.
+- Sparse active/resident expert budget helpers plus matched-compute rows, budget-match flags, Pareto frontier flags, and subset-retention success aggregation were added for matched-budget reporting; real FLOPs, latency, VRAM, and success measurements still require benchmark runs.
 - Action-head auxiliary diagnostics are now returned as `metric/...` outputs and excluded from the differentiable loss sum by the trainers.
 - The websocket deployment server caches MoE `resident_pool_mask` values per `session_id` and supports `reset`, allowing closed-loop clients to reuse an episode-level expert pool across receding-horizon chunks.
 
@@ -59,7 +59,7 @@ These files exist to make the next implementation steps concrete, but they are n
 - The MoE/router path is currently a Stage-2 scaffold and still needs full-train validation of the direct expert and per-expert action-loss posterior paths, resident-pool success evaluation, and closed-loop validation beyond server-side pool reuse.
 - Utility calibration currently validates action-loss utility labels, generic utility composition, a trainable utility-head interface, and loss surfaces; it does not yet supervise value/progress/uncertainty from latent-state or closed-loop evaluator labels.
 - The optional transition head and dataloader boundary targets are wired, but transition-state training still needs empirical validation and loss-weight tuning.
-- Matched-compute support currently covers expert-budget accounting only; it does not measure real FLOPs, latency, VRAM, or closed-loop success.
+- Matched-compute support currently covers reporting protocol and expert-budget accounting only; it does not measure real FLOPs, latency, VRAM, or closed-loop success.
 - The new pytest static tests were not run in the system Python because that interpreter lacks `pytest`; run them inside the project environment with `python -m pytest tests/test_baseline_static.py`.
 - VJ2 video preprocessing still happens inside the forward path and may bottleneck training.
 - `pyproject.toml` and `requirements.txt` do not pin the torch/CUDA runtime; the project still depends on a compatible prebuilt PyTorch environment.

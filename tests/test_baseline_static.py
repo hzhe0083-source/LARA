@@ -99,6 +99,7 @@ def test_optional_moe_router_stage_two_exists():
     adapter_src = read("Lara/model/framework/act.py")
     core_src = read("Lara/model/framework/Lara_core.py")
     server_src = read("deployment/model_server/tools/websocket_policy_server.py")
+    protocol_src = read("Lara/evaluation/lara_protocol.py")
     config_src = read("scripts/config/lara_so101_ft.yaml")
     flow_src = read("Lara/model/modules/action_model/GR00T_ActionHeader.py")
     gap = read("document/IMPLEMENTATION_GAP.md")
@@ -126,6 +127,10 @@ def test_optional_moe_router_stage_two_exists():
     assert "def route_regret_from_scores" in moe_src
     assert "def route_quality_metrics" in moe_src
     assert "def sparse_route_budget" in moe_src
+    assert "def subset_retention_success_curve" in protocol_src
+    assert "def matched_compute_row" in protocol_src
+    assert "def matched_budget_flags" in protocol_src
+    assert "def pareto_frontier_flags" in protocol_src
     assert "def candidate_route_utility" in moe_src
     assert "def utility_from_expert_losses" in moe_src
     assert "def aggregate_episode_responsibilities" in moe_src
@@ -200,6 +205,7 @@ def test_optional_moe_router_stage_two_exists():
     assert "expert-diversity/entropy stabilizers" in gap
     assert "route-quality aggregation metrics" in gap
     assert "Action-head route-quality metrics are emitted" in gap
+    assert "matched-compute rows, budget-match flags, Pareto frontier flags" in gap
     assert "caches MoE `resident_pool_mask` values per `session_id`" in gap
 
 
