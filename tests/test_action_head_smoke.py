@@ -82,6 +82,39 @@ class ActionHeadAdapterSmokeTest(unittest.TestCase):
         self.assertEqual(pred_actions.shape, (1, 3, 2))
         self.assertTrue(torch.isfinite(pred_actions).all().item())
 
+    def test_latent_action_head_uses_short_latent_horizon(self):
+        torch.manual_seed(0)
+        adapter = ActionHeadAdapter(
+            config=tiny_action_config(
+                use_latent_action_head=True,
+                latent_action_horizon=1,
+                lara_num_latent_tokens=2,
+                lara_codebook_size=8,
+                lara_latent_hidden_dim=16,
+            ),
+            context_hidden_size=16,
+        )
+        adapter.train()
+
+        embodied_tokens = torch.randn(2, 2, 16)
+        latent_tokens = torch.randn(2, 1, 16)
+        actions = torch.randn(2, 3, 2)
+        state = torch.randn(2, 1, 3)
+
+        output = adapter(
+            embodied_action_tokens=embodied_tokens,
+            latent_action_tokens=latent_tokens,
+            actions=actions,
+            actions_are_future=True,
+            state=state,
+            return_aux=True,
+        )
+
+        self.assertEqual(adapter.latent_action_horizon, 1)
+        self.assertEqual(adapter.latent_action_head.posterior.action_horizon, 1)
+        self.assertIn("latent_action_loss", output)
+        self.assertTrue(torch.isfinite(output["total_action_loss"]).item())
+
     def test_predict_action_can_return_moe_route_aux_for_closed_loop_cache(self):
         torch.manual_seed(0)
         adapter = ActionHeadAdapter(

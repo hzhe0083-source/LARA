@@ -40,6 +40,12 @@ class ActionHeadAdapter(nn.Module):
         self.action_model: FlowmatchingActionHead = get_action_model(config=self.config)
         self.future_action_window_size = action_cfg.future_action_window_size
         self.action_horizon = action_cfg.get("action_horizon", self.future_action_window_size + 1)
+        self.latent_action_horizon = action_cfg.get(
+            "latent_action_horizon",
+            action_cfg.get("execution_horizon", self.action_horizon),
+        )
+        if self.latent_action_horizon <= 0 or self.latent_action_horizon > self.action_horizon:
+            raise ValueError("latent_action_horizon must be in [1, action_horizon]")
         self.use_latent_action_tokens = action_cfg.get("use_latent_action_tokens", True)
         self.max_latent_action_tokens = action_cfg.get("max_latent_action_tokens", None)
         self.use_latent_action_head = action_cfg.get("use_latent_action_head", False)
@@ -77,7 +83,7 @@ class ActionHeadAdapter(nn.Module):
             LatentActionHead(
                 context_dim=context_hidden_size,
                 action_dim=action_cfg.action_dim,
-                action_horizon=self.action_horizon,
+                action_horizon=self.latent_action_horizon,
                 num_latent_tokens=action_cfg.get("lara_num_latent_tokens", 4),
                 codebook_size=action_cfg.get("lara_codebook_size", 128),
                 hidden_dim=action_cfg.get("lara_latent_hidden_dim", action_cfg.get("hidden_size", context_hidden_size)),
@@ -301,7 +307,8 @@ class ActionHeadAdapter(nn.Module):
         actions_target = actions if actions_are_future else actions[:, -self.action_horizon :, :]
         aux_losses = {}
         if self.latent_action_head is not None:
-            latent_output = self.latent_action_head(embodied_action_tokens, actions_target)
+            latent_actions_target = actions_target[:, : self.latent_action_horizon, :]
+            latent_output = self.latent_action_head(embodied_action_tokens, latent_actions_target)
             latent_action_tokens = latent_output.tokens
             aux_losses = {
                 "latent_action_loss": latent_output.loss,

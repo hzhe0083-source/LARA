@@ -121,9 +121,13 @@ def test_optional_latent_action_head_stage_one_exists():
     assert "class LatentActionPrior" in latent_src
     assert "class LatentActionHead" in latent_src
     assert "class LatentActionTransitionHead" in latent_src
+    assert "self.latent_action_horizon" in adapter_src
+    assert '"latent_action_horizon"' in adapter_src
+    assert "latent_actions_target = actions_target[:, : self.latent_action_horizon, :]" in adapter_src
     assert "use_latent_action_head" in adapter_src
     assert "self.latent_action_head.predict" in adapter_src
     assert "latent_action_code_usage_loss" in adapter_src
+    assert "latent_action_horizon: 10" in config_src
     assert "self.transition_head" in adapter_src
     assert "transition_state_loss" in adapter_src
     assert "use_latent_action_head: false" in config_src
