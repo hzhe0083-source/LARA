@@ -44,6 +44,7 @@ These files exist to make the next implementation steps concrete, but they are n
 - Utility calibration loss code and generic candidate utility scoring helpers were added behind zero default weights; they still need real value/progress/uncertainty signals before they can be considered the paper's counterfactual calibration stage.
 - Optional direct action-chunk expert heads were added behind `lara_use_direct_action_experts: false`; they still need real SO101 training validation.
 - Route-switch-rate and retained-probability-mass helpers were added for offline route diagnostics; closed-loop subset-retention success curves still need real evaluation rollouts.
+- Sparse active/resident expert budget helpers were added for matched-budget reporting; real FLOPs, latency, VRAM, and success measurements still require benchmark runs.
 
 ## Remaining Engineering Risks
 
@@ -52,6 +53,7 @@ These files exist to make the next implementation steps concrete, but they are n
 - The latent action head is currently a Stage-1 skeleton and still needs empirical validation, loss-weight tuning, and ablation against the token-conditioned flow baseline.
 - The MoE/router path is currently a Stage-2 scaffold and still needs full-train validation of the direct expert and per-expert action-loss posterior paths, resident-pool success evaluation, and closed-loop validation.
 - Utility calibration currently validates only generic utility composition and loss surfaces; it does not yet produce value/progress/uncertainty signals from latent-state or closed-loop evaluator models.
+- Matched-compute support currently covers expert-budget accounting only; it does not measure real FLOPs, latency, VRAM, or closed-loop success.
 - The new pytest static tests were not run in the system Python because that interpreter lacks `pytest`; run them inside the project environment with `python -m pytest tests/test_baseline_static.py`.
 - VJ2 video preprocessing still happens inside the forward path and may bottleneck training.
 - `pyproject.toml` and `requirements.txt` do not pin the torch/CUDA runtime; the project still depends on a compatible prebuilt PyTorch environment.

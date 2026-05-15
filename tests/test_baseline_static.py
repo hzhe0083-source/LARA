@@ -93,6 +93,7 @@ def test_optional_moe_router_stage_two_exists():
     assert "def route_stickiness_loss" in moe_src
     assert "def route_switch_rate" in moe_src
     assert "def retained_probability_mass" in moe_src
+    assert "def sparse_route_budget" in moe_src
     assert "def candidate_route_utility" in moe_src
     assert "def aggregate_episode_responsibilities" in moe_src
     assert "def utility_calibration_objective" in moe_src

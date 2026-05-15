@@ -13,6 +13,7 @@ from Lara.model.modules.action_model.lara_moe import (
     retained_probability_mass,
     route_switch_rate,
     route_stickiness_loss,
+    sparse_route_budget,
     uniform_balance_loss,
     utility_calibration_objective,
 )
@@ -363,6 +364,25 @@ class LatentActionMoETest(unittest.TestCase):
                 value_scores=torch.zeros(2, 3),
                 progress_scores=torch.zeros(2, 4),
             )
+
+    def test_sparse_route_budget_reports_active_and_resident_fractions(self):
+        metrics = sparse_route_budget(
+            total_experts=8,
+            active_experts=2,
+            resident_experts=4,
+            shared_params=100,
+            params_per_expert=10,
+        )
+
+        self.assertEqual(metrics["active_expert_fraction"], 0.25)
+        self.assertEqual(metrics["resident_expert_fraction"], 0.5)
+        self.assertEqual(metrics["active_params"], 120.0)
+        self.assertEqual(metrics["resident_params"], 140.0)
+        self.assertEqual(metrics["total_params"], 180.0)
+
+    def test_sparse_route_budget_rejects_active_experts_outside_resident_pool(self):
+        with self.assertRaisesRegex(ValueError, "cannot exceed"):
+            sparse_route_budget(total_experts=8, active_experts=5, resident_experts=4)
 
 
 if __name__ == "__main__":

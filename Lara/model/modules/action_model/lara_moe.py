@@ -183,6 +183,39 @@ def retained_probability_mass(probs: torch.Tensor, retention_fractions: list[flo
     return results
 
 
+def sparse_route_budget(
+    total_experts: int,
+    active_experts: int,
+    resident_experts: Optional[int] = None,
+    shared_params: int = 0,
+    params_per_expert: int = 0,
+) -> dict[str, float]:
+    if total_experts <= 0:
+        raise ValueError("total_experts must be positive")
+    if active_experts <= 0 or active_experts > total_experts:
+        raise ValueError("active_experts must be in [1, total_experts]")
+    resident_experts = total_experts if resident_experts is None else resident_experts
+    if resident_experts <= 0 or resident_experts > total_experts:
+        raise ValueError("resident_experts must be in [1, total_experts]")
+    if active_experts > resident_experts:
+        raise ValueError("active_experts cannot exceed resident_experts")
+    if shared_params < 0 or params_per_expert < 0:
+        raise ValueError("parameter counts must be non-negative")
+
+    active_params = shared_params + active_experts * params_per_expert
+    resident_params = shared_params + resident_experts * params_per_expert
+    total_params = shared_params + total_experts * params_per_expert
+    return {
+        "active_expert_fraction": active_experts / total_experts,
+        "resident_expert_fraction": resident_experts / total_experts,
+        "active_params": float(active_params),
+        "resident_params": float(resident_params),
+        "total_params": float(total_params),
+        "active_param_fraction": active_params / total_params if total_params > 0 else 0.0,
+        "resident_param_fraction": resident_params / total_params if total_params > 0 else 0.0,
+    }
+
+
 def candidate_route_utility(
     value_scores: Optional[torch.Tensor] = None,
     progress_scores: Optional[torch.Tensor] = None,
