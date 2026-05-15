@@ -113,6 +113,7 @@ python scripts/smoke_lara_real_components.py --config scripts/config/lara_so101_
 ```
 
 When the local Qwen/V-JEPA checkpoints and runtime dependencies are available, add `--instantiate` or `--run-step` to load the actual `Lara` framework and execute a one-step dummy forward/backward check.
+Those modes return structured JSON errors if dependency import or model loading fails, which makes missing runtime packages easier to diagnose before launching training.
 
 ## SO101 Dataset
 

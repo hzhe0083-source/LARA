@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,8 @@ from PIL import Image
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 
 def _resolve_repo_path(path_value: str | Path, repo_root: Path = REPO_ROOT) -> Path:
@@ -96,6 +99,14 @@ def instantiate_lara(cfg: Any):
     return model
 
 
+def _exception_status(exc: Exception) -> dict[str, str]:
+    return {
+        "status": "error",
+        "error_type": exc.__class__.__name__,
+        "message": str(exc),
+    }
+
+
 def run_one_step(model, cfg: Any) -> dict[str, float]:
     model.train()
     examples = build_dummy_examples(cfg, batch_size=1)
@@ -122,10 +133,19 @@ def smoke_lara_real_components(
     if path_status["status"] != "ok":
         return result
     if instantiate or run_step:
-        model = instantiate_lara(cfg)
+        try:
+            model = instantiate_lara(cfg)
+        except Exception as exc:
+            result["instantiate"] = _exception_status(exc)
+            return result
         result["instantiate"] = {"status": "ok", "class": model.__class__.__name__}
         if run_step:
-            result["one_step"] = {"status": "ok", "losses": run_one_step(model, cfg)}
+            try:
+                losses = run_one_step(model, cfg)
+            except Exception as exc:
+                result["one_step"] = _exception_status(exc)
+                return result
+            result["one_step"] = {"status": "ok", "losses": losses}
     return result
 
 
@@ -146,6 +166,9 @@ def main() -> int:
     print(json.dumps(result, indent=2, sort_keys=True))
     if result["paths"]["status"] != "ok":
         return 2
+    for key in ("instantiate", "one_step"):
+        if result.get(key, {}).get("status") == "error":
+            return 3
     return 0
 
 

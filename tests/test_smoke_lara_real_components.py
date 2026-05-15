@@ -1,13 +1,17 @@
 import tempfile
 import unittest
+import sys
 from pathlib import Path
+from unittest.mock import patch
 
 from omegaconf import OmegaConf
 
 from scripts.smoke_lara_real_components import (
+    REPO_ROOT,
     build_dummy_examples,
     check_required_paths,
     required_component_paths,
+    smoke_lara_real_components,
     smoke_config_summary,
 )
 
@@ -50,6 +54,9 @@ def tiny_smoke_config(tmpdir: Path):
 
 
 class SmokeLaraRealComponentsTest(unittest.TestCase):
+    def test_script_inserts_repo_root_for_direct_execution(self):
+        self.assertIn(str(REPO_ROOT), sys.path)
+
     def test_required_component_paths_and_summary(self):
         with tempfile.TemporaryDirectory() as tmp:
             cfg = tiny_smoke_config(Path(tmp))
@@ -83,6 +90,22 @@ class SmokeLaraRealComponentsTest(unittest.TestCase):
             self.assertEqual(examples[0]["future_actions"].shape, (3, 2))
             self.assertEqual(examples[0]["current_state"].shape, (1, 4))
             self.assertEqual(examples[0]["video"].shape, (1, 8, 16, 16, 3))
+
+    def test_instantiate_failure_is_reported_as_structured_status(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = Path(tmp) / "config.yaml"
+            OmegaConf.save(tiny_smoke_config(Path(tmp)), cfg_path)
+
+            with patch(
+                "scripts.smoke_lara_real_components.instantiate_lara",
+                side_effect=ModuleNotFoundError("missing_dependency"),
+            ):
+                result = smoke_lara_real_components(cfg_path, instantiate=True)
+
+            self.assertEqual(result["paths"]["status"], "ok")
+            self.assertEqual(result["instantiate"]["status"], "error")
+            self.assertEqual(result["instantiate"]["error_type"], "ModuleNotFoundError")
+            self.assertIn("missing_dependency", result["instantiate"]["message"])
 
 
 if __name__ == "__main__":

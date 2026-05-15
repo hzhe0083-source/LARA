@@ -52,12 +52,12 @@ These files exist to make the next implementation steps concrete, but they are n
 - Sparse active/resident expert budget helpers plus matched-compute rows, matched-resident rows, budget-match flags, Pareto frontier flags, and subset-retention success aggregation were added for matched-budget reporting; real FLOPs, latency, VRAM, and success measurements still require benchmark runs.
 - Action-head auxiliary diagnostics are now returned as `metric/...` outputs and excluded from the differentiable loss sum by the trainers.
 - The websocket deployment server caches MoE `resident_pool_mask` and `router_probs` values per `session_id`, feeds cached routes back as `previous_router_probs`, and supports `reset`, allowing closed-loop clients to reuse an episode-level expert pool and optionally bias chunk-level routing across receding-horizon chunks when `lara_inference_stickiness_weight > 0`.
-- `scripts/smoke_lara_real_components.py` now provides an explicit preflight for local Qwen/V-JEPA checkpoint paths and optional real `Lara` instantiate/one-step dummy forward-backward checks.
+- `scripts/smoke_lara_real_components.py` now provides an explicit preflight for local Qwen/V-JEPA checkpoint paths and optional real `Lara` instantiate/one-step dummy forward-backward checks, with structured error reporting for missing runtime dependencies or model-load failures.
 
 ## Remaining Engineering Risks
 
 - Action target alignment is explicit for the current SO101 dataloader via strict `future_actions`. Future datasets that return past/current/future actions together must split out an `action_horizon`-length `future_actions` window before calling the action adapter.
-- Full `Lara` model instantiation with real Qwen/V-JEPA checkpoints and real-component one-step training smoke tests now have a script entry point but still need to be run successfully in the full training environment.
+- Full `Lara` model instantiation with real Qwen/V-JEPA checkpoints and real-component one-step training smoke tests now have a script entry point but still need to be run successfully in the full training environment. The current local `--instantiate` check reaches dependency loading and reports missing `qwen_vl_utils`.
 - The latent action head is currently a Stage-1 skeleton and still needs empirical validation, loss-weight tuning, and ablation against the token-conditioned flow baseline.
 - The MoE/router path is currently a Stage-2 scaffold and still needs full-train validation of the direct expert and per-expert action-loss posterior paths, resident-pool success evaluation, and closed-loop validation beyond server-side pool reuse.
 - Utility calibration currently validates action-loss utility labels, generic utility composition, a trainable utility-head interface, and loss surfaces; it does not yet supervise value/progress/uncertainty from latent-state or closed-loop evaluator labels.
