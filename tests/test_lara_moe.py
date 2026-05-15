@@ -543,6 +543,28 @@ class LatentActionMoETest(unittest.TestCase):
         self.assertGreaterEqual(float(output.balance_loss), 0.0)
         self.assertGreaterEqual(float(output.stickiness_loss), 0.0)
 
+    def test_inference_stickiness_biases_router_toward_previous_route(self):
+        torch.manual_seed(0)
+        moe = LatentActionMoE(
+            hidden_size=8,
+            num_experts=2,
+            top_k=1,
+            episode_pool_size=2,
+            expert_hidden_size=16,
+            router_hidden_size=12,
+            inference_stickiness_weight=1.0,
+        )
+        moe.eval()
+        for parameter in moe.chunk_router.parameters():
+            parameter.data.zero_()
+        conditioning_tokens = torch.randn(1, 4, 8)
+        previous_router_probs = torch.tensor([[0.1, 0.9]])
+
+        output = moe(conditioning_tokens, previous_router_probs=previous_router_probs)
+
+        self.assertEqual(output.active_mask.tolist(), [[False, True]])
+        self.assertEqual(output.router_probs.argmax(dim=-1).tolist(), [1])
+
     def test_forward_accepts_diversity_and_entropy_weights(self):
         torch.manual_seed(0)
         moe = LatentActionMoE(

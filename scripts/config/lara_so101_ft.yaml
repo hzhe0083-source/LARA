@@ -71,6 +71,7 @@ framework:
     lara_stickiness_loss_weight: 0.0
     lara_diversity_loss_weight: 0.0
     lara_entropy_loss_weight: 0.0
+    lara_inference_stickiness_weight: 0.0
     lara_use_direct_action_experts: false
     lara_use_direct_action_output: false
     lara_direct_expert_hidden_dim: 1024

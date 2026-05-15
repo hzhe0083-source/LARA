@@ -124,6 +124,7 @@ class ActionHeadAdapter(nn.Module):
                 posterior_temperature=action_cfg.get("lara_posterior_temperature", 1.0),
                 posterior_uniform_floor=action_cfg.get("lara_posterior_uniform_floor", 0.0),
                 posterior_top_r=action_cfg.get("lara_posterior_top_r", None),
+                inference_stickiness_weight=action_cfg.get("lara_inference_stickiness_weight", 0.0),
                 residual_scale=action_cfg.get("lara_expert_residual_scale", 0.1),
             )
             if self.use_lara_moe
@@ -641,11 +642,14 @@ class ActionHeadAdapter(nn.Module):
         latent_action_tokens: Optional[torch.Tensor] = None,
         initial_context_tokens: Optional[torch.Tensor] = None,
         pool_mask: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
+        previous_router_probs: Optional[torch.Tensor] = None,
+        return_aux: bool = False,
+    ) -> torch.Tensor | dict:
         if self.latent_action_head is not None:
             latent_action_tokens = self.latent_action_head.predict(embodied_action_tokens)
         conditioning_tokens = self._conditioning_tokens(embodied_action_tokens, latent_action_tokens)
         state_tensor = self._state_to_tensor(state, embodied_action_tokens)
+        moe_output = None
         if self.lara_moe is not None:
             initial_context_tokens = (
                 self._as_tensor(initial_context_tokens, device=conditioning_tokens.device, dtype=conditioning_tokens.dtype)
@@ -657,13 +661,39 @@ class ActionHeadAdapter(nn.Module):
                 if pool_mask is not None
                 else None
             )
+            previous_router_probs = (
+                self._as_tensor(previous_router_probs, device=conditioning_tokens.device, dtype=conditioning_tokens.dtype)
+                if previous_router_probs is not None
+                else None
+            )
             moe_output = self.lara_moe(
                 conditioning_tokens,
                 initial_context_tokens=initial_context_tokens,
                 pool_mask=pool_mask,
+                previous_router_probs=previous_router_probs,
             )
             if self.use_direct_action_output:
                 direct_expert_actions = self.direct_action_experts(conditioning_tokens, state=state_tensor)
-                return ActionChunkExpertBank.routed_actions(direct_expert_actions, moe_output.router_probs)
+                pred_actions = ActionChunkExpertBank.routed_actions(direct_expert_actions, moe_output.router_probs)
+                if return_aux:
+                    return {
+                        "actions": pred_actions,
+                        "router_probs": moe_output.router_probs,
+                        "pool_mask": moe_output.pool_mask,
+                        "active_mask": moe_output.active_mask,
+                    }
+                return pred_actions
             conditioning_tokens = moe_output.tokens
-        return self.action_model.predict_action(conditioning_tokens, state_tensor)
+        pred_actions = self.action_model.predict_action(conditioning_tokens, state_tensor)
+        if return_aux:
+            output = {"actions": pred_actions}
+            if moe_output is not None:
+                output.update(
+                    {
+                        "router_probs": moe_output.router_probs,
+                        "pool_mask": moe_output.pool_mask,
+                        "active_mask": moe_output.active_mask,
+                    }
+                )
+            return output
+        return pred_actions

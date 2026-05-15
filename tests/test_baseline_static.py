@@ -162,6 +162,8 @@ def test_optional_moe_router_stage_two_exists():
     assert "pool_target_probs" in moe_src
     assert "utility_scores" in moe_src
     assert "lara_use_utility_head" in adapter_src
+    assert "lara_inference_stickiness_weight" in adapter_src
+    assert "inference_stickiness_weight" in moe_src
     assert "route_quality_metrics" in adapter_src
     assert "moe_route_quality_" in adapter_src
     assert "utility_from_expert_losses" in adapter_src
@@ -179,8 +181,13 @@ def test_optional_moe_router_stage_two_exists():
     assert "pool_mask=pool_mask" in adapter_src
     assert "resident_pool_mask" in core_src
     assert '"resident_pool_mask"' in core_src
+    assert "previous_router_probs" in core_src
+    assert '"router_probs"' in core_src
+    assert '"active_expert_mask"' in core_src
     assert "self._session_state" in server_src
     assert "resident_pool_mask" in server_src
+    assert "previous_router_probs" in server_src
+    assert '"router_probs"' in server_src
     assert 'mtype == "reset"' in server_src
     assert "has_training_teacher = expert_action_losses is not None or latent_action_tokens is not None" in moe_src
     assert "episode_pool_size" in moe_src
@@ -217,6 +224,7 @@ def test_optional_moe_router_stage_two_exists():
     assert "lara_stickiness_loss_weight: 0.0" in config_src
     assert "lara_diversity_loss_weight: 0.0" in config_src
     assert "lara_entropy_loss_weight: 0.0" in config_src
+    assert "lara_inference_stickiness_weight: 0.0" in config_src
     assert "lara_use_direct_action_experts: false" in config_src
     assert "lara_use_direct_action_output: false" in config_src
     assert "lara_direct_expert_loss_weight: 1.0" in config_src
@@ -231,7 +239,7 @@ def test_optional_moe_router_stage_two_exists():
     assert "matched-compute rows, matched-resident rows, budget-match flags, Pareto frontier flags" in gap
     assert "training-time randomized resident-pool size" in gap
     assert "scripts/smoke_lara_real_components.py" in gap
-    assert "caches MoE `resident_pool_mask` values per `session_id`" in gap
+    assert "caches MoE `resident_pool_mask` and `router_probs` values per `session_id`" in gap
 
 
 def test_paper_gap_is_explicit():

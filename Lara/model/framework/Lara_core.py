@@ -145,6 +145,7 @@ class Lara(baseframework):
             include_embodied_tokens=True,
         )
         resident_pool_mask = kwargs.get("resident_pool_mask", None)
+        previous_router_probs = kwargs.get("previous_router_probs", None)
         resident_pool = None
 
         with torch.autocast("cuda", dtype=torch.float32):
@@ -154,12 +155,22 @@ class Lara(baseframework):
                     latent_action_tokens=qwen_context.action_tokens,
                 )
                 resident_pool_mask = resident_pool.mask
-            pred_actions = self.action_head.predict_action(
+            action_result = self.action_head.predict_action(
                 embodied_action_tokens=qwen_context.embodied_action_tokens,
                 latent_action_tokens=qwen_context.action_tokens,
                 state=state,
                 pool_mask=resident_pool_mask,
+                previous_router_probs=previous_router_probs,
+                return_aux=True,
             )
+        if isinstance(action_result, dict):
+            pred_actions = action_result["actions"]
+            router_probs = action_result.get("router_probs")
+            active_mask = action_result.get("active_mask")
+        else:
+            pred_actions = action_result
+            router_probs = None
+            active_mask = None
         pred_actions_np = pred_actions.detach().cpu().numpy()
 
         output = {
@@ -181,6 +192,10 @@ class Lara(baseframework):
             output["resident_pool_mask"] = resident_pool_tensor.detach().cpu().numpy()
         if resident_pool is not None:
             output["resident_pool_probs"] = resident_pool.probs.detach().cpu().numpy()
+        if router_probs is not None:
+            output["router_probs"] = router_probs.detach().cpu().numpy()
+        if active_mask is not None:
+            output["active_expert_mask"] = active_mask.detach().cpu().numpy()
         return output
 
     @property

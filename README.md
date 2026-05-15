@@ -29,7 +29,7 @@ Completed in code:
 Experimental scaffolding exists but is not complete or validated:
 
 - Stage-1 latent action head scaffold with posterior encoder, VQ codebook, optional code-usage regularization, context-only prior, and optional execution/prediction boundary-state transition loss (`use_latent_action_head: false`, `lara_use_transition_head: false` by default).
-- Stage-2 MoE/router scaffold with residual token experts, optional direct action-chunk experts, optional routed direct-expert action output, posterior responsibility from latent tokens or per-expert action reconstruction losses, optional posterior floor/top-r smoothing, LeRobot trajectory ids for episode-level resident pool targets, reusable episode-level resident pool masks, optional training-time randomized resident-pool size, chunk-level top-k routing inside the resident pool, optional balance/stickiness/expert-diversity/entropy stabilizers, and route-quality aggregation metrics (`use_lara_moe: false` by default).
+- Stage-2 MoE/router scaffold with residual token experts, optional direct action-chunk experts, optional routed direct-expert action output, posterior responsibility from latent tokens or per-expert action reconstruction losses, optional posterior floor/top-r smoothing, LeRobot trajectory ids for episode-level resident pool targets, reusable episode-level resident pool masks, optional training-time randomized resident-pool size, chunk-level top-k routing inside the resident pool, optional inference stickiness, optional balance/stickiness/expert-diversity/entropy stabilizers, and route-quality aggregation metrics (`use_lara_moe: false` by default).
 - Utility calibration scaffold with optional action-loss utility labels, an optional supervised route utility head, candidate value/progress/uncertainty/cost scoring helpers, centered utility regression, and pairwise ranking losses (`lara_utility_loss_weight: 0.0`, `lara_utility_head_loss_weight: 0.0`, `lara_use_action_loss_utility: false`, `lara_use_utility_head: false` by default).
 - Action-head MoE diagnostics include `metric/moe_route_quality_*` scalars for posterior/utility ranking, top-k consistency, route regret, and retained probability mass when MoE is enabled.
 - Matched-compute and matched-resident protocol helpers for subset-retention success aggregation, active/resident budget checks, result-table rows, and compute-success Pareto flags.
@@ -186,9 +186,10 @@ During inference, `predict_action` returns:
 - `normalized_actions`: full 60-frame prediction.
 - `execution_normalized_actions`: first 10 frames for closed-loop execution.
 - `resident_pool_mask`: when MoE routing is enabled and no mask is supplied, the episode-level resident expert pool selected for reuse on later chunks.
+- `router_probs` and `active_expert_mask`: when MoE routing is enabled, the chunk-level route distribution and selected active experts.
 
 For MoE experiments, pass the returned `resident_pool_mask` back into later `predict_action` calls for the same episode so the chunk router chooses sparse experts inside a stable episode pool.
-The websocket deployment server also caches this mask by `session_id` and clears it on a `reset` request, so closed-loop clients can reuse an episode pool without manually echoing it on every inference call.
+The websocket deployment server also caches `resident_pool_mask` and `router_probs` by `session_id`, feeds cached router probabilities back as `previous_router_probs`, and clears the cache on a `reset` request. This lets closed-loop clients reuse an episode pool and, when `lara_inference_stickiness_weight > 0`, bias chunk-level routing toward the previous route without manually echoing those tensors on every inference call.
 
 ## Training
 

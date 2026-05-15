@@ -73,6 +73,7 @@ class FakeActionHead(torch.nn.Module):
         self.context_hidden_size = context_hidden_size
         self.loss_scale = torch.nn.Parameter(torch.tensor(1.0))
         self.calls = []
+        self.lara_moe = None
 
     def forward(
         self,
@@ -110,6 +111,36 @@ class FakeActionHead(torch.nn.Module):
             "moe_route_regret": torch.tensor(0.5),
             "moe_utility_scores": torch.ones(2, 3),
         }
+
+    def predict_action(
+        self,
+        embodied_action_tokens,
+        latent_action_tokens,
+        state=None,
+        pool_mask=None,
+        previous_router_probs=None,
+        return_aux=False,
+    ):
+        self.calls.append(
+            {
+                "predict": True,
+                "embodied_action_tokens": embodied_action_tokens,
+                "latent_action_tokens": latent_action_tokens,
+                "state": state,
+                "pool_mask": pool_mask,
+                "previous_router_probs": previous_router_probs,
+                "return_aux": return_aux,
+            }
+        )
+        batch_size = embodied_action_tokens.shape[0]
+        actions = torch.ones(batch_size, 3, 2)
+        if return_aux:
+            return {
+                "actions": actions,
+                "router_probs": torch.full((batch_size, 2), 0.5),
+                "active_mask": torch.tensor([[True, False]]).expand(batch_size, -1),
+            }
+        return actions
 
 
 class LaraCoreSmokeTest(unittest.TestCase):
@@ -209,6 +240,33 @@ class LaraCoreSmokeTest(unittest.TestCase):
 
         self.assertIsNotNone(model.action_head.loss_scale.grad)
         self.assertFalse(torch.allclose(model.action_head.loss_scale.detach(), before))
+
+    def test_predict_action_passes_previous_router_probs_and_returns_route_aux(self):
+        config = tiny_framework_config()
+        with (
+            patch.object(Lara_core, "QwenActionTokenizer", FakeQwen),
+            patch.object(Lara_core, "VJ2WorldModel", FakeVJ2),
+            patch.object(Lara_core, "ActionHeadAdapter", FakeActionHead),
+        ):
+            model = Lara_core.Lara(config=config)
+
+        previous_router_probs = np.array([[0.8, 0.2]], dtype=np.float32)
+
+        output = model.predict_action(
+            batch_images=[["image-0"]],
+            instructions=["pick"],
+            state=[np.ones((1, 3), dtype=np.float32)],
+            previous_router_probs=previous_router_probs,
+        )
+
+        action_call = model.action_head.calls[0]
+        self.assertTrue(action_call["predict"])
+        self.assertTrue(action_call["return_aux"])
+        self.assertTrue(np.all(action_call["previous_router_probs"] == previous_router_probs))
+        self.assertEqual(output["normalized_actions"].shape, (1, 3, 2))
+        self.assertEqual(output["execution_normalized_actions"].shape, (1, 1, 2))
+        self.assertTrue(np.all(output["router_probs"] == 0.5))
+        self.assertTrue(np.all(output["active_expert_mask"] == np.array([[True, False]])))
 
 
 if __name__ == "__main__":

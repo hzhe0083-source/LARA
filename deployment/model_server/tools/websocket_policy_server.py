@@ -129,12 +129,17 @@ class WebsocketPolicyServer:
                 session = self._session_state.setdefault(session_id, {})
                 if "resident_pool_mask" not in policy_payload and "resident_pool_mask" in session:
                     policy_payload["resident_pool_mask"] = session["resident_pool_mask"]
+                if "previous_router_probs" not in policy_payload and "router_probs" in session:
+                    policy_payload["previous_router_probs"] = session["router_probs"]
                 policy_payload["batch_images"] = image_tools.to_pil_preserve(policy_payload["batch_images"])
                 ouput_dict = self._policy.predict_action(**policy_payload)
-                if isinstance(ouput_dict, dict) and "resident_pool_mask" in ouput_dict:
-                    session["resident_pool_mask"] = ouput_dict["resident_pool_mask"]
+                if isinstance(ouput_dict, dict):
+                    if "resident_pool_mask" in ouput_dict:
+                        session["resident_pool_mask"] = ouput_dict["resident_pool_mask"]
                     if "resident_pool_probs" in ouput_dict:
                         session["resident_pool_probs"] = ouput_dict["resident_pool_probs"]
+                    if "router_probs" in ouput_dict:
+                        session["router_probs"] = ouput_dict["router_probs"]
             except Exception as e:
                 logging.exception("Policy inference error (request_id=%s)", req_id)
                 logging.exception(e)

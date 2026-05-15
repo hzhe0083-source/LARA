@@ -82,6 +82,40 @@ class ActionHeadAdapterSmokeTest(unittest.TestCase):
         self.assertEqual(pred_actions.shape, (1, 3, 2))
         self.assertTrue(torch.isfinite(pred_actions).all().item())
 
+    def test_predict_action_can_return_moe_route_aux_for_closed_loop_cache(self):
+        torch.manual_seed(0)
+        adapter = ActionHeadAdapter(
+            config=tiny_action_config(
+                use_lara_moe=True,
+                lara_num_experts=3,
+                lara_top_k=1,
+                lara_episode_pool_size=2,
+                lara_expert_hidden_dim=16,
+                lara_router_hidden_dim=16,
+            ),
+            context_hidden_size=16,
+        )
+        adapter.eval()
+        embodied_tokens = torch.randn(1, 2, 16)
+        latent_tokens = torch.randn(1, 1, 16)
+        state = torch.randn(1, 1, 3)
+        pool_mask = torch.tensor([[True, True, False]])
+        previous_router_probs = torch.tensor([[0.5, 0.5, 0.0]])
+
+        output = adapter.predict_action(
+            embodied_action_tokens=embodied_tokens,
+            latent_action_tokens=latent_tokens,
+            state=state,
+            pool_mask=pool_mask,
+            previous_router_probs=previous_router_probs,
+            return_aux=True,
+        )
+
+        self.assertEqual(output["actions"].shape, (1, 3, 2))
+        self.assertEqual(output["router_probs"].shape, (1, 3))
+        self.assertTrue(torch.equal(output["pool_mask"], pool_mask))
+        self.assertTrue(torch.all(output["active_mask"] <= pool_mask))
+
     def test_future_actions_must_match_configured_horizon(self):
         adapter = ActionHeadAdapter(config=tiny_action_config(), context_hidden_size=16)
         embodied_tokens = torch.randn(1, 2, 16)

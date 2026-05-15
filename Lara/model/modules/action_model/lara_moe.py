@@ -909,6 +909,7 @@ class LatentActionMoE(nn.Module):
         posterior_temperature: float = 1.0,
         posterior_uniform_floor: float = 0.0,
         posterior_top_r: Optional[int] = None,
+        inference_stickiness_weight: float = 0.0,
         residual_scale: float = 0.1,
     ):
         super().__init__()
@@ -936,6 +937,9 @@ class LatentActionMoE(nn.Module):
         self.posterior_temperature = posterior_temperature
         self.posterior_uniform_floor = posterior_uniform_floor
         self.posterior_top_r = posterior_top_r
+        if inference_stickiness_weight < 0:
+            raise ValueError("inference_stickiness_weight must be non-negative")
+        self.inference_stickiness_weight = inference_stickiness_weight
         self.utility_head = (
             RouteUtilityHead(
                 hidden_size=hidden_size,
@@ -1085,6 +1089,16 @@ class LatentActionMoE(nn.Module):
             pool_mask=pool_mask,
         )
         router_logits = self.chunk_router(conditioning_tokens)
+        if (not self.training) and previous_router_probs is not None and self.inference_stickiness_weight > 0:
+            if previous_router_probs.shape != router_logits.shape:
+                raise ValueError(
+                    f"previous_router_probs must have shape {tuple(router_logits.shape)}, "
+                    f"got {tuple(previous_router_probs.shape)}"
+                )
+            previous_log_probs = torch.log(
+                previous_router_probs.to(device=router_logits.device, dtype=router_logits.dtype).clamp_min(1e-8)
+            )
+            router_logits = router_logits + self.inference_stickiness_weight * previous_log_probs
         active_mask = topk_mask(router_logits, top_k=self.top_k, allowed_mask=pool_mask)
         router_probs = masked_softmax(router_logits, active_mask)
 
