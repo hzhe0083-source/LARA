@@ -14,6 +14,8 @@ class MoEConditionerOutput:
     pool_loss: torch.Tensor
     utility_loss: torch.Tensor
     utility_rank_loss: torch.Tensor
+    balance_loss: torch.Tensor
+    stickiness_loss: torch.Tensor
     utility_calibration_error: torch.Tensor
     router_entropy: torch.Tensor
     posterior_entropy: torch.Tensor
@@ -130,6 +132,23 @@ def route_diagnostics(
         "route_top1_match": route_top1_match,
         "route_regret": route_regret,
     }
+
+
+def uniform_balance_loss(probs: torch.Tensor) -> torch.Tensor:
+    if probs.ndim != 2:
+        raise ValueError(f"Expected probs [B, M], got {tuple(probs.shape)}")
+    mean_probs = probs.mean(dim=0).clamp_min(1e-8)
+    uniform = torch.full_like(mean_probs, 1.0 / probs.shape[-1])
+    return F.kl_div(torch.log(mean_probs), uniform, reduction="sum")
+
+
+def route_stickiness_loss(router_probs: torch.Tensor, previous_router_probs: torch.Tensor) -> torch.Tensor:
+    if router_probs.shape != previous_router_probs.shape:
+        raise ValueError(
+            f"previous_router_probs must have shape {tuple(router_probs.shape)}, "
+            f"got {tuple(previous_router_probs.shape)}"
+        )
+    return torch.mean(torch.abs(router_probs - previous_router_probs.to(router_probs.device, router_probs.dtype)))
 
 
 def aggregate_episode_responsibilities(
@@ -375,6 +394,8 @@ class LatentActionMoE(nn.Module):
         pool_loss_weight: float = 1.0,
         utility_loss_weight: float = 0.0,
         utility_rank_loss_weight: float = 0.0,
+        balance_loss_weight: float = 0.0,
+        stickiness_loss_weight: float = 0.0,
         posterior_temperature: float = 1.0,
         residual_scale: float = 0.1,
     ):
@@ -388,6 +409,8 @@ class LatentActionMoE(nn.Module):
         self.pool_loss_weight = pool_loss_weight
         self.utility_loss_weight = utility_loss_weight
         self.utility_rank_loss_weight = utility_rank_loss_weight
+        self.balance_loss_weight = balance_loss_weight
+        self.stickiness_loss_weight = stickiness_loss_weight
         self.posterior_temperature = posterior_temperature
         self.experts = nn.ModuleList(
             [
@@ -471,6 +494,7 @@ class LatentActionMoE(nn.Module):
         pool_target_probs: Optional[torch.Tensor] = None,
         utility_scores: Optional[torch.Tensor] = None,
         utility_candidate_mask: Optional[torch.Tensor] = None,
+        previous_router_probs: Optional[torch.Tensor] = None,
     ) -> MoEConditionerOutput:
         self._validate_inputs(conditioning_tokens, latent_action_tokens)
         if initial_context_tokens is not None and initial_context_tokens.shape[0] != conditioning_tokens.shape[0]:
@@ -529,10 +553,18 @@ class LatentActionMoE(nn.Module):
                 candidate_mask=utility_candidate_mask,
                 rank_loss_weight=self.utility_rank_loss_weight,
             )
+        balance_loss = uniform_balance_loss(router_probs) + uniform_balance_loss(pool_probs)
+        stickiness_loss = (
+            route_stickiness_loss(router_probs, previous_router_probs)
+            if previous_router_probs is not None
+            else router_logits.new_zeros(())
+        )
         total_loss = (
             self.router_loss_weight * route_loss
             + self.pool_loss_weight * pool_loss
             + self.utility_loss_weight * utility_loss
+            + self.balance_loss_weight * balance_loss
+            + self.stickiness_loss_weight * stickiness_loss
         )
         diagnostics = route_diagnostics(
             router_probs=router_probs.detach(),
@@ -547,6 +579,8 @@ class LatentActionMoE(nn.Module):
             pool_loss=pool_loss.detach(),
             utility_loss=utility_loss.detach(),
             utility_rank_loss=utility_rank_loss.detach(),
+            balance_loss=balance_loss.detach(),
+            stickiness_loss=stickiness_loss.detach(),
             utility_calibration_error=utility_calibration_error.detach(),
             router_entropy=entropy(router_probs).detach(),
             posterior_entropy=entropy(posterior_probs).detach(),

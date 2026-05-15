@@ -9,6 +9,8 @@ from Lara.model.modules.action_model.lara_moe import (
     centered_utility_targets,
     masked_topk_softmax,
     posterior_from_expert_losses,
+    route_stickiness_loss,
+    uniform_balance_loss,
     utility_calibration_objective,
 )
 
@@ -255,6 +257,51 @@ class LatentActionMoETest(unittest.TestCase):
         self.assertEqual(pred_actions.shape, (2, 3, 4, 2))
         self.assertEqual(losses.shape, (2, 3))
         self.assertGreater(float(weighted_loss.detach()), 0.0)
+
+    def test_balance_and_stickiness_losses(self):
+        balanced = torch.tensor(
+            [
+                [0.5, 0.5],
+                [0.5, 0.5],
+            ]
+        )
+        collapsed = torch.tensor(
+            [
+                [1.0, 0.0],
+                [1.0, 0.0],
+            ]
+        )
+        previous = torch.tensor(
+            [
+                [0.25, 0.75],
+                [0.75, 0.25],
+            ]
+        )
+
+        self.assertLess(float(uniform_balance_loss(balanced)), float(uniform_balance_loss(collapsed)))
+        self.assertGreater(float(route_stickiness_loss(balanced, previous)), 0.0)
+
+    def test_forward_accepts_balance_and_stickiness_weights(self):
+        torch.manual_seed(0)
+        moe = LatentActionMoE(
+            hidden_size=8,
+            num_experts=3,
+            top_k=2,
+            episode_pool_size=3,
+            expert_hidden_size=16,
+            router_hidden_size=12,
+            balance_loss_weight=0.1,
+            stickiness_loss_weight=0.2,
+        )
+        conditioning_tokens = torch.randn(2, 4, 8)
+        previous_router_probs = torch.full((2, 3), 1.0 / 3.0)
+
+        output = moe(conditioning_tokens, previous_router_probs=previous_router_probs)
+
+        expected = 0.1 * output.balance_loss + 0.2 * output.stickiness_loss
+        self.assertTrue(torch.allclose(output.loss, expected))
+        self.assertGreaterEqual(float(output.balance_loss), 0.0)
+        self.assertGreaterEqual(float(output.stickiness_loss), 0.0)
 
 
 if __name__ == "__main__":

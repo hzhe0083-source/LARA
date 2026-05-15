@@ -16,7 +16,7 @@ This repository currently implements the SO101 VLA-JEPA action baseline, not the
 These files exist to make the next implementation steps concrete, but they are not complete LARA components and are disabled by default:
 
 - Stage-1 latent action head scaffold: posterior encoder, VQ codebook, and context-only prior (`use_latent_action_head: false`).
-- Stage-2 MoE/router scaffold: residual token experts, optional direct action-chunk experts, posterior responsibility from latent tokens or per-expert action reconstruction losses, episode-level resident pool targets from aggregated chunk responsibility, chunk-level top-k routing constrained to the resident pool, posterior-to-router distillation losses, and route collapse diagnostics (`use_lara_moe: false`).
+- Stage-2 MoE/router scaffold: residual token experts, optional direct action-chunk experts, posterior responsibility from latent tokens or per-expert action reconstruction losses, episode-level resident pool targets from aggregated chunk responsibility, chunk-level top-k routing constrained to the resident pool, posterior-to-router distillation losses, balance/stickiness stabilizers, and route collapse diagnostics (`use_lara_moe: false`).
 - Utility calibration scaffold: centered utility regression and pairwise ranking losses for externally supplied candidate route utilities (`lara_utility_loss_weight: 0.0`).
 
 ## Missing Paper Components

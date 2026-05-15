@@ -81,6 +81,8 @@ def test_optional_moe_router_stage_two_exists():
     assert "def masked_kl_div" in moe_src
     assert "def posterior_from_expert_losses" in moe_src
     assert "def route_diagnostics" in moe_src
+    assert "def uniform_balance_loss" in moe_src
+    assert "def route_stickiness_loss" in moe_src
     assert "def aggregate_episode_responsibilities" in moe_src
     assert "def utility_calibration_objective" in moe_src
     assert "expert_action_losses" in moe_src
@@ -103,12 +105,16 @@ def test_optional_moe_router_stage_two_exists():
     assert "use_lara_moe" in adapter_src
     assert "moe_router_loss" in adapter_src
     assert "moe_pool_distill_loss" in adapter_src
+    assert "moe_balance_loss" in adapter_src
+    assert "moe_stickiness_loss" in adapter_src
     assert "moe_dead_expert_ratio" in adapter_src
     assert "moe_route_regret" in adapter_src
     assert "use_lara_moe: false" in config_src
     assert "lara_episode_pool_size: 4" in config_src
     assert "lara_utility_loss_weight: 0.0" in config_src
     assert "lara_utility_rank_loss_weight: 0.0" in config_src
+    assert "lara_balance_loss_weight: 0.0" in config_src
+    assert "lara_stickiness_loss_weight: 0.0" in config_src
     assert "lara_use_direct_action_experts: false" in config_src
     assert "lara_direct_expert_loss_weight: 1.0" in config_src
     assert "lara_posterior_temperature: 1.0" in config_src

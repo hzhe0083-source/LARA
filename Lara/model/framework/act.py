@@ -79,6 +79,8 @@ class ActionHeadAdapter(nn.Module):
                 pool_loss_weight=action_cfg.get("lara_pool_loss_weight", 1.0),
                 utility_loss_weight=action_cfg.get("lara_utility_loss_weight", 0.0),
                 utility_rank_loss_weight=action_cfg.get("lara_utility_rank_loss_weight", 0.0),
+                balance_loss_weight=action_cfg.get("lara_balance_loss_weight", 0.0),
+                stickiness_loss_weight=action_cfg.get("lara_stickiness_loss_weight", 0.0),
                 posterior_temperature=action_cfg.get("lara_posterior_temperature", 1.0),
                 residual_scale=action_cfg.get("lara_expert_residual_scale", 0.1),
             )
@@ -197,6 +199,7 @@ class ActionHeadAdapter(nn.Module):
         trajectory_ids=None,
         utility_scores=None,
         utility_candidate_mask=None,
+        previous_router_probs=None,
         latent_action_tokens: Optional[torch.Tensor] = None,
         return_aux: bool = False,
     ):
@@ -255,6 +258,11 @@ class ActionHeadAdapter(nn.Module):
                 if utility_candidate_mask is not None
                 else None
             )
+            previous_router_probs = (
+                self._as_tensor(previous_router_probs, device=conditioning_tokens.device, dtype=conditioning_tokens.dtype)
+                if previous_router_probs is not None
+                else None
+            )
             moe_output = self.lara_moe(
                 conditioning_tokens,
                 latent_action_tokens=latent_action_tokens,
@@ -262,6 +270,7 @@ class ActionHeadAdapter(nn.Module):
                 pool_target_probs=self._pool_target_probs(expert_action_losses, trajectory_ids),
                 utility_scores=utility_scores,
                 utility_candidate_mask=utility_candidate_mask,
+                previous_router_probs=previous_router_probs,
             )
             conditioning_tokens = moe_output.tokens
             aux_losses.update(
@@ -271,6 +280,8 @@ class ActionHeadAdapter(nn.Module):
                     "moe_pool_distill_loss": moe_output.pool_loss,
                     "moe_utility_loss": moe_output.utility_loss,
                     "moe_utility_rank_loss": moe_output.utility_rank_loss,
+                    "moe_balance_loss": moe_output.balance_loss,
+                    "moe_stickiness_loss": moe_output.stickiness_loss,
                     "moe_utility_calibration_error": moe_output.utility_calibration_error,
                     "moe_router_entropy": moe_output.router_entropy,
                     "moe_posterior_entropy": moe_output.posterior_entropy,
