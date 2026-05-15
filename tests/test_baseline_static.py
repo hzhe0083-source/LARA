@@ -39,9 +39,11 @@ def test_so101_batches_expose_future_actions():
     dataset_src = read("Lara/dataloader/gr00t_lerobot/datasets.py")
     core_src = read("Lara/model/framework/Lara_core.py")
     assert "future_actions=action" in dataset_src
+    assert 'return_dict["current_state"] = state[0:1]' in dataset_src
     assert "trajectory_id=trajectory_name" in dataset_src
     assert "base_index=step" in dataset_src
     assert '"future_actions" if "future_actions" in examples[0] else "action"' in core_src
+    assert '"current_state" if "current_state" in examples[0] else "state"' in core_src
     assert 'trajectory_ids = [example["trajectory_id"] for example in examples] if "trajectory_id" in examples[0] else None' in core_src
     assert "trajectory_ids=trajectory_ids" in core_src
 

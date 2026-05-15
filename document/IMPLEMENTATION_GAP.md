@@ -34,7 +34,7 @@ These files exist to make the next implementation steps concrete, but they are n
 - Qwen latent/embodied special token counts are checked per sample before hidden-state reshaping and covered by a lightweight unit test.
 - Flow-matching timestep buckets are clamped to the valid range.
 - `ActionHeadAdapter` has a dummy-batch forward/predict smoke test for basic loss and output shape.
-- SO101 batches now expose `future_actions` explicitly, with `action` retained as a compatibility alias.
+- SO101 batches now expose `future_actions` and `current_state` explicitly, with `action` and `state` retained as compatibility aliases.
 - Action labels remain fp32 in the adapter.
 - Static pytest coverage was added for the baseline guardrails in `tests/test_baseline_static.py`.
 - Stage-1 latent action head code was added behind `use_latent_action_head`; it is not yet validated in a full training run.
@@ -58,7 +58,7 @@ These files exist to make the next implementation steps concrete, but they are n
 ## Suggested Implementation Order
 
 1. Add full-framework smoke tests for real Qwen/V-JEPA integration and one fake-batch train step.
-2. Make action batches explicit: `future_actions`, optional `past_actions`, and `current_state`.
+2. Add optional `past_actions` when a dataset needs history; `future_actions` and `current_state` are explicit for SO101.
 3. Validate and tune the optional latent-action posterior/codebook/prior path.
 4. Validate the optional MoE/router path with real trajectory-id batches and route-quality diagnostics.
 5. Add complete router distillation/utility calibration losses.

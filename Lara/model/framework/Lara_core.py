@@ -48,7 +48,8 @@ class Lara(baseframework):
         instructions = [example["lang"] for example in examples]
         action_key = "future_actions" if "future_actions" in examples[0] else "action"
         actions = [example[action_key] for example in examples] if action_key in examples[0] else None
-        state = [example["state"] for example in examples] if "state" in examples[0] else None
+        state_key = "current_state" if "current_state" in examples[0] else "state"
+        state = [example[state_key] for example in examples] if state_key in examples[0] else None
         trajectory_ids = [example["trajectory_id"] for example in examples] if "trajectory_id" in examples[0] else None
 
         if actions is not None:

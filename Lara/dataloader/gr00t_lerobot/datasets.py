@@ -1630,6 +1630,7 @@ class LeRobotMixtureDataset(Dataset):
                         state.append(data[state_key])
                     state = np.concatenate(state, axis=1).astype(np.float16)
                     return_dict["state"] = state[0:1]
+                    return_dict["current_state"] = state[0:1]
                 #print(videos[0].shape) #[horizon, H, W, 3]
                 #print(action.shape) #[horizon, action_dim]
                 #print(images[0]) #PIL.Image
@@ -2130,4 +2131,3 @@ class LeRobotMixtureDataset(Dataset):
                 dataset.set_transforms_metadata(self.merged_metadata[dataset.tag])
         
         print(f"Applied cached statistics for {len(self.merged_metadata)} embodiment tags.")
-

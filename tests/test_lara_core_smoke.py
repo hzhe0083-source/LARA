@@ -114,6 +114,7 @@ class LaraCoreSmokeTest(unittest.TestCase):
                 "action": np.ones((3, 2), dtype=np.float32),
                 "future_actions": np.ones((3, 2), dtype=np.float32) * 5,
                 "state": np.ones((1, 3), dtype=np.float32),
+                "current_state": np.ones((1, 3), dtype=np.float32) * 9,
                 "trajectory_id": 11,
             },
             {
@@ -123,6 +124,7 @@ class LaraCoreSmokeTest(unittest.TestCase):
                 "action": np.ones((3, 2), dtype=np.float32) * 2,
                 "future_actions": np.ones((3, 2), dtype=np.float32) * 7,
                 "state": np.ones((1, 3), dtype=np.float32) * 2,
+                "current_state": np.ones((1, 3), dtype=np.float32) * 8,
                 "trajectory_id": 12,
             },
         ]
@@ -140,6 +142,8 @@ class LaraCoreSmokeTest(unittest.TestCase):
         self.assertTrue(action_call["return_aux"])
         self.assertTrue(np.all(action_call["actions"][0] == examples[0]["future_actions"]))
         self.assertTrue(np.all(action_call["actions"][1] == examples[1]["future_actions"]))
+        self.assertTrue(np.all(action_call["state"][0] == examples[0]["current_state"]))
+        self.assertTrue(np.all(action_call["state"][1] == examples[1]["current_state"]))
 
     def test_fake_batch_loss_can_update_action_head_parameter(self):
         config = tiny_framework_config()
@@ -156,7 +160,7 @@ class LaraCoreSmokeTest(unittest.TestCase):
                 "video": np.zeros((1, 2, 2, 2, 3), dtype=np.uint8),
                 "lang": "pick",
                 "future_actions": np.ones((3, 2), dtype=np.float32),
-                "state": np.ones((1, 3), dtype=np.float32),
+                "current_state": np.ones((1, 3), dtype=np.float32),
                 "trajectory_id": 11,
             }
         ]
