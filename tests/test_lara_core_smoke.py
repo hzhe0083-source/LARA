@@ -146,6 +146,7 @@ class FakeActionHead(torch.nn.Module):
         state=None,
         pool_mask=None,
         previous_router_probs=None,
+        forced_router_probs=None,
         return_aux=False,
     ):
         self.calls.append(
@@ -156,6 +157,7 @@ class FakeActionHead(torch.nn.Module):
                 "state": state,
                 "pool_mask": pool_mask,
                 "previous_router_probs": previous_router_probs,
+                "forced_router_probs": forced_router_probs,
                 "return_aux": return_aux,
             }
         )
@@ -368,6 +370,37 @@ class LaraCoreSmokeTest(unittest.TestCase):
         self.assertEqual(output["execution_normalized_actions"].shape, (1, 1, 2))
         self.assertTrue(np.all(output["router_probs"] == 0.5))
         self.assertTrue(np.all(output["active_expert_mask"] == np.array([[True, False]])))
+
+    def test_predict_action_can_force_single_expert_for_counterfactual_eval(self):
+        config = tiny_framework_config()
+        config.framework.action_model.use_lara_moe = True
+        with (
+            patch.object(Lara_core, "QwenActionTokenizer", FakeQwen),
+            patch.object(Lara_core, "VJ2WorldModel", FakeVJ2),
+            patch.object(Lara_core, "ActionHeadAdapter", FakeActionHead),
+        ):
+            model = Lara_core.Lara(config=config)
+        model.action_head.lara_moe = SimpleNamespace(num_experts=3)
+
+        output = model.predict_action(
+            batch_images=[["image-0"], ["image-1"]],
+            instructions=["pick", "place"],
+            state=np.zeros((2, 1, 3), dtype=np.float32),
+            forced_expert_id=[1, 2],
+        )
+
+        expected_forced = np.array(
+            [
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+        action_call = model.action_head.calls[0]
+        self.assertTrue(np.array_equal(action_call["forced_router_probs"], expected_forced))
+        self.assertTrue(np.array_equal(action_call["pool_mask"], expected_forced.astype(bool)))
+        self.assertTrue(np.array_equal(output["forced_router_probs"], expected_forced))
+        self.assertTrue(np.array_equal(output["forced_expert_id"], np.array([1, 2])))
 
 
 if __name__ == "__main__":

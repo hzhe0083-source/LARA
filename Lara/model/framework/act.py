@@ -918,6 +918,7 @@ class ActionHeadAdapter(nn.Module):
         initial_context_tokens: Optional[torch.Tensor] = None,
         pool_mask: Optional[torch.Tensor] = None,
         previous_router_probs: Optional[torch.Tensor] = None,
+        forced_router_probs: Optional[torch.Tensor] = None,
         return_aux: bool = False,
     ) -> torch.Tensor | dict:
         if self.latent_action_head is not None:
@@ -941,11 +942,17 @@ class ActionHeadAdapter(nn.Module):
                 if previous_router_probs is not None
                 else None
             )
+            forced_router_probs = (
+                self._as_tensor(forced_router_probs, device=conditioning_tokens.device, dtype=conditioning_tokens.dtype)
+                if forced_router_probs is not None
+                else None
+            )
             moe_output = self.lara_moe(
                 conditioning_tokens,
                 initial_context_tokens=initial_context_tokens,
                 pool_mask=pool_mask,
                 previous_router_probs=previous_router_probs,
+                forced_router_probs=forced_router_probs,
             )
             if self.use_direct_action_output:
                 direct_expert_actions = self.direct_action_experts(conditioning_tokens, state=state_tensor)

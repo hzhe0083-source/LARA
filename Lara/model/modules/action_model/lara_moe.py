@@ -97,6 +97,27 @@ def renormalize_probs(probs: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     return masked_probs / denom
 
 
+def forced_router_probs_from_scores(
+    forced_router_probs: torch.Tensor,
+    pool_mask: Optional[torch.Tensor] = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if forced_router_probs.ndim != 2:
+        raise ValueError(f"forced_router_probs must have shape [B, M], got {tuple(forced_router_probs.shape)}")
+    if not torch.isfinite(forced_router_probs).all() or torch.any(forced_router_probs < 0):
+        raise ValueError("forced_router_probs must contain finite non-negative values")
+    active_mask = forced_router_probs > 0
+    if not torch.all(active_mask.any(dim=-1)):
+        raise ValueError("forced_router_probs must select at least one expert per sample")
+    if pool_mask is not None:
+        pool_mask = _validate_expert_mask(pool_mask, forced_router_probs, "pool_mask")
+        if torch.any(active_mask & ~pool_mask):
+            raise ValueError("forced_router_probs selects experts outside pool_mask")
+        forced_router_probs = forced_router_probs.masked_fill(~pool_mask, 0.0)
+        active_mask = forced_router_probs > 0
+    router_probs = forced_router_probs / forced_router_probs.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+    return router_probs, active_mask
+
+
 def masked_kl_div(student_logits: torch.Tensor, teacher_probs: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     teacher_probs = renormalize_probs(teacher_probs, mask)
     student_probs = masked_softmax(student_logits, mask)
@@ -1249,6 +1270,7 @@ class LatentActionMoE(nn.Module):
         pool_mask: Optional[torch.Tensor] = None,
         expert_action_losses: Optional[torch.Tensor] = None,
         pool_target_probs: Optional[torch.Tensor] = None,
+        forced_router_probs: Optional[torch.Tensor] = None,
         utility_scores: Optional[torch.Tensor] = None,
         utility_candidate_mask: Optional[torch.Tensor] = None,
         utility_cost_scores: Optional[torch.Tensor] = None,
@@ -1264,6 +1286,19 @@ class LatentActionMoE(nn.Module):
                 "initial_context_tokens batch size must match conditioning_tokens: "
                 f"{initial_context_tokens.shape[0]} != {conditioning_tokens.shape[0]}"
             )
+
+        if forced_router_probs is not None:
+            if forced_router_probs.shape != (conditioning_tokens.shape[0], self.num_experts):
+                raise ValueError(
+                    "forced_router_probs must have shape "
+                    f"({conditioning_tokens.shape[0]}, {self.num_experts}), got {tuple(forced_router_probs.shape)}"
+                )
+            forced_router_probs = forced_router_probs.to(
+                device=conditioning_tokens.device,
+                dtype=conditioning_tokens.dtype,
+            )
+            if pool_mask is None:
+                pool_mask = forced_router_probs > 0
 
         pool_logits, pool_probs, pool_mask = self._resident_pool(
             conditioning_tokens=conditioning_tokens,
@@ -1281,8 +1316,11 @@ class LatentActionMoE(nn.Module):
                 previous_router_probs.to(device=router_logits.device, dtype=router_logits.dtype).clamp_min(1e-8)
             )
             router_logits = router_logits + self.inference_stickiness_weight * previous_log_probs
-        active_mask = topk_mask(router_logits, top_k=self.top_k, allowed_mask=pool_mask)
-        router_probs = masked_softmax(router_logits, active_mask)
+        if forced_router_probs is None:
+            active_mask = topk_mask(router_logits, top_k=self.top_k, allowed_mask=pool_mask)
+            router_probs = masked_softmax(router_logits, active_mask)
+        else:
+            router_probs, active_mask = forced_router_probs_from_scores(forced_router_probs, pool_mask=pool_mask)
 
         if expert_action_losses is not None:
             if expert_action_losses.shape != router_logits.shape:

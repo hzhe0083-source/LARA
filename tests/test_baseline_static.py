@@ -201,6 +201,7 @@ def test_optional_moe_router_stage_two_exists():
     assert "def route_regret_from_scores" in moe_src
     assert "def route_quality_metrics" in moe_src
     assert "def sparse_route_budget" in moe_src
+    assert "def forced_router_probs_from_scores" in moe_src
     assert "def subset_retention_success_curve" in protocol_src
     assert "def subset_retention_rows" in protocol_src
     assert "def matched_compute_row" in protocol_src
@@ -298,6 +299,8 @@ def test_optional_moe_router_stage_two_exists():
     assert "resident_pool_mask" in core_src
     assert '"resident_pool_mask"' in core_src
     assert "previous_router_probs" in core_src
+    assert "forced_expert_id" in core_src
+    assert "forced_router_probs" in core_src
     assert '"router_probs"' in core_src
     assert '"active_expert_mask"' in core_src
     assert "self._session_state" in server_src
@@ -312,6 +315,7 @@ def test_optional_moe_router_stage_two_exists():
     assert "router_probs_sequence" in server_src
     assert "active_mask_sequence" in server_src
     assert "pool_mask_sequence" in server_src
+    assert "forced_expert_id_sequence" in server_src
     assert "latency_ms_sequence" in server_src
     assert "vram_mb_sequence" in server_src
     assert "reset_peak_memory_stats" in server_src
@@ -324,6 +328,7 @@ def test_optional_moe_router_stage_two_exists():
     assert "def _pool_budget_features" in moe_src
     assert "def _pool_size_from_mask" in moe_src
     assert "active_mask = topk_mask(router_logits, top_k=self.top_k, allowed_mask=pool_mask)" in moe_src
+    assert "router_probs, active_mask = forced_router_probs_from_scores" in moe_src
     assert "pool_loss_weight" in moe_src
     assert "posterior_temperature" in moe_src
     assert "posterior_uniform_floor" in moe_src

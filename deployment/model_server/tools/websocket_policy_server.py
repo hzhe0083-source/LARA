@@ -318,6 +318,7 @@ class WebsocketPolicyServer:
             ("router_probs", "router_probs_sequence"),
             ("active_expert_mask", "active_mask_sequence"),
             ("resident_pool_mask", "pool_mask_sequence"),
+            ("forced_expert_id", "forced_expert_id_sequence"),
         ]:
             if output_key in output:
                 trace.setdefault(trace_key, []).append(self._jsonable(output[output_key]))
@@ -336,6 +337,7 @@ class WebsocketPolicyServer:
             "router_probs_sequence",
             "active_mask_sequence",
             "pool_mask_sequence",
+            "forced_expert_id_sequence",
             "latency_ms_sequence",
             "vram_mb_sequence",
         ]:

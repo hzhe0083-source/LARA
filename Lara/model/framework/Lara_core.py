@@ -170,6 +170,7 @@ class Lara(baseframework):
         train_obs_image_size = getattr(self.config.datasets.vla_data, "image_size", None)
         if train_obs_image_size:
             batch_images = resize_images(batch_images, target_size=train_obs_image_size)
+        batch_size = len(instructions)
 
         qwen_context = self.qwen.encode(
             images=batch_images,
@@ -179,6 +180,27 @@ class Lara(baseframework):
         )
         resident_pool_mask = kwargs.get("resident_pool_mask", None)
         previous_router_probs = kwargs.get("previous_router_probs", None)
+        forced_router_probs = kwargs.get("forced_router_probs", None)
+        forced_expert_id = kwargs.get("forced_expert_id", None)
+        if forced_router_probs is not None and self.action_head.lara_moe is None:
+            raise ValueError("forced_router_probs requires use_lara_moe=True")
+        if forced_expert_id is not None:
+            if forced_router_probs is not None:
+                raise ValueError("Pass only one of forced_expert_id or forced_router_probs")
+            if self.action_head.lara_moe is None:
+                raise ValueError("forced_expert_id requires use_lara_moe=True")
+            expert_ids = np.asarray(forced_expert_id)
+            if expert_ids.ndim == 0:
+                expert_ids = np.full(batch_size, int(expert_ids), dtype=np.int64)
+            elif expert_ids.shape != (batch_size,):
+                raise ValueError(f"forced_expert_id must be scalar or shape ({batch_size},), got {expert_ids.shape}")
+            num_experts = self.action_head.lara_moe.num_experts
+            if np.any(expert_ids < 0) or np.any(expert_ids >= num_experts):
+                raise ValueError(f"forced_expert_id must be in [0, {num_experts})")
+            forced_router_probs = np.zeros((batch_size, num_experts), dtype=np.float32)
+            forced_router_probs[np.arange(batch_size), expert_ids.astype(np.int64)] = 1.0
+        if forced_router_probs is not None and resident_pool_mask is None:
+            resident_pool_mask = np.asarray(forced_router_probs) > 0
         resident_pool = None
 
         with torch.autocast("cuda", dtype=torch.float32):
@@ -194,6 +216,7 @@ class Lara(baseframework):
                 state=state,
                 pool_mask=resident_pool_mask,
                 previous_router_probs=previous_router_probs,
+                forced_router_probs=forced_router_probs,
                 return_aux=True,
             )
         if isinstance(action_result, dict):
@@ -229,6 +252,14 @@ class Lara(baseframework):
             output["router_probs"] = router_probs.detach().cpu().numpy()
         if active_mask is not None:
             output["active_expert_mask"] = active_mask.detach().cpu().numpy()
+        if forced_router_probs is not None:
+            output["forced_router_probs"] = (
+                forced_router_probs.detach().cpu().numpy()
+                if torch.is_tensor(forced_router_probs)
+                else np.asarray(forced_router_probs)
+            )
+        if forced_expert_id is not None:
+            output["forced_expert_id"] = expert_ids
         return output
 
     @property

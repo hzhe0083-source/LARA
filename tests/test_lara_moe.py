@@ -12,6 +12,7 @@ from Lara.model.modules.action_model.lara_moe import (
     candidate_route_utility,
     centered_utility_targets,
     expert_diversity_loss,
+    forced_router_probs_from_scores,
     masked_topk_softmax,
     posterior_from_expert_losses,
     retained_probability_mass,
@@ -117,6 +118,39 @@ class LatentActionMoETest(unittest.TestCase):
         self.assertTrue(torch.equal(output.pool_mask, pool_mask))
         self.assertTrue(torch.all(output.active_mask <= pool_mask))
         self.assertTrue(torch.all(output.router_probs[~pool_mask] == 0))
+
+    def test_forward_can_force_router_probs_for_counterfactual_eval(self):
+        torch.manual_seed(0)
+        moe = LatentActionMoE(
+            hidden_size=8,
+            num_experts=4,
+            top_k=1,
+            episode_pool_size=2,
+            expert_hidden_size=16,
+            router_hidden_size=12,
+        )
+        moe.eval()
+
+        conditioning_tokens = torch.randn(2, 3, 8)
+        forced_router_probs = torch.tensor(
+            [
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ]
+        )
+
+        output = moe(conditioning_tokens, forced_router_probs=forced_router_probs)
+
+        self.assertTrue(torch.equal(output.router_probs, forced_router_probs))
+        self.assertTrue(torch.equal(output.active_mask, forced_router_probs.bool()))
+        self.assertTrue(torch.equal(output.pool_mask, forced_router_probs.bool()))
+
+    def test_forced_router_probs_rejects_experts_outside_pool(self):
+        with self.assertRaisesRegex(ValueError, "outside pool_mask"):
+            forced_router_probs_from_scores(
+                torch.tensor([[0.0, 1.0]]),
+                pool_mask=torch.tensor([[True, False]]),
+            )
 
     def test_select_resident_pool_can_be_reused_for_chunk_routing(self):
         torch.manual_seed(0)

@@ -14,13 +14,16 @@ class _PoolEchoPolicy:
         self.calls.append(payload)
         resident_pool_mask = payload.get("resident_pool_mask", [[True, False, True]])
         router_probs = payload.get("previous_router_probs", [[0.7, 0.2, 0.1]])
-        return {
+        response = {
             "normalized_actions": [],
             "execution_normalized_actions": [],
             "resident_pool_mask": resident_pool_mask,
             "router_probs": router_probs,
             "active_expert_mask": [[True, False, True]],
         }
+        if "forced_expert_id" in payload:
+            response["forced_expert_id"] = payload["forced_expert_id"]
+        return response
 
 
 class WebsocketPolicyServerTest(unittest.TestCase):
@@ -147,6 +150,32 @@ class WebsocketPolicyServerTest(unittest.TestCase):
             self.assertEqual(len(record["latency_ms_sequence"]), 1)
             self.assertGreaterEqual(record["latency_ms"], 0.0)
             self.assertNotIn("episode-a", server._session_state)
+
+    def test_rollout_trace_records_forced_expert_sequence(self):
+        policy = _PoolEchoPolicy()
+        with tempfile.TemporaryDirectory() as tmp:
+            trace_path = Path(tmp) / "rollouts.jsonl"
+            server = WebsocketPolicyServer(policy=policy, rollout_trace_path=str(trace_path))
+
+            server._route_message(
+                {
+                    "type": "infer",
+                    "session_id": "candidate-a",
+                    "payload": {"batch_images": [], "instructions": [], "forced_expert_id": 2},
+                }
+            )
+            server._route_message(
+                {
+                    "type": "record_outcome",
+                    "session_id": "candidate-a",
+                    "payload": {"success": 1, "candidate_expert_id": 2},
+                }
+            )
+
+            record = json.loads(trace_path.read_text(encoding="utf-8").strip())
+            self.assertEqual(policy.calls[0]["forced_expert_id"], 2)
+            self.assertEqual(record["candidate_expert_id"], 2)
+            self.assertEqual(record["forced_expert_id_sequence"], [2])
 
     def test_reset_payload_resource_metrics_override_measured_trace_metrics(self):
         policy = _PoolEchoPolicy()
