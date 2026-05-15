@@ -5,6 +5,7 @@ from Lara.evaluation.lara_protocol import (
     pareto_frontier_flags,
     protocol_summary_from_records,
     resident_experts_for_fraction,
+    route_sequence_diagnostics,
     subset_retention_rows,
     subset_retention_success_curve,
 )
@@ -16,6 +17,7 @@ __all__ = [
     "pareto_frontier_flags",
     "protocol_summary_from_records",
     "resident_experts_for_fraction",
+    "route_sequence_diagnostics",
     "subset_retention_rows",
     "subset_retention_success_curve",
 ]

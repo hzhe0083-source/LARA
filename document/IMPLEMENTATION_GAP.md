@@ -26,7 +26,7 @@ These files exist to make the next implementation steps concrete, but they are n
 - Validated transition-state training with real SO101 boundary targets.
 - Validated MoE action experts that directly produce or adapt action chunks in full SO101 training.
 - Validated two-level routing: episode-level resident pool selection, chunk-level top-k routing inside that pool, and resident-pool reuse across real SO101 rollout horizons.
-- Closed-loop route diagnostics and subset-retention success curves.
+- closed-loop route diagnostics tied to real robot outcomes and subset-retention success curves.
 - Real counterfactual utility scoring from latent-state or closed-loop evaluator signals beyond action reconstruction labels.
 - Validated matched-compute and matched-resident-expert experiments with real FLOPs, latency, VRAM, and rollout success.
 
@@ -58,7 +58,7 @@ These files exist to make the next implementation steps concrete, but they are n
 - Optional direct action-chunk expert heads and routed direct-expert action output were added behind `lara_use_direct_action_experts: false` and `lara_use_direct_action_output: false`; they still need real SO101 training validation.
 - Route-quality aggregation metrics were added for offline diagnostics: Spearman/Kendall ranking fidelity, top-k consistency, route regret, route-switch-rate, and retained probability mass; closed-loop subset-retention success curves still need real evaluation rollouts.
 - Action-head route-quality metrics are emitted as scalar `metric/moe_route_quality_*` values by the trainers when MoE is enabled.
-- Sparse active/resident expert budget helpers plus matched-compute rows, matched-resident rows, budget-match flags, Pareto frontier flags, subset-retention success aggregation, and `scripts/summarize_lara_protocol.py` JSON/JSONL rollout-record summarization were added for matched-budget reporting; real FLOPs, latency, VRAM, and success measurements still require benchmark runs.
+- Sparse active/resident expert budget helpers plus matched-compute rows, matched-resident rows, budget-match flags, Pareto frontier flags, subset-retention success aggregation, route-sequence diagnostics for resident-pool reuse across receding-horizon chunks, and `scripts/summarize_lara_protocol.py` JSON/JSONL rollout-record summarization were added for matched-budget reporting; real FLOPs, latency, VRAM, and success measurements still require benchmark runs.
 - Action-head auxiliary diagnostics are now returned as `metric/...` outputs and excluded from the differentiable loss sum by the trainers.
 - The websocket deployment server caches MoE `resident_pool_mask` and `router_probs` values per `session_id`, feeds cached routes back as `previous_router_probs`, and supports `reset`, allowing closed-loop clients to reuse an episode-level expert pool and optionally bias chunk-level routing across receding-horizon chunks when `lara_inference_stickiness_weight > 0`.
 - `scripts/smoke_lara_real_components.py` now provides an explicit preflight for local Qwen/V-JEPA checkpoint paths and optional real `Lara` instantiate/one-step dummy forward-backward checks, with structured error reporting for missing runtime dependencies or model-load failures.
@@ -75,7 +75,7 @@ These files exist to make the next implementation steps concrete, but they are n
 - The MoE/router path is currently a Stage-2 scaffold that can pass real-component smoke with optional utility labels, but it still needs full-train validation of direct experts and per-expert action-loss posterior paths, resident-pool success evaluation, and closed-loop validation beyond server-side pool reuse. Do not describe it as the completed LARA MoE or completed two-level router yet.
 - Utility calibration currently validates action-loss utility labels, transition-state consistency utility labels, direct-expert action reconstruction component labels, generic utility composition, a trainable utility-head interface, and loss surfaces; it still does not supervise utility from true closed-loop evaluator labels.
 - The optional transition head and dataloader boundary targets are wired and can be exercised by real-batch smoke, but transition-state training still needs empirical validation and loss-weight tuning.
-- Matched-compute and matched-resident support currently covers reporting protocol, rollout-record summarization, and expert-budget accounting only; it does not measure real FLOPs, latency, VRAM, or closed-loop success.
+- Matched-compute and matched-resident support currently covers reporting protocol, route-sequence diagnostics, rollout-record summarization, and expert-budget accounting only; it does not measure real FLOPs, latency, VRAM, or closed-loop success.
 - The new pytest static tests were not run in the system Python because that interpreter lacks `pytest`; run them inside the project environment with `python -m pytest tests/test_baseline_static.py`.
 - VJ2 video preprocessing still happens inside the forward path and may bottleneck training.
 - `pyproject.toml` and `requirements.txt` do not pin the torch/CUDA runtime; the project still depends on a compatible prebuilt PyTorch environment.

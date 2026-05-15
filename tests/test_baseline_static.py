@@ -201,6 +201,8 @@ def test_optional_moe_router_stage_two_exists():
     assert "def matched_expert_budget_flags" in protocol_src
     assert "def pareto_frontier_flags" in protocol_src
     assert "def protocol_summary_from_records" in protocol_src
+    assert "def route_sequence_diagnostics" in protocol_src
+    assert "route_diagnostics_by_fraction" in protocol_src
     assert "from Lara.evaluation import protocol_summary_from_records" in protocol_cli_src
     assert "--resident-fraction-key" in protocol_cli_src
     assert "JSON or JSONL rollout records" in protocol_cli_src
@@ -341,6 +343,7 @@ def test_optional_moe_router_stage_two_exists():
     assert "Action-head route-quality metrics are emitted" in gap
     assert "matched-compute rows, matched-resident rows, budget-match flags, Pareto frontier flags" in gap
     assert "scripts/summarize_lara_protocol.py" in gap
+    assert "route-sequence diagnostics" in gap
     assert "training-time randomized resident-pool size" in gap
     assert "scripts/smoke_lara_real_components.py" in gap
     assert "structured error reporting" in gap
@@ -367,3 +370,4 @@ def test_paper_gap_is_explicit():
     assert "action-loss utility labels" in gap
     assert "transition-state consistency utility labels" in gap
     assert "rollout-record summarization" in gap
+    assert "closed-loop route diagnostics" in gap

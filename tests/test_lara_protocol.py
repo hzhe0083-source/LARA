@@ -1,5 +1,7 @@
 import unittest
 
+import torch
+
 from Lara.evaluation.lara_protocol import (
     matched_budget_flags,
     matched_compute_row,
@@ -7,6 +9,7 @@ from Lara.evaluation.lara_protocol import (
     pareto_frontier_flags,
     protocol_summary_from_records,
     resident_experts_for_fraction,
+    route_sequence_diagnostics,
     subset_retention_rows,
     subset_retention_success_curve,
 )
@@ -137,6 +140,51 @@ class LARAProtocolTest(unittest.TestCase):
 
         self.assertEqual(flags, [True, False, True])
 
+    def test_route_sequence_diagnostics_reports_closed_loop_route_stability(self):
+        router_probs = torch.tensor(
+            [
+                [
+                    [0.9, 0.1, 0.0],
+                    [0.2, 0.7, 0.1],
+                    [0.1, 0.8, 0.1],
+                ]
+            ]
+        )
+        active_mask = torch.tensor(
+            [
+                [
+                    [True, False, False],
+                    [False, True, False],
+                    [False, True, False],
+                ]
+            ]
+        )
+        pool_mask = torch.tensor(
+            [
+                [
+                    [True, True, False],
+                    [True, True, False],
+                    [False, True, True],
+                ]
+            ]
+        )
+
+        diagnostics = route_sequence_diagnostics(
+            router_probs,
+            active_mask=active_mask,
+            pool_mask=pool_mask,
+        )
+
+        self.assertEqual(diagnostics["valid_chunks"], 3.0)
+        self.assertEqual(diagnostics["valid_transitions"], 2.0)
+        self.assertAlmostEqual(diagnostics["route_switch_rate"], 0.5)
+        self.assertAlmostEqual(diagnostics["active_set_switch_rate"], 0.5)
+        self.assertAlmostEqual(diagnostics["active_set_jaccard"], 0.5)
+        self.assertAlmostEqual(diagnostics["pool_switch_rate"], 0.5)
+        self.assertAlmostEqual(diagnostics["pool_reuse_rate"], 0.5)
+        self.assertAlmostEqual(diagnostics["pool_jaccard"], (1.0 + 1.0 / 3.0) / 2.0)
+        self.assertAlmostEqual(diagnostics["resident_expert_fraction_mean"], 2.0 / 3.0)
+
     def test_protocol_summary_from_records_builds_rows_curve_and_pareto_flags(self):
         records = [
             {
@@ -147,6 +195,8 @@ class LARAProtocolTest(unittest.TestCase):
                 "flops": 4.0,
                 "latency_ms": 20.0,
                 "vram_mb": 1000.0,
+                "route_switch_rate": 0.0,
+                "pool_reuse_rate": 1.0,
             },
             {
                 "resident_fraction": 0.25,
@@ -156,6 +206,8 @@ class LARAProtocolTest(unittest.TestCase):
                 "flops": 4.2,
                 "latency_ms": 22.0,
                 "vram_mb": 1020.0,
+                "route_switch_rate": 0.5,
+                "pool_reuse_rate": 0.5,
             },
             {
                 "resident_fraction": 1.0,
@@ -165,6 +217,8 @@ class LARAProtocolTest(unittest.TestCase):
                 "flops": 8.0,
                 "latency_ms": 30.0,
                 "vram_mb": 1400.0,
+                "route_switch_rate": 0.25,
+                "pool_reuse_rate": 0.75,
             },
         ]
 
@@ -186,6 +240,8 @@ class LARAProtocolTest(unittest.TestCase):
         self.assertEqual(summary["rows"][0]["resident_experts"], 2)
         self.assertAlmostEqual(summary["rows"][0]["flops"], 4.1, places=6)
         self.assertIn("compute_success_pareto", summary["rows"][0])
+        self.assertAlmostEqual(summary["route_diagnostics_by_fraction"]["route_switch_rate"]["0.25"], 0.25)
+        self.assertAlmostEqual(summary["route_diagnostics_by_fraction"]["pool_reuse_rate"]["1"], 0.75)
 
     def test_protocol_summary_from_records_requires_success_and_fraction(self):
         with self.assertRaisesRegex(ValueError, "resident_fraction"):

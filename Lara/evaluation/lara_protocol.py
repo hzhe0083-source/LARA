@@ -6,6 +6,17 @@ import torch
 
 from Lara.model.modules.action_model.lara_moe import sparse_route_budget
 
+ROUTE_SEQUENCE_DIAGNOSTIC_KEYS = (
+    "route_switch_rate",
+    "active_set_switch_rate",
+    "active_set_jaccard",
+    "pool_switch_rate",
+    "pool_reuse_rate",
+    "pool_jaccard",
+    "resident_expert_fraction_mean",
+    "mean_router_entropy",
+)
+
 
 def _as_mean_float(values, name: str) -> float:
     tensor = torch.as_tensor(values, dtype=torch.float32)
@@ -73,6 +84,154 @@ def _complete_optional_group(
     if missing:
         return None
     return values_by_fraction
+
+
+def _summarize_optional_record_metrics(
+    records: Sequence[Mapping[str, object]],
+    *,
+    resident_fraction_key: str,
+    fractions: Sequence[float],
+    metric_keys: Sequence[str],
+) -> dict[str, dict[str, float]]:
+    summaries = {}
+    for metric_key in metric_keys:
+        values_by_fraction = _complete_optional_group(
+            _group_record_values_by_fraction(
+                records,
+                resident_fraction_key=resident_fraction_key,
+                value_keys=(metric_key,),
+                required=False,
+                metric_name=metric_key,
+            ),
+            fractions,
+        )
+        if values_by_fraction is None:
+            continue
+        summaries[metric_key] = {
+            f"{fraction:g}": _as_mean_float(values_by_fraction[fraction], f"{metric_key}[{fraction:g}]")
+            for fraction in fractions
+        }
+    return summaries
+
+
+def _validate_route_sequence_tensor(tensor: torch.Tensor, name: str) -> torch.Tensor:
+    tensor = torch.as_tensor(tensor)
+    if tensor.ndim != 3:
+        raise ValueError(f"{name} must have shape [B, T, M], got {tuple(tensor.shape)}")
+    if tensor.shape[1] == 0 or tensor.shape[2] == 0:
+        raise ValueError(f"{name} must have non-empty time and expert dimensions")
+    return tensor
+
+
+def _sequence_valid_mask(
+    valid_mask: Optional[torch.Tensor],
+    *,
+    batch_size: int,
+    sequence_length: int,
+    device: torch.device,
+) -> torch.Tensor:
+    if valid_mask is None:
+        return torch.ones((batch_size, sequence_length), device=device, dtype=torch.bool)
+    valid_mask = torch.as_tensor(valid_mask, device=device, dtype=torch.bool)
+    if valid_mask.shape != (batch_size, sequence_length):
+        raise ValueError(f"valid_mask must have shape ({batch_size}, {sequence_length}), got {tuple(valid_mask.shape)}")
+    return valid_mask
+
+
+def _masked_mean_float(values: torch.Tensor, mask: torch.Tensor) -> float:
+    if values.numel() == 0:
+        return 0.0
+    mask = mask.to(device=values.device, dtype=values.dtype)
+    denom = mask.sum()
+    if float(denom.item()) <= 0:
+        return 0.0
+    return float((values * mask).sum().item() / denom.item())
+
+
+def _mask_set_jaccard(current_mask: torch.Tensor, next_mask: torch.Tensor) -> torch.Tensor:
+    intersection = (current_mask & next_mask).sum(dim=-1).float()
+    union = (current_mask | next_mask).sum(dim=-1).float().clamp_min(1.0)
+    return intersection / union
+
+
+def route_sequence_diagnostics(
+    router_probs: torch.Tensor,
+    *,
+    active_mask: Optional[torch.Tensor] = None,
+    pool_mask: Optional[torch.Tensor] = None,
+    valid_mask: Optional[torch.Tensor] = None,
+) -> dict[str, float]:
+    """Summarize router behavior across receding-horizon chunks.
+
+    The inputs are rollout-level sequences, not independent training batches:
+    `[B, T, M]` means B episodes, T replanning chunks per episode, and M
+    experts. These diagnostics help check whether the two-level route pool is
+    stable across closed-loop chunks before treating subset-retention results as
+    meaningful.
+    """
+
+    router_probs = _validate_route_sequence_tensor(router_probs, "router_probs").float()
+    if not torch.isfinite(router_probs).all() or torch.any(router_probs < 0):
+        raise ValueError("router_probs must contain finite non-negative values")
+    row_sums = router_probs.sum(dim=-1, keepdim=True)
+    if torch.any(row_sums <= 0):
+        raise ValueError("router_probs must have positive probability mass for every chunk")
+    router_probs = router_probs / row_sums.clamp_min(1e-8)
+
+    batch_size, sequence_length, _ = router_probs.shape
+    valid_mask = _sequence_valid_mask(
+        valid_mask,
+        batch_size=batch_size,
+        sequence_length=sequence_length,
+        device=router_probs.device,
+    )
+    pair_mask = valid_mask[:, 1:] & valid_mask[:, :-1] if sequence_length > 1 else valid_mask[:, :0]
+
+    route_ids = router_probs.argmax(dim=-1)
+    route_switches = (route_ids[:, 1:] != route_ids[:, :-1]).float() if sequence_length > 1 else router_probs.new_zeros((batch_size, 0))
+    entropy_values = -(router_probs * torch.log(router_probs.clamp_min(1e-8))).sum(dim=-1)
+    diagnostics = {
+        "valid_chunks": float(valid_mask.sum().item()),
+        "valid_transitions": float(pair_mask.sum().item()),
+        "route_switch_rate": _masked_mean_float(route_switches, pair_mask),
+        "mean_router_entropy": _masked_mean_float(entropy_values, valid_mask),
+    }
+
+    if active_mask is not None:
+        active_mask = _validate_route_sequence_tensor(active_mask, "active_mask").to(
+            device=router_probs.device,
+            dtype=torch.bool,
+        )
+        if active_mask.shape != router_probs.shape:
+            raise ValueError(f"active_mask must have shape {tuple(router_probs.shape)}, got {tuple(active_mask.shape)}")
+        if not torch.all(active_mask.any(dim=-1)):
+            raise ValueError("active_mask must select at least one expert for every chunk")
+        active_changes = torch.any(active_mask[:, 1:] != active_mask[:, :-1], dim=-1).float()
+        active_jaccard = _mask_set_jaccard(active_mask[:, :-1], active_mask[:, 1:])
+        diagnostics["active_set_switch_rate"] = _masked_mean_float(active_changes, pair_mask)
+        diagnostics["active_set_jaccard"] = _masked_mean_float(active_jaccard, pair_mask)
+
+    if pool_mask is not None:
+        pool_mask = _validate_route_sequence_tensor(pool_mask, "pool_mask").to(
+            device=router_probs.device,
+            dtype=torch.bool,
+        )
+        if pool_mask.shape != router_probs.shape:
+            raise ValueError(f"pool_mask must have shape {tuple(router_probs.shape)}, got {tuple(pool_mask.shape)}")
+        if not torch.all(pool_mask.any(dim=-1)):
+            raise ValueError("pool_mask must select at least one expert for every chunk")
+        pool_changes = torch.any(pool_mask[:, 1:] != pool_mask[:, :-1], dim=-1).float()
+        pool_jaccard = _mask_set_jaccard(pool_mask[:, :-1], pool_mask[:, 1:])
+        pool_switch_rate = _masked_mean_float(pool_changes, pair_mask)
+        diagnostics["pool_switch_rate"] = pool_switch_rate
+        diagnostics["pool_reuse_rate"] = 1.0 - pool_switch_rate
+        diagnostics["pool_jaccard"] = _masked_mean_float(pool_jaccard, pair_mask)
+        diagnostics["resident_expert_fraction_mean"] = _masked_mean_float(
+            pool_mask.float().mean(dim=-1),
+            valid_mask,
+        )
+
+    return diagnostics
 
 
 def resident_experts_for_fraction(total_experts: int, resident_fraction: float) -> int:
@@ -319,7 +478,7 @@ def protocol_summary_from_records(
         for row, frontier in zip(rows, pareto_frontier_flags(rows), strict=True):
             row["compute_success_pareto"] = frontier
     curve = subset_retention_success_curve(success_by_fraction)
-    return {
+    summary = {
         "benchmark": benchmark,
         "method": method,
         "num_records": len(records),
@@ -327,6 +486,15 @@ def protocol_summary_from_records(
         "curve": curve,
         "rows": rows,
     }
+    route_diagnostics = _summarize_optional_record_metrics(
+        records,
+        resident_fraction_key=resident_fraction_key,
+        fractions=fractions,
+        metric_keys=ROUTE_SEQUENCE_DIAGNOSTIC_KEYS,
+    )
+    if route_diagnostics:
+        summary["route_diagnostics_by_fraction"] = route_diagnostics
+    return summary
 
 
 def _relative_match(reference: float, candidate: float, tolerance: float) -> bool:
