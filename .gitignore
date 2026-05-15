@@ -1,0 +1,23 @@
+# Local model checkpoints and heavyweight downloaded artifacts.
+models/
+checkpoints/
+runs/
+outputs/
+wandb/
+
+# Python/cache artifacts.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local agent/runtime state.
+.omx/
+
+# Local environment and editor files.
+.env
+.env.*
+.DS_Store
+.idea/
+.vscode/
