@@ -76,12 +76,14 @@ def test_optional_latent_action_head_stage_one_exists():
 def test_optional_moe_router_stage_two_exists():
     moe_src = read("Lara/model/modules/action_model/lara_moe.py")
     adapter_src = read("Lara/model/framework/act.py")
+    core_src = read("Lara/model/framework/Lara_core.py")
     config_src = read("scripts/config/lara_so101_ft.yaml")
     flow_src = read("Lara/model/modules/action_model/GR00T_ActionHeader.py")
     gap = read("document/IMPLEMENTATION_GAP.md")
     assert "class LatentActionMoE" in moe_src
     assert "class ActionChunkExpertBank" in moe_src
     assert "class RouteUtilityHead" in moe_src
+    assert "class ResidentPoolOutput" in moe_src
     assert "class PosteriorResponsibilityHead" in moe_src
     assert "class ChunkRouter" in moe_src
     assert "class EpisodePoolRouter" in moe_src
@@ -108,6 +110,11 @@ def test_optional_moe_router_stage_two_exists():
     assert "moe_direct_expert_loss" in adapter_src
     assert "def _trajectory_ids_to_tensor" in adapter_src
     assert "aggregate_episode_responsibilities(posterior_probs, trajectory_tensor)" in adapter_src
+    assert "def select_resident_pool" in moe_src
+    assert "def select_resident_pool" in adapter_src
+    assert "pool_mask=pool_mask" in adapter_src
+    assert "resident_pool_mask" in core_src
+    assert '"resident_pool_mask"' in core_src
     assert "has_training_teacher = expert_action_losses is not None or latent_action_tokens is not None" in moe_src
     assert "episode_pool_size" in moe_src
     assert "active_mask = topk_mask(router_logits, top_k=self.top_k, allowed_mask=pool_mask)" in moe_src

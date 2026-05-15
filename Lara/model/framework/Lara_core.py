@@ -94,7 +94,7 @@ class Lara(baseframework):
         batch_images: List[List[Image.Image]],
         instructions: List[str],
         state: Optional[np.ndarray] = None,
-        **kwargs: str,
+        **kwargs,
     ) -> dict:
         train_obs_image_size = getattr(self.config.datasets.vla_data, "image_size", None)
         if train_obs_image_size:
@@ -106,16 +106,25 @@ class Lara(baseframework):
             prompt_template=self.config.datasets.vla_data.get("CoT_prompt", ""),
             include_embodied_tokens=True,
         )
+        resident_pool_mask = kwargs.get("resident_pool_mask", None)
+        resident_pool = None
 
         with torch.autocast("cuda", dtype=torch.float32):
+            if self.action_head.lara_moe is not None and resident_pool_mask is None:
+                resident_pool = self.action_head.select_resident_pool(
+                    embodied_action_tokens=qwen_context.embodied_action_tokens,
+                    latent_action_tokens=qwen_context.action_tokens,
+                )
+                resident_pool_mask = resident_pool.mask
             pred_actions = self.action_head.predict_action(
                 embodied_action_tokens=qwen_context.embodied_action_tokens,
                 latent_action_tokens=qwen_context.action_tokens,
                 state=state,
+                pool_mask=resident_pool_mask,
             )
         pred_actions_np = pred_actions.detach().cpu().numpy()
 
-        return {
+        output = {
             "normalized_actions": pred_actions_np,
             "execution_normalized_actions": pred_actions_np[:, : self.execution_horizon, :],
             "prediction_horizon": self.action_horizon,
@@ -125,6 +134,16 @@ class Lara(baseframework):
             .cpu()
             .numpy(),
         }
+        if resident_pool_mask is not None:
+            resident_pool_tensor = (
+                resident_pool_mask
+                if isinstance(resident_pool_mask, torch.Tensor)
+                else torch.as_tensor(resident_pool_mask)
+            )
+            output["resident_pool_mask"] = resident_pool_tensor.detach().cpu().numpy()
+        if resident_pool is not None:
+            output["resident_pool_probs"] = resident_pool.probs.detach().cpu().numpy()
+        return output
 
     @property
     def qwen_vl_interface(self):

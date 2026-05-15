@@ -116,6 +116,40 @@ class ActionHeadAdapterSmokeTest(unittest.TestCase):
         expected_total = output["action_loss"] + output["moe_router_loss"] + output["moe_direct_expert_loss"]
         self.assertTrue(torch.allclose(output["total_action_loss"], expected_total))
 
+    def test_predict_action_can_reuse_resident_pool_mask(self):
+        torch.manual_seed(0)
+        adapter = ActionHeadAdapter(
+            config=tiny_action_config(
+                use_lara_moe=True,
+                lara_num_experts=4,
+                lara_episode_pool_size=2,
+                lara_top_k=1,
+                lara_use_expert_loss_posterior=False,
+            ),
+            context_hidden_size=16,
+        )
+        adapter.eval()
+
+        embodied_tokens = torch.randn(1, 2, 16)
+        latent_tokens = torch.randn(1, 1, 16)
+        state = torch.randn(1, 1, 3)
+
+        resident_pool = adapter.select_resident_pool(
+            embodied_action_tokens=embodied_tokens,
+            latent_action_tokens=latent_tokens,
+        )
+        pred_actions = adapter.predict_action(
+            embodied_action_tokens=embodied_tokens,
+            latent_action_tokens=latent_tokens,
+            state=state,
+            pool_mask=resident_pool.mask,
+        )
+
+        self.assertEqual(resident_pool.mask.shape, (1, 4))
+        self.assertTrue(torch.all(resident_pool.mask.sum(dim=-1) == 2))
+        self.assertEqual(pred_actions.shape, (1, 3, 2))
+        self.assertTrue(torch.isfinite(pred_actions).all().item())
+
 
 if __name__ == "__main__":
     unittest.main()

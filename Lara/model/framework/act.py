@@ -203,6 +203,8 @@ class ActionHeadAdapter(nn.Module):
         actions,
         state=None,
         trajectory_ids=None,
+        initial_context_tokens=None,
+        pool_mask=None,
         utility_scores=None,
         utility_candidate_mask=None,
         utility_cost_scores=None,
@@ -307,9 +309,21 @@ class ActionHeadAdapter(nn.Module):
                 if previous_router_probs is not None
                 else None
             )
+            initial_context_tokens = (
+                self._as_tensor(initial_context_tokens, device=conditioning_tokens.device, dtype=conditioning_tokens.dtype)
+                if initial_context_tokens is not None
+                else None
+            )
+            pool_mask = (
+                self._as_tensor(pool_mask, device=conditioning_tokens.device, dtype=torch.bool)
+                if pool_mask is not None
+                else None
+            )
             moe_output = self.lara_moe(
                 conditioning_tokens,
                 latent_action_tokens=latent_action_tokens,
+                initial_context_tokens=initial_context_tokens,
+                pool_mask=pool_mask,
                 expert_action_losses=expert_action_losses,
                 pool_target_probs=self._pool_target_probs(expert_action_losses, trajectory_ids),
                 utility_scores=utility_scores,
@@ -420,16 +434,54 @@ class ActionHeadAdapter(nn.Module):
         return losses.view(batch_size, num_experts)
 
     @torch.no_grad()
+    def select_resident_pool(
+        self,
+        embodied_action_tokens: torch.Tensor,
+        latent_action_tokens: Optional[torch.Tensor] = None,
+        initial_context_tokens: Optional[torch.Tensor] = None,
+    ):
+        if self.lara_moe is None:
+            raise RuntimeError("select_resident_pool requires use_lara_moe=True")
+        if self.latent_action_head is not None and latent_action_tokens is None:
+            latent_action_tokens = self.latent_action_head.predict(embodied_action_tokens)
+        conditioning_tokens = self._conditioning_tokens(embodied_action_tokens, latent_action_tokens)
+        initial_context_tokens = (
+            self._as_tensor(initial_context_tokens, device=conditioning_tokens.device, dtype=conditioning_tokens.dtype)
+            if initial_context_tokens is not None
+            else None
+        )
+        return self.lara_moe.select_resident_pool(
+            conditioning_tokens,
+            initial_context_tokens=initial_context_tokens,
+        )
+
+    @torch.no_grad()
     def predict_action(
         self,
         embodied_action_tokens: torch.Tensor,
         state: Optional[np.ndarray] = None,
         latent_action_tokens: Optional[torch.Tensor] = None,
+        initial_context_tokens: Optional[torch.Tensor] = None,
+        pool_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         if self.latent_action_head is not None:
             latent_action_tokens = self.latent_action_head.predict(embodied_action_tokens)
         conditioning_tokens = self._conditioning_tokens(embodied_action_tokens, latent_action_tokens)
         if self.lara_moe is not None:
-            conditioning_tokens = self.lara_moe.predict(conditioning_tokens)
+            initial_context_tokens = (
+                self._as_tensor(initial_context_tokens, device=conditioning_tokens.device, dtype=conditioning_tokens.dtype)
+                if initial_context_tokens is not None
+                else None
+            )
+            pool_mask = (
+                self._as_tensor(pool_mask, device=conditioning_tokens.device, dtype=torch.bool)
+                if pool_mask is not None
+                else None
+            )
+            conditioning_tokens = self.lara_moe.predict(
+                conditioning_tokens,
+                initial_context_tokens=initial_context_tokens,
+                pool_mask=pool_mask,
+            )
         state_tensor = self._state_to_tensor(state, embodied_action_tokens)
         return self.action_model.predict_action(conditioning_tokens, state_tensor)

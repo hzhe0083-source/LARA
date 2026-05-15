@@ -38,6 +38,13 @@ class MoEConditionerOutput:
     route_regret: torch.Tensor
 
 
+@dataclass
+class ResidentPoolOutput:
+    logits: torch.Tensor
+    probs: torch.Tensor
+    mask: torch.Tensor
+
+
 def _validate_expert_mask(mask: torch.Tensor, logits: torch.Tensor, mask_name: str) -> torch.Tensor:
     if mask.shape != logits.shape:
         raise ValueError(f"{mask_name} must have shape {tuple(logits.shape)}, got {tuple(mask.shape)}")
@@ -699,6 +706,27 @@ class LatentActionMoE(nn.Module):
             pool_mask = _validate_expert_mask(pool_mask, pool_logits, "pool_mask")
         pool_probs = masked_softmax(pool_logits, pool_mask)
         return pool_logits, pool_probs, pool_mask
+
+    @torch.no_grad()
+    def select_resident_pool(
+        self,
+        conditioning_tokens: torch.Tensor,
+        initial_context_tokens: Optional[torch.Tensor] = None,
+        pool_mask: Optional[torch.Tensor] = None,
+    ) -> ResidentPoolOutput:
+        """Select the episode-level resident expert pool for reuse across chunks."""
+        self._validate_inputs(conditioning_tokens, latent_action_tokens=None)
+        if initial_context_tokens is not None and initial_context_tokens.shape[0] != conditioning_tokens.shape[0]:
+            raise ValueError(
+                "initial_context_tokens batch size must match conditioning_tokens: "
+                f"{initial_context_tokens.shape[0]} != {conditioning_tokens.shape[0]}"
+            )
+        pool_logits, pool_probs, pool_mask = self._resident_pool(
+            conditioning_tokens=conditioning_tokens,
+            initial_context_tokens=initial_context_tokens,
+            pool_mask=pool_mask,
+        )
+        return ResidentPoolOutput(logits=pool_logits, probs=pool_probs, mask=pool_mask)
 
     def forward(
         self,

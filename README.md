@@ -29,7 +29,7 @@ Completed in code:
 Experimental scaffolding exists but is not complete or validated:
 
 - Stage-1 latent action head scaffold with posterior encoder, VQ codebook, and context-only prior (`use_latent_action_head: false` by default).
-- Stage-2 MoE/router scaffold with residual token experts, optional direct action-chunk experts, posterior responsibility from latent tokens or per-expert action reconstruction losses, LeRobot trajectory ids for episode-level resident pool targets, chunk-level top-k routing inside the resident pool, optional balance/stickiness stabilizers, and route collapse diagnostics (`use_lara_moe: false` by default).
+- Stage-2 MoE/router scaffold with residual token experts, optional direct action-chunk experts, posterior responsibility from latent tokens or per-expert action reconstruction losses, LeRobot trajectory ids for episode-level resident pool targets, reusable episode-level resident pool masks, chunk-level top-k routing inside the resident pool, optional balance/stickiness stabilizers, and route collapse diagnostics (`use_lara_moe: false` by default).
 - Utility calibration scaffold with an optional supervised route utility head, candidate value/progress/uncertainty/cost scoring helpers, centered utility regression, and pairwise ranking losses (`lara_utility_loss_weight: 0.0`, `lara_utility_head_loss_weight: 0.0`, `lara_use_utility_head: false` by default).
 - Minimal dummy-batch smoke coverage exists for `ActionHeadAdapter` forward and prediction shapes.
 
@@ -173,6 +173,9 @@ During inference, `predict_action` returns:
 
 - `normalized_actions`: full 60-frame prediction.
 - `execution_normalized_actions`: first 10 frames for closed-loop execution.
+- `resident_pool_mask`: when MoE routing is enabled and no mask is supplied, the episode-level resident expert pool selected for reuse on later chunks.
+
+For MoE experiments, pass the returned `resident_pool_mask` back into later `predict_action` calls for the same episode so the chunk router chooses sparse experts inside a stable episode pool.
 
 ## Training
 

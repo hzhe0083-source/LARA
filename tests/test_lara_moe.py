@@ -89,6 +89,30 @@ class LatentActionMoETest(unittest.TestCase):
         self.assertTrue(torch.all(output.active_mask <= pool_mask))
         self.assertTrue(torch.all(output.router_probs[~pool_mask] == 0))
 
+    def test_select_resident_pool_can_be_reused_for_chunk_routing(self):
+        torch.manual_seed(0)
+        moe = LatentActionMoE(
+            hidden_size=8,
+            num_experts=4,
+            top_k=1,
+            episode_pool_size=2,
+            expert_hidden_size=16,
+            router_hidden_size=12,
+        )
+        moe.eval()
+
+        first_chunk_tokens = torch.randn(2, 3, 8)
+        next_chunk_tokens = torch.randn(2, 3, 8)
+
+        resident_pool = moe.select_resident_pool(first_chunk_tokens)
+        output = moe(next_chunk_tokens, pool_mask=resident_pool.mask)
+
+        self.assertEqual(resident_pool.logits.shape, (2, 4))
+        self.assertEqual(resident_pool.probs.shape, (2, 4))
+        self.assertTrue(torch.all(resident_pool.mask.sum(dim=-1) == 2))
+        self.assertTrue(torch.equal(output.pool_mask, resident_pool.mask))
+        self.assertTrue(torch.all(output.active_mask <= resident_pool.mask))
+
     def test_posterior_responsibility_prefers_low_expert_loss(self):
         losses = torch.tensor(
             [
