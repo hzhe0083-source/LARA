@@ -46,7 +46,8 @@ class Lara(baseframework):
         batch_images = [example["image"] for example in examples]
         batch_videos = [example["video"] for example in examples]
         instructions = [example["lang"] for example in examples]
-        actions = [example["action"] for example in examples] if "action" in examples[0] else None
+        action_key = "future_actions" if "future_actions" in examples[0] else "action"
+        actions = [example[action_key] for example in examples] if action_key in examples[0] else None
         state = [example["state"] for example in examples] if "state" in examples[0] else None
 
         if actions is not None:
@@ -68,14 +69,21 @@ class Lara(baseframework):
             return {"wm_loss": wm_loss}
 
         with torch.autocast("cuda", dtype=torch.float32):
-            action_loss = self.action_head(
+            action_output = self.action_head(
                 embodied_action_tokens=qwen_context.embodied_action_tokens,
                 latent_action_tokens=qwen_context.action_tokens,
                 actions=actions,
                 state=state,
+                return_aux=True,
             )
 
-        return {"action_loss": action_loss, "wm_loss": wm_loss * 0.1}
+        if isinstance(action_output, dict):
+            return {
+                "action_loss": action_output["total_action_loss"],
+                "wm_loss": wm_loss * 0.1,
+            }
+
+        return {"action_loss": action_output, "wm_loss": wm_loss * 0.1}
 
     @torch.inference_mode()
     def predict_action(

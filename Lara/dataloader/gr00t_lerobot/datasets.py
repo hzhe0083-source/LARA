@@ -1615,7 +1615,13 @@ class LeRobotMixtureDataset(Dataset):
                     action.append(data[action_key])
                 action = np.concatenate(action, axis=1).astype(np.float16)
 
-                return_dict = dict(action=action, image=images, lang=language, video=videos)
+                return_dict = dict(
+                    action=action,
+                    future_actions=action,
+                    image=images,
+                    lang=language,
+                    video=videos,
+                )
                 if self.with_state:
                     state = []
                     for state_key in dataset.modality_keys["state"]:
@@ -2122,6 +2128,5 @@ class LeRobotMixtureDataset(Dataset):
                 dataset.set_transforms_metadata(self.merged_metadata[dataset.tag])
         
         print(f"Applied cached statistics for {len(self.merged_metadata)} embodiment tags.")
-
 
 

@@ -9,6 +9,8 @@ import torch
 import torch.nn as nn
 
 from Lara.model.modules.action_model.GR00T_ActionHeader import FlowmatchingActionHead, get_action_model
+from Lara.model.modules.action_model.lara_latent import LatentActionHead
+from Lara.model.modules.action_model.lara_moe import LatentActionMoE
 
 
 class ActionHeadAdapter(nn.Module):
@@ -32,6 +34,8 @@ class ActionHeadAdapter(nn.Module):
         self.action_horizon = action_cfg.get("action_horizon", self.future_action_window_size + 1)
         self.use_latent_action_tokens = action_cfg.get("use_latent_action_tokens", True)
         self.max_latent_action_tokens = action_cfg.get("max_latent_action_tokens", None)
+        self.use_latent_action_head = action_cfg.get("use_latent_action_head", False)
+        self.use_lara_moe = action_cfg.get("use_lara_moe", False)
         self.repeated_diffusion_steps = action_cfg.get(
             "repeated_diffusion_steps",
             self.config.trainer.get("repeated_diffusion_steps", 4) if self.config and self.config.trainer else 4,
@@ -40,6 +44,34 @@ class ActionHeadAdapter(nn.Module):
         self.latent_norm = nn.LayerNorm(context_hidden_size)
         self.latent_type_embed = nn.Parameter(torch.zeros(1, 1, context_hidden_size))
         self.embodied_type_embed = nn.Parameter(torch.zeros(1, 1, context_hidden_size))
+        self.latent_action_head = (
+            LatentActionHead(
+                context_dim=context_hidden_size,
+                action_dim=action_cfg.action_dim,
+                action_horizon=self.action_horizon,
+                num_latent_tokens=action_cfg.get("lara_num_latent_tokens", 4),
+                codebook_size=action_cfg.get("lara_codebook_size", 128),
+                hidden_dim=action_cfg.get("lara_latent_hidden_dim", action_cfg.get("hidden_size", context_hidden_size)),
+                commitment_weight=action_cfg.get("lara_commitment_weight", 0.25),
+                vq_loss_weight=action_cfg.get("lara_vq_loss_weight", 1.0),
+                prior_loss_weight=action_cfg.get("lara_prior_loss_weight", 1.0),
+            )
+            if self.use_latent_action_head
+            else None
+        )
+        self.lara_moe = (
+            LatentActionMoE(
+                hidden_size=context_hidden_size,
+                num_experts=action_cfg.get("lara_num_experts", 8),
+                top_k=action_cfg.get("lara_top_k", 2),
+                expert_hidden_size=action_cfg.get("lara_expert_hidden_dim", action_cfg.get("hidden_size", 1024)),
+                router_hidden_size=action_cfg.get("lara_router_hidden_dim", action_cfg.get("hidden_size", 1024)),
+                router_loss_weight=action_cfg.get("lara_router_loss_weight", 1.0),
+                residual_scale=action_cfg.get("lara_expert_residual_scale", 0.1),
+            )
+            if self.use_lara_moe
+            else None
+        )
 
     @staticmethod
     def _as_tensor(value, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
@@ -117,15 +149,38 @@ class ActionHeadAdapter(nn.Module):
         actions,
         state=None,
         latent_action_tokens: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
+        return_aux: bool = False,
+    ):
         actions = self._actions_to_tensor(actions, embodied_action_tokens)
         if actions.shape[1] < self.action_horizon:
             raise ValueError(
                 f"Expected at least {self.action_horizon} action steps, got {actions.shape[1]}"
             )
+        # Prefer passing an explicit future-only action window from the dataloader
+        # (`future_actions`). This fallback keeps older batches working.
         actions_target = actions[:, -self.action_horizon :, :]
+        aux_losses = {}
+        if self.latent_action_head is not None:
+            latent_output = self.latent_action_head(embodied_action_tokens, actions_target)
+            latent_action_tokens = latent_output.tokens
+            aux_losses = {
+                "latent_action_loss": latent_output.loss,
+                "latent_action_vq_loss": latent_output.vq_loss,
+                "latent_action_prior_loss": latent_output.prior_loss,
+                "latent_action_perplexity": latent_output.perplexity,
+            }
         actions_target_repeated = actions_target.repeat_interleave(self.repeated_diffusion_steps, dim=0)
         conditioning_tokens = self._conditioning_tokens(embodied_action_tokens, latent_action_tokens)
+        if self.lara_moe is not None:
+            moe_output = self.lara_moe(conditioning_tokens, latent_action_tokens=latent_action_tokens)
+            conditioning_tokens = moe_output.tokens
+            aux_losses.update(
+                {
+                    "moe_router_loss": moe_output.loss,
+                    "moe_router_entropy": moe_output.router_entropy,
+                    "moe_posterior_entropy": moe_output.posterior_entropy,
+                }
+            )
         context_repeated = conditioning_tokens.repeat_interleave(self.repeated_diffusion_steps, dim=0)
 
         state_tensor = self._state_to_tensor(state, embodied_action_tokens)
@@ -135,7 +190,20 @@ class ActionHeadAdapter(nn.Module):
             else None
         )
 
-        return self.action_model(context_repeated, actions_target_repeated, state_repeated)
+        action_loss = self.action_model(context_repeated, actions_target_repeated, state_repeated)
+        if not return_aux:
+            return (
+                action_loss
+                + aux_losses.get("latent_action_loss", 0.0)
+                + aux_losses.get("moe_router_loss", 0.0)
+            )
+        aux_losses["action_loss"] = action_loss
+        aux_losses["total_action_loss"] = (
+            action_loss
+            + aux_losses.get("latent_action_loss", 0.0)
+            + aux_losses.get("moe_router_loss", 0.0)
+        )
+        return aux_losses
 
     @torch.no_grad()
     def predict_action(
@@ -144,6 +212,10 @@ class ActionHeadAdapter(nn.Module):
         state: Optional[np.ndarray] = None,
         latent_action_tokens: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        if self.latent_action_head is not None:
+            latent_action_tokens = self.latent_action_head.predict(embodied_action_tokens)
         conditioning_tokens = self._conditioning_tokens(embodied_action_tokens, latent_action_tokens)
+        if self.lara_moe is not None:
+            conditioning_tokens = self.lara_moe.predict(conditioning_tokens)
         state_tensor = self._state_to_tensor(state, embodied_action_tokens)
         return self.action_model.predict_action(conditioning_tokens, state_tensor)

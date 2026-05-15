@@ -41,8 +41,13 @@ class QwenActionTokenizer(nn.Module):
 
         self.action_tokens = action_tokens
         self.replace_prompt: Optional[str] = None
-        self.embodied_replace_prompt = embodied_action_token * (
+        self.num_prediction_steps: Optional[int] = None
+        self.expected_action_token_count: Optional[int] = None
+        self.expected_embodied_action_token_count = (
             self.config.framework.vj2_model.num_embodied_action_tokens_per_instruction
+        )
+        self.embodied_replace_prompt = embodied_action_token * (
+            self.expected_embodied_action_token_count
         )
 
     @property
@@ -50,12 +55,30 @@ class QwenActionTokenizer(nn.Module):
         return self.qwen_vl_interface.model.config.hidden_size
 
     def configure_world_tokens(self, num_prediction_steps: int) -> None:
+        if num_prediction_steps > len(self.action_tokens):
+            raise ValueError(
+                f"Requested {num_prediction_steps} world prediction steps, "
+                f"but tokenizer only has {len(self.action_tokens)} action token groups."
+            )
+        self.num_prediction_steps = num_prediction_steps
+        self.expected_action_token_count = (
+            num_prediction_steps * self.config.framework.vj2_model.num_action_tokens_per_timestep
+        )
         self.replace_prompt = "".join(
             [
                 token * self.config.framework.vj2_model.num_action_tokens_per_timestep
                 for token in self.action_tokens[:num_prediction_steps]
             ]
         )
+
+    @staticmethod
+    def _validate_token_mask(mask: torch.Tensor, expected_count: int, stream_name: str) -> None:
+        counts = mask.sum(dim=1)
+        if not torch.all(counts == expected_count):
+            raise ValueError(
+                f"Unexpected {stream_name} token count per sample: got {counts.detach().cpu().tolist()}, "
+                f"expected {expected_count}. Check prompt template, tokenizer expansion, and prompt replacement."
+            )
 
     def expand_tokenizer(
         self,
@@ -111,14 +134,21 @@ class QwenActionTokenizer(nn.Module):
             prompt_template=prompt_template,
         )
 
-        action_indices = torch.isin(
+        expected_action_count = self.expected_action_token_count
+        if expected_action_count is None:
+            raise RuntimeError("configure_world_tokens() did not set expected action token count.")
+        expected_embodied_count = self.expected_embodied_action_token_count if include_embodied_tokens else 0
+
+        action_mask = torch.isin(
             qwen_inputs["input_ids"],
             torch.tensor(self.action_token_ids, device=qwen_inputs["input_ids"].device),
-        ).nonzero(as_tuple=True)
-        embodied_action_indices = torch.isin(
+        )
+        embodied_action_mask = torch.isin(
             qwen_inputs["input_ids"],
             torch.tensor([self.embodied_action_token_id], device=qwen_inputs["input_ids"].device),
-        ).nonzero(as_tuple=True)
+        )
+        self._validate_token_mask(action_mask, expected_action_count, "latent action")
+        self._validate_token_mask(embodied_action_mask, expected_embodied_count, "embodied action")
 
         with torch.autocast("cuda", dtype=torch.bfloat16):
             qwenvl_outputs = self.qwen_vl_interface(
@@ -129,12 +159,10 @@ class QwenActionTokenizer(nn.Module):
             )
             last_hidden = qwenvl_outputs.hidden_states[-1]
             batch_size, _, hidden_size = last_hidden.shape
-            action_tokens = last_hidden[action_indices[0], action_indices[1], :].view(
-                batch_size, -1, hidden_size
+            action_tokens = last_hidden[action_mask].view(batch_size, expected_action_count, hidden_size)
+            embodied_action_tokens = last_hidden[embodied_action_mask].view(
+                batch_size, expected_embodied_count, hidden_size
             )
-            embodied_action_tokens = last_hidden[
-                embodied_action_indices[0], embodied_action_indices[1], :
-            ].view(batch_size, -1, hidden_size)
 
         return QwenActionContext(
             last_hidden=last_hidden,

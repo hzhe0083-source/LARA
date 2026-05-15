@@ -10,7 +10,13 @@ latent action tokens + embodied action tokens -> continuous follower-arm action 
 
 The SO101 path intentionally does not default to the VLA-JEPA Real-world checkpoint, because that checkpoint is adapted to other robot embodiments. For SO101, the training target is the follower arm `action` and `state` from the local LeRobot dataset.
 
-## Current Scope
+## Implementation Status
+
+The manuscript in [`document/LARA_collapse_paper.tex`](./document/LARA_collapse_paper.tex) describes the intended full LARA algorithm. The code in this repository has only implemented the VLA/action-baseline part so far.
+
+See [`document/IMPLEMENTATION_GAP.md`](./document/IMPLEMENTATION_GAP.md) for the current paper-to-code gap list and recommended implementation order.
+
+Completed in code:
 
 - SO101 single-arm LeRobot dataset support.
 - VLA-JEPA Pretrain checkpoint loading.
@@ -20,14 +26,31 @@ The SO101 path intentionally does not default to the VLA-JEPA Real-world checkpo
   - `execution_horizon: 10`
   - at 30 Hz, predict 2.0 seconds and execute the first 0.333 seconds before re-observing.
 
-Not implemented yet:
+Experimental scaffolding exists but is not complete or validated:
 
-- latent action posterior encoder
-- VQ/codebook latent action discretization
-- latent prior
-- MoE experts
-- episode/chunk routers
+- Stage-1 latent action head scaffold with posterior encoder, VQ codebook, and context-only prior (`use_latent_action_head: false` by default).
+- Stage-2 MoE/router scaffold with residual experts, posterior responsibility, chunk router, and episode pool router (`use_lara_moe: false` by default).
+
+Described in the paper but not implemented yet:
+
+- production-ready latent action training
+- MoE action experts
+- posterior responsibility training
+- episode-level pool routing
+- chunk-level top-k routing inside the resident pool
 - utility calibration
+- matched-compute and matched-resident-expert experiments
+
+In other words, the current code path is:
+
+```text
+VLA-JEPA/Qwen token stream
+  -> latent action tokens + embodied action tokens
+  -> flow-matching action head
+  -> continuous SO101 follower-arm action chunk
+```
+
+It is a baseline adapter for SO101 fine-tuning, not the final latent-action MoE/router implementation.
 
 ## Repository Layout
 

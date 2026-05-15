@@ -127,6 +127,19 @@ The model predicts or reconstructs a short action chunk
 \end{equation}
 rather than only a single action. Chunked control matters because a high-level intention is rarely expressed by one motor command; it is expressed by a short behavior sequence. Near the end of an episode, chunks that exceed the trajectory boundary are either omitted or evaluated with a valid-step mask.
 
+In deployment we distinguish the \emph{prediction horizon} $H_p$ from the
+\emph{execution horizon} $H_e$. The policy may predict a long future chunk
+$\hat{a}_{t:t+H_p-1}$, while the controller executes only the first
+$H_e$ actions before taking a new real observation and replanning. For the
+SO101 setting considered here, the default 30Hz configuration is
+\begin{equation}
+H_p=60,\qquad H_e=10.
+\label{eq:hp_he}
+\end{equation}
+Thus each policy call predicts two seconds of future actions, but only the
+first one third of a second is actually sent to the robot before the next
+closed-loop update.
+
 We also allow a chunk-level state transition target. Instead of generating every intermediate image frame, the model predicts a control-sufficient future latent state at the chunk boundary,
 \begin{equation}
 \hat{h}_{t+H}=T_\psi(h_t,z_t^a),
@@ -138,6 +151,20 @@ where $z_t^a$ is the latent action code introduced in the next section. The targ
 \label{eq:target_state}
 \end{equation}
 with $\bar{F}$ denoting a stop-gradient encoder or a slowly updated target encoder. This avoids the cost of high-frequency video generation while preserving supervision about where the system should be after executing the chunk.
+
+With separate prediction and execution horizons, the transition objective can
+supervise both the state at the next real replanning point and the longer
+future structure:
+\begin{equation}
+\mathcal{L}_{\mathrm{state}} =
+\lambda_{\mathrm{exec}}\|\hat{h}_{t+H_e}-\sg(\bar{h}_{t+H_e})\|_2^2
++\lambda_{\mathrm{pred}}\|\hat{h}_{t+H_p}-\sg(\bar{h}_{t+H_p})\|_2^2.
+\label{eq:dual_horizon_state_loss}
+\end{equation}
+The $H_e$ term is the closed-loop term: it corresponds to the state at which
+the robot will re-observe and replan. The $H_p$ term is an auxiliary long-range
+target that encourages the latent action to preserve future structure beyond
+the immediately executed segment.
 
 \section{Learning Latent Action Codes}
 
@@ -208,12 +235,21 @@ The framework does not require high-frequency visual rollout generation. Instead
 \begin{equation}
 \hat{h}_{t+H}=T_\psi(h_t,z_t^a).
 \end{equation}
-The state prediction loss is
+When a single chunk horizon is used, the state prediction loss is
 \begin{equation}
 \mathcal{L}_{\mathrm{state}}=\|T_\psi(h_t,z_t^a)-\sg(\bar{h}_{t+H})\|_2^2.
 \label{eq:state_loss}
 \end{equation}
-A contrastive variant can replace the squared loss by pulling $\hat{h}_{t+H}$ toward the true boundary state and pushing it away from negative boundary states from other chunks. This objective makes the latent action useful not only for reconstructing the demonstrated action chunk, but also for predicting where the system will be after executing the chunk. For a pure imitation variant, the transition head is optional; for the full utility-calibrated LARA model, we include it by default because it provides the main chunk-level predictive substrate for scoring candidate experts and routes.
+In the receding-horizon variant, Eq.~\ref{eq:dual_horizon_state_loss} replaces
+this single-boundary loss. A contrastive variant can replace either squared
+term by pulling the predicted latent state toward the true boundary state and
+pushing it away from negative boundary states from other chunks. This objective
+makes the latent action useful not only for reconstructing the demonstrated
+action chunk, but also for predicting where the system will be at the next
+closed-loop replanning point and at the longer prediction boundary. For a pure
+imitation variant, the transition head is optional; for the full
+utility-calibrated LARA model, we include it by default because it provides the
+main chunk-level predictive substrate for scoring candidate experts and routes.
 
 \begin{figure}[t]
   \centering
@@ -435,11 +471,11 @@ The latent regularizer $\mathcal{L}_{\mathrm{latent}}$ contains the codebook, co
 \begin{algorithm}[H]
 \caption{Training Latent-Action Routing}
 \begin{algorithmic}[1]
-\State Sample demonstration chunks $(o_t,g,p_t,a_{t-k:t-1},a_{t:t+H-1},o_{t+H},p_{t+H})$.
-\State Encode current and boundary states: $h_t=F_\theta(o_t,g,p_t,a_{t-k:t-1})$, $\bar{h}_{t+H}=\bar{F}(o_{t+H},g,p_{t+H},a_{t+H-k:t+H-1})$.
-\State Infer posterior latent action embedding $e_t=E_\phi(h_t,a_{t:t+H-1})$ and obtain $z_t^a$ by quantization or continuous sampling.
+\State Sample demonstration chunks $(o_t,g,p_t,a_{t-k:t-1},a_{t:t+H_p-1},o_{t+H_e},p_{t+H_e},o_{t+H_p},p_{t+H_p})$.
+\State Encode current and boundary states: $h_t=F_\theta(o_t,g,p_t,a_{t-k:t-1})$, $\bar{h}_{t+H_e}=\bar{F}(o_{t+H_e},g,p_{t+H_e},a_{t+H_e-k:t+H_e-1})$, and $\bar{h}_{t+H_p}=\bar{F}(o_{t+H_p},g,p_{t+H_p},a_{t+H_p-k:t+H_p-1})$.
+\State Infer posterior latent action embedding $e_t=E_\phi(h_t,a_{t:t+H_p-1})$ and obtain $z_t^a$ by quantization or continuous sampling.
 \State Train action decoder and chunk-boundary transition with $\mathcal{L}_{\mathrm{chunk}}$ and $\mathcal{L}_{\mathrm{state}}$.
-\State Compute posterior expert responsibilities $q_{\mathrm{post}}(m|h_t,a_{t:t+H-1})$.
+\State Compute posterior expert responsibilities $q_{\mathrm{post}}(m|h_t,a_{t:t+H_p-1})$.
 \State Update experts with responsibility-weighted loss $\mathcal{L}_{\mathrm{expert}}$.
 \State Optionally aggregate responsibilities over the episode and train $p_\chi(P_\tau|g,h_1,b)$ with $\mathcal{L}_{\mathrm{pool}}$.
 \State Train the chunk-level prior router $p_\rho(m|h_t,P_\tau)$ by distillation from $q_{\mathrm{post}}$.
@@ -450,9 +486,33 @@ The latent regularizer $\mathcal{L}_{\mathrm{latent}}$ contains the codebook, co
 
 At inference time, the system executes only the context encoder, deployable router, selected experts, and action decoder:
 \begin{equation}
- (g,h_1,b)\rightarrow P_\tau,\qquad h_t\rightarrow S_t\subseteq P_\tau\rightarrow \hat{a}_{t:t+H-1}.
+ (g,h_1,b)\rightarrow P_\tau,\qquad h_t\rightarrow S_t\subseteq P_\tau\rightarrow \hat{a}_{t:t+H_p-1}.
 \end{equation}
-If the episode pool is disabled, $P_\tau$ is the full expert set. The posterior action encoder, future-action teacher, and counterfactual candidate scoring are training-time mechanisms.
+Only the prefix $\hat{a}_{t:t+H_e-1}$ is executed. The next policy call starts
+from the real observation and proprioception at $t+H_e$, not from a predicted
+latent state:
+\begin{equation}
+o_{t+H_e},p_{t+H_e}\rightarrow h_{t+H_e}\rightarrow
+\hat{a}_{t+H_e:t+H_e+H_p-1}.
+\end{equation}
+If the episode pool is disabled, $P_\tau$ is the full expert set. The posterior
+action encoder, future-action teacher, and counterfactual candidate scoring are
+training-time mechanisms. Predicted latent states are used for training and
+utility calibration, not as the next round's real closed-loop input.
+
+\subsection*{Current Repository Implementation Status}
+
+The current repository implements only the SO101 VLA-JEPA action baseline: the
+pretrained VLA representation is reused, latent and embodied action tokens are
+extracted from the token stream, and a flow-matching action head predicts the
+continuous follower-arm action chunk. This is not yet the full LARA algorithm in
+this manuscript. In particular, production-ready latent-action training, MoE
+action experts, posterior responsibility training, the episode-level pool
+router, the chunk-level top-$k$ router inside the resident pool, and
+counterfactual utility calibration remain future implementation work. Any
+current latent-action or MoE/router code should be treated as disabled
+experimental scaffolding until it has full training, diagnostic, and closed-loop
+validation.
 
 \section{Experimental Protocol}
 

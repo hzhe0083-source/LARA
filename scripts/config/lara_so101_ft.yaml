@@ -32,6 +32,20 @@ framework:
     past_action_window_size: 0
     repeated_diffusion_steps: 8
     use_latent_action_tokens: true
+    use_latent_action_head: false
+    lara_num_latent_tokens: 4
+    lara_codebook_size: 128
+    lara_latent_hidden_dim: 1024
+    lara_commitment_weight: 0.25
+    lara_vq_loss_weight: 1.0
+    lara_prior_loss_weight: 1.0
+    use_lara_moe: false
+    lara_num_experts: 8
+    lara_top_k: 2
+    lara_expert_hidden_dim: 1024
+    lara_router_hidden_dim: 1024
+    lara_router_loss_weight: 1.0
+    lara_expert_residual_scale: 0.1
     noise_beta_alpha: 1.5
     noise_beta_beta: 1.0
     noise_s: 0.999

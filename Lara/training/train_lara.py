@@ -42,7 +42,13 @@ from transformers import AutoProcessor, get_scheduler
 from Lara.training.trainer_utils.trainer_tools import normalize_dotlist_args
 from Lara.model.framework import build_framework
 from Lara.training.trainer_utils.trainer_tools import TrainerUtils
-from Lara.training.trainer_utils.trainer_tools import build_param_lr_groups
+from Lara.training.trainer_utils.trainer_tools import (
+    barrier_if_distributed,
+    build_param_lr_groups,
+    get_rank,
+    is_dist_ready,
+    is_main_process,
+)
 
 deepspeed_plugin = DeepSpeedPlugin()
 accelerator = Accelerator(
@@ -70,7 +76,7 @@ def setup_directories(cfg) -> Path:
     cfg.output_dir = os.path.join(cfg.run_root_dir, cfg.run_id)
     output_dir = Path(cfg.output_dir)
 
-    if not dist.is_initialized() or dist.get_rank() == 0:
+    if is_main_process():
         # create output directory and checkpoint directory
         os.makedirs(output_dir, exist_ok=True)
         os.makedirs(output_dir / "checkpoints", exist_ok=True)
@@ -103,7 +109,7 @@ def prepare_data(cfg, accelerator, output_dir) -> Tuple[DataLoader, DataLoader]:
     vla_train_dataloader = build_dataloader(cfg=cfg, dataset_py=cfg.datasets.vla_data.dataset_py)
 
     accelerator.dataloader_config.dispatch_batches = False
-    dist.barrier()
+    barrier_if_distributed()
 
     return vla_train_dataloader
 
@@ -121,7 +127,7 @@ def setup_optimizer_and_scheduler(model, cfg) -> Tuple[torch.optim.Optimizer, to
     )
 
     # print optimizer group info
-    if dist.is_initialized() and dist.get_rank() == 0:
+    if is_main_process():
         for i, group in enumerate(optimizer.param_groups):
             logger.info(f"LR Group {group['name']}: lr={group['lr']}, num_params={len(group['params'])}")
 
@@ -152,7 +158,7 @@ class VLATrainer(TrainerUtils):
         self.total_batch_size = self._calculate_total_batch_size()
 
     def prepare_training(self):
-        rank = dist.get_rank() if dist.is_initialized() else 0
+        rank = get_rank()
         seed = self.config.seed + rank if hasattr(self.config, "seed") else rank + 3047
         set_seed(seed)
 
@@ -226,7 +232,7 @@ class VLATrainer(TrainerUtils):
     def _save_checkpoint(self):
         """save current training state"""
 
-        if accelerator.is_main_process:
+        if self.accelerator.is_main_process:
 
             checkpoint_path = os.path.join(self.checkpoint_dir, f"steps_{self.completed_steps}")
             # save model state
@@ -240,12 +246,12 @@ class VLATrainer(TrainerUtils):
             with open(os.path.join(self.config.output_dir, "summary.jsonl"), "a") as f:
                 f.write(json.dumps(summary_data) + "\n")
             self.accelerator.print(f"✅ Checkpoint saved at {checkpoint_path}")
-        accelerator.wait_for_everyone()
+        self.accelerator.wait_for_everyone()
 
     def _log_metrics(self, metrics):
         """record training metrics"""
         if self.completed_steps % self.config.trainer.logging_frequency == 0:
-            if dist.get_rank() == 0:
+            if is_main_process():
                 # add learning rate
                 metrics["learning_rate"] = self.lr_scheduler.get_last_lr()[0]
 
@@ -460,8 +466,7 @@ class VLATrainer(TrainerUtils):
             self.writer.add_scalar("mae_score", step_metrics["mae_score"], self.completed_steps)
             self.writer.add_scalar("mse_score", step_metrics["mse_score"], self.completed_steps)
         
-        pass
-        dist.barrier()  # ensure all processes are synchronized
+        barrier_if_distributed()
         return step_metrics
 
     def _log_training_config(self):
@@ -476,7 +481,6 @@ class VLATrainer(TrainerUtils):
     def _train_step(self, batch_vla, batch_vlm=None):
         """execute single training step"""
         with self.accelerator.accumulate(self.model):
-            self.optimizer.zero_grad()
             # VLA task forward propagation
             with torch.autocast("cuda", dtype=torch.bfloat16):
                 output_dict = self.model.forward(batch_vla)
@@ -487,12 +491,13 @@ class VLATrainer(TrainerUtils):
             self.accelerator.backward(total_loss)
 
             # gradient clipping
-            if self.config.trainer.gradient_clipping is not None:
+            if self.accelerator.sync_gradients and self.config.trainer.gradient_clipping is not None:
                 self.accelerator.clip_grad_norm_(self.model.parameters(), self.config.trainer.gradient_clipping)
 
             # optimizer step
             self.optimizer.step()
             self.lr_scheduler.step()
+            self.optimizer.zero_grad(set_to_none=True)
             
             result_dict = {k: v.item() for k, v in output_dict.items()}
 
@@ -546,8 +551,9 @@ def main(cfg) -> None:
 
     # And... we're done!
     logger.info("... and that's all, folks!")
-    dist.barrier()
-    dist.destroy_process_group()
+    barrier_if_distributed()
+    if is_dist_ready():
+        dist.destroy_process_group()
 
 
 if __name__ == "__main__":
@@ -562,7 +568,7 @@ if __name__ == "__main__":
     cfg = OmegaConf.merge(cfg, cli_cfg)
 
     # if cfg.is_debug:
-    if cfg.is_debug and dist.is_initialized() and dist.get_rank() == 0:
+    if cfg.is_debug and is_main_process():
         import debugpy
         debugpy.listen(("0.0.0.0", 10092))
         print("🔍 Rank 0 waiting for debugger attach on port 10092...")

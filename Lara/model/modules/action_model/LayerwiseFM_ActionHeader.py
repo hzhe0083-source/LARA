@@ -264,7 +264,12 @@ class LayerwiseFlowmatchingActionHead(nn.Module):
 
     def sample_time(self, batch_size, device, dtype):
         sample = self.beta_dist.sample([batch_size]).to(device, dtype=dtype)
-        return (self.config.noise_s - sample) / self.config.noise_s
+        t = (self.config.noise_s - sample) / self.config.noise_s
+        return t.clamp(0.0, 1.0 - 1e-6)
+
+    def discretize_time(self, t: torch.Tensor) -> torch.Tensor:
+        t = t.clamp(0.0, 1.0 - 1e-6)
+        return (t * self.num_timestep_buckets).long().clamp(0, self.num_timestep_buckets - 1)
 
     def prepare_input(self, batch: dict) -> BatchFeature:
         return BatchFeature(data=batch)
@@ -301,7 +306,7 @@ class LayerwiseFlowmatchingActionHead(nn.Module):
         velocity = actions - noise
 
         # Convert (continuous) t -> discrete if needed
-        t_discretized = (t[:, 0, 0] * self.num_timestep_buckets).long()
+        t_discretized = self.discretize_time(t[:, 0, 0])
         action_features = self.action_encoder(noisy_trajectory, t_discretized)
 
         # Embed state
@@ -363,7 +368,7 @@ class LayerwiseFlowmatchingActionHead(nn.Module):
         # Run denoising steps.
         for t in range(num_steps):
             t_cont = t / float(num_steps)
-            t_discretized_int = int(t_cont * self.num_timestep_buckets)
+            t_discretized_int = min(int(t_cont * self.num_timestep_buckets), self.num_timestep_buckets - 1)
             timesteps_tensor = torch.full(
                 size=(batch_size,), fill_value=t_discretized_int, device=device, dtype=torch.long
             )

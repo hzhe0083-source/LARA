@@ -1,0 +1,91 @@
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def read(path: str) -> str:
+    return (ROOT / path).read_text()
+
+
+def test_qwen_checks_special_token_counts_before_view():
+    src = read("Lara/model/framework/qwen.py")
+    assert "def _validate_token_mask" in src
+    assert "Unexpected {stream_name} token count per sample" in src
+    assert "expected_action_token_count" in src
+    assert "expected_embodied_action_token_count" in src
+    assert "last_hidden[action_mask].view(batch_size, expected_action_count, hidden_size)" in src
+
+
+def test_flow_matching_timestep_buckets_are_clamped():
+    for path in [
+        "Lara/model/modules/action_model/GR00T_ActionHeader.py",
+        "Lara/model/modules/action_model/LayerwiseFM_ActionHeader.py",
+    ]:
+        src = read(path)
+        assert "def discretize_time" in src
+        assert "clamp(0, self.num_timestep_buckets - 1)" in src
+        assert "self.discretize_time(t[:, 0, 0])" in src
+
+
+def test_train_lara_gradient_accumulation_pattern():
+    src = read("Lara/training/train_lara.py")
+    assert "with self.accelerator.accumulate(self.model):\n            self.optimizer.zero_grad()" not in src
+    assert "if self.accelerator.sync_gradients and self.config.trainer.gradient_clipping is not None:" in src
+    assert "self.optimizer.zero_grad(set_to_none=True)" in src
+
+
+def test_so101_batches_expose_future_actions():
+    dataset_src = read("Lara/dataloader/gr00t_lerobot/datasets.py")
+    core_src = read("Lara/model/framework/Lara_core.py")
+    assert "future_actions=action" in dataset_src
+    assert '"future_actions" if "future_actions" in examples[0] else "action"' in core_src
+
+
+def test_aux_action_losses_are_not_double_counted_by_trainer():
+    core_src = read("Lara/model/framework/Lara_core.py")
+    assert '"action_loss": action_output["total_action_loss"]' in core_src
+    assert "for key, value in action_output.items()" not in core_src
+
+
+def test_optional_latent_action_head_stage_one_exists():
+    latent_src = read("Lara/model/modules/action_model/lara_latent.py")
+    adapter_src = read("Lara/model/framework/act.py")
+    config_src = read("scripts/config/lara_so101_ft.yaml")
+    assert "class PosteriorLatentActionEncoder" in latent_src
+    assert "class VectorQuantizer" in latent_src
+    assert "class LatentActionPrior" in latent_src
+    assert "class LatentActionHead" in latent_src
+    assert "use_latent_action_head" in adapter_src
+    assert "self.latent_action_head.predict" in adapter_src
+    assert "use_latent_action_head: false" in config_src
+
+
+def test_optional_moe_router_stage_two_exists():
+    moe_src = read("Lara/model/modules/action_model/lara_moe.py")
+    adapter_src = read("Lara/model/framework/act.py")
+    config_src = read("scripts/config/lara_so101_ft.yaml")
+    gap = read("document/IMPLEMENTATION_GAP.md")
+    assert "class LatentActionMoE" in moe_src
+    assert "class PosteriorResponsibilityHead" in moe_src
+    assert "class ChunkRouter" in moe_src
+    assert "class EpisodePoolRouter" in moe_src
+    assert "def masked_topk_softmax" in moe_src
+    assert "use_lara_moe" in adapter_src
+    assert "moe_router_loss" in adapter_src
+    assert "use_lara_moe: false" in config_src
+    assert "Stage-2 MoE/router scaffold" in gap
+
+
+def test_paper_gap_is_explicit():
+    readme = read("README.md")
+    gap = read("document/IMPLEMENTATION_GAP.md")
+    assert "only implemented the VLA/action-baseline part" in readme
+    assert "not the final latent-action MoE/router implementation" in readme
+    assert "Experimental scaffolding exists but is not complete or validated" in readme
+    assert "Missing Paper Components" in gap
+    assert "MoE action experts" in gap
+    assert "Episode-level pool router" in gap
+    assert "Chunk-level top-k router" in gap
+    assert "Episode-level pool router" in gap
+    assert "Chunk-level top-k router" in gap

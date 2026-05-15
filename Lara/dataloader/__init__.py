@@ -9,6 +9,7 @@ import numpy as np
 import torch.distributed as dist
 from pathlib import Path
 from Lara.dataloader.vlm_datasets import make_vlm_dataloader
+from Lara.training.trainer_utils.trainer_tools import is_main_process
 
 logger = get_logger(__name__)
 
@@ -53,7 +54,7 @@ def build_dataloader(cfg, dataset_py="lerobot_datasets_oxe"): # TODO now here on
             num_workers=8,
             # shuffle=True
         )        
-        if dist.get_rank() == 0: 
+        if is_main_process():
             
             output_dir = Path(cfg.output_dir)
             vla_dataset.save_dataset_statistics(output_dir / "dataset_statistics.json")
