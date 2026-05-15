@@ -17,6 +17,8 @@ class MoEConditionerOutput:
     utility_head_loss: torch.Tensor
     balance_loss: torch.Tensor
     stickiness_loss: torch.Tensor
+    diversity_loss: torch.Tensor
+    entropy_loss: torch.Tensor
     utility_calibration_error: torch.Tensor
     utility_scores: Optional[torch.Tensor]
     utility_value_scores: Optional[torch.Tensor]
@@ -179,6 +181,24 @@ def route_stickiness_loss(router_probs: torch.Tensor, previous_router_probs: tor
             f"got {tuple(previous_router_probs.shape)}"
         )
     return torch.mean(torch.abs(router_probs - previous_router_probs.to(router_probs.device, router_probs.dtype)))
+
+
+def expert_diversity_loss(expert_outputs: torch.Tensor) -> torch.Tensor:
+    if expert_outputs.ndim != 4:
+        raise ValueError(f"Expected expert_outputs [B, M, T, D], got {tuple(expert_outputs.shape)}")
+    num_experts = expert_outputs.shape[1]
+    if num_experts < 2:
+        return expert_outputs.new_zeros(())
+
+    vectors = expert_outputs.permute(1, 0, 2, 3).reshape(num_experts, -1).float()
+    vectors = F.normalize(vectors, dim=-1)
+    similarity = vectors @ vectors.t()
+    off_diagonal = ~torch.eye(num_experts, dtype=torch.bool, device=expert_outputs.device)
+    return similarity[off_diagonal].pow(2).mean().to(dtype=expert_outputs.dtype)
+
+
+def route_entropy_regularization_loss(router_probs: torch.Tensor, pool_probs: torch.Tensor) -> torch.Tensor:
+    return -(entropy(router_probs) + entropy(pool_probs))
 
 
 def route_switch_rate(route_ids: torch.Tensor, valid_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
@@ -678,6 +698,8 @@ class LatentActionMoE(nn.Module):
         utility_head_loss_weight: float = 0.0,
         balance_loss_weight: float = 0.0,
         stickiness_loss_weight: float = 0.0,
+        diversity_loss_weight: float = 0.0,
+        entropy_loss_weight: float = 0.0,
         use_utility_head: bool = False,
         utility_hidden_size: Optional[int] = None,
         utility_progress_weight: float = 1.0,
@@ -701,6 +723,8 @@ class LatentActionMoE(nn.Module):
         self.utility_head_loss_weight = utility_head_loss_weight
         self.balance_loss_weight = balance_loss_weight
         self.stickiness_loss_weight = stickiness_loss_weight
+        self.diversity_loss_weight = diversity_loss_weight
+        self.entropy_loss_weight = entropy_loss_weight
         self.posterior_temperature = posterior_temperature
         self.posterior_uniform_floor = posterior_uniform_floor
         self.posterior_top_r = posterior_top_r
@@ -742,13 +766,15 @@ class LatentActionMoE(nn.Module):
             router_hidden_size=router_hidden_size,
         )
 
-    def _expert_residual(self, tokens: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
-        expert_outputs = torch.stack([expert(tokens) for expert in self.experts], dim=1)
+    def _expert_outputs(self, tokens: torch.Tensor) -> torch.Tensor:
+        return torch.stack([expert(tokens) for expert in self.experts], dim=1)
+
+    def _expert_residual(self, expert_outputs: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
         return torch.sum(expert_outputs * weights[:, :, None, None], dim=1)
 
     def expert_conditioning_tokens(self, conditioning_tokens: torch.Tensor) -> torch.Tensor:
         self._validate_inputs(conditioning_tokens, latent_action_tokens=None)
-        expert_outputs = torch.stack([expert(conditioning_tokens) for expert in self.experts], dim=1)
+        expert_outputs = self._expert_outputs(conditioning_tokens)
         return conditioning_tokens[:, None, :, :] + expert_outputs
 
     def _validate_inputs(
@@ -873,7 +899,8 @@ class LatentActionMoE(nn.Module):
 
         has_training_teacher = expert_action_losses is not None or latent_action_tokens is not None
         weights = train_weights if self.training and has_training_teacher else router_probs
-        tokens = conditioning_tokens + self._expert_residual(conditioning_tokens, weights)
+        expert_outputs = self._expert_outputs(conditioning_tokens)
+        tokens = conditioning_tokens + self._expert_residual(expert_outputs, weights)
         utility_value_scores = None
         utility_progress_scores = None
         utility_uncertainty_scores = None
@@ -912,6 +939,8 @@ class LatentActionMoE(nn.Module):
             if previous_router_probs is not None
             else router_logits.new_zeros(())
         )
+        diversity_loss = expert_diversity_loss(expert_outputs)
+        entropy_loss = route_entropy_regularization_loss(router_probs, pool_probs)
         total_loss = (
             self.router_loss_weight * route_loss
             + self.pool_loss_weight * pool_loss
@@ -919,6 +948,8 @@ class LatentActionMoE(nn.Module):
             + self.utility_head_loss_weight * utility_head_loss
             + self.balance_loss_weight * balance_loss
             + self.stickiness_loss_weight * stickiness_loss
+            + self.diversity_loss_weight * diversity_loss
+            + self.entropy_loss_weight * entropy_loss
         )
         diagnostics = route_diagnostics(
             router_probs=router_probs.detach(),
@@ -936,6 +967,8 @@ class LatentActionMoE(nn.Module):
             utility_head_loss=utility_head_loss.detach(),
             balance_loss=balance_loss.detach(),
             stickiness_loss=stickiness_loss.detach(),
+            diversity_loss=diversity_loss.detach(),
+            entropy_loss=entropy_loss.detach(),
             utility_calibration_error=utility_calibration_error.detach(),
             utility_scores=utility_scores.detach() if utility_scores is not None else None,
             utility_value_scores=utility_value_scores.detach() if utility_value_scores is not None else None,

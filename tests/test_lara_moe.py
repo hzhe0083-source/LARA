@@ -9,9 +9,11 @@ from Lara.model.modules.action_model.lara_moe import (
     aggregate_episode_responsibilities,
     candidate_route_utility,
     centered_utility_targets,
+    expert_diversity_loss,
     masked_topk_softmax,
     posterior_from_expert_losses,
     retained_probability_mass,
+    route_entropy_regularization_loss,
     route_switch_rate,
     route_stickiness_loss,
     sparse_route_budget,
@@ -458,6 +460,22 @@ class LatentActionMoETest(unittest.TestCase):
         self.assertLess(float(uniform_balance_loss(balanced)), float(uniform_balance_loss(collapsed)))
         self.assertGreater(float(route_stickiness_loss(balanced, previous)), 0.0)
 
+    def test_expert_diversity_loss_penalizes_identical_outputs(self):
+        identical = torch.tensor([[[[1.0, 0.0]], [[1.0, 0.0]]]])
+        diverse = torch.tensor([[[[1.0, 0.0]], [[0.0, 1.0]]]])
+
+        self.assertGreater(float(expert_diversity_loss(identical)), float(expert_diversity_loss(diverse)))
+        self.assertEqual(float(expert_diversity_loss(torch.ones(1, 1, 1, 2))), 0.0)
+
+    def test_route_entropy_regularizer_prefers_higher_entropy(self):
+        collapsed = torch.tensor([[1.0, 0.0]])
+        uniform = torch.tensor([[0.5, 0.5]])
+
+        self.assertLess(
+            float(route_entropy_regularization_loss(uniform, uniform)),
+            float(route_entropy_regularization_loss(collapsed, collapsed)),
+        )
+
     def test_forward_accepts_balance_and_stickiness_weights(self):
         torch.manual_seed(0)
         moe = LatentActionMoE(
@@ -479,6 +497,27 @@ class LatentActionMoETest(unittest.TestCase):
         self.assertTrue(torch.allclose(output.loss, expected))
         self.assertGreaterEqual(float(output.balance_loss), 0.0)
         self.assertGreaterEqual(float(output.stickiness_loss), 0.0)
+
+    def test_forward_accepts_diversity_and_entropy_weights(self):
+        torch.manual_seed(0)
+        moe = LatentActionMoE(
+            hidden_size=8,
+            num_experts=3,
+            top_k=2,
+            episode_pool_size=3,
+            expert_hidden_size=16,
+            router_hidden_size=12,
+            diversity_loss_weight=0.1,
+            entropy_loss_weight=0.2,
+        )
+        conditioning_tokens = torch.randn(2, 4, 8)
+
+        output = moe(conditioning_tokens)
+
+        expected = 0.1 * output.diversity_loss + 0.2 * output.entropy_loss
+        self.assertTrue(torch.allclose(output.loss, expected))
+        self.assertGreaterEqual(float(output.diversity_loss), 0.0)
+        self.assertLessEqual(float(output.entropy_loss), 0.0)
 
     def test_route_switch_rate_uses_valid_pairs(self):
         route_ids = torch.tensor(

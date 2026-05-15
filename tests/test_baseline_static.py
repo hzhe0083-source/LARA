@@ -115,6 +115,8 @@ def test_optional_moe_router_stage_two_exists():
     assert "def route_diagnostics" in moe_src
     assert "def uniform_balance_loss" in moe_src
     assert "def route_stickiness_loss" in moe_src
+    assert "def expert_diversity_loss" in moe_src
+    assert "def route_entropy_regularization_loss" in moe_src
     assert "def route_switch_rate" in moe_src
     assert "def retained_probability_mass" in moe_src
     assert "def sparse_route_budget" in moe_src
@@ -158,6 +160,8 @@ def test_optional_moe_router_stage_two_exists():
     assert "moe_pool_distill_loss" in adapter_src
     assert "moe_balance_loss" in adapter_src
     assert "moe_stickiness_loss" in adapter_src
+    assert "moe_diversity_loss" in adapter_src
+    assert "moe_entropy_loss" in adapter_src
     assert "moe_dead_expert_ratio" in adapter_src
     assert "moe_route_regret" in adapter_src
     assert "use_lara_moe: false" in config_src
@@ -168,6 +172,8 @@ def test_optional_moe_router_stage_two_exists():
     assert "lara_use_utility_head: false" in config_src
     assert "lara_balance_loss_weight: 0.0" in config_src
     assert "lara_stickiness_loss_weight: 0.0" in config_src
+    assert "lara_diversity_loss_weight: 0.0" in config_src
+    assert "lara_entropy_loss_weight: 0.0" in config_src
     assert "lara_use_direct_action_experts: false" in config_src
     assert "lara_use_direct_action_output: false" in config_src
     assert "lara_direct_expert_loss_weight: 1.0" in config_src
@@ -176,6 +182,7 @@ def test_optional_moe_router_stage_two_exists():
     assert "lara_posterior_top_r:" in config_src
     assert "lara_use_expert_loss_posterior: true" in config_src
     assert "Stage-2 MoE/router scaffold" in gap
+    assert "expert-diversity/entropy stabilizers" in gap
 
 
 def test_paper_gap_is_explicit():
