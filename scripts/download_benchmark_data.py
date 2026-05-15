@@ -175,6 +175,8 @@ def _load_json(path: Path) -> dict:
 def preflight_dataset(dataset: BenchmarkDataset) -> dict[str, object]:
     info_path = dataset.local_dir / "meta/info.json"
     stats_path = dataset.local_dir / "meta/stats.json"
+    tasks_parquet_path = dataset.local_dir / "meta/tasks.parquet"
+    tasks_jsonl_path = dataset.local_dir / "meta/tasks.jsonl"
     data_dir = dataset.local_dir / "data"
     videos_dir = dataset.local_dir / "videos"
     chunk_parquet_files = sorted(data_dir.glob("chunk-*/*.parquet")) if data_dir.exists() else []
@@ -192,6 +194,7 @@ def preflight_dataset(dataset: BenchmarkDataset) -> dict[str, object]:
         "local_dir": str(dataset.local_dir),
         "meta_info_exists": info_path.exists(),
         "meta_stats_exists": stats_path.exists(),
+        "meta_tasks_exists": tasks_parquet_path.exists() or tasks_jsonl_path.exists(),
         "chunk_parquet_files": len(chunk_parquet_files),
         "parquet_files": len(parquet_files),
         "video_files": len(video_files),
@@ -204,6 +207,8 @@ def preflight_dataset(dataset: BenchmarkDataset) -> dict[str, object]:
         problems.append("missing meta/info.json")
     if not stats_path.exists():
         problems.append("missing meta/stats.json")
+    if not (tasks_parquet_path.exists() or tasks_jsonl_path.exists()):
+        problems.append("missing meta/tasks.parquet or meta/tasks.jsonl")
     if not chunk_parquet_files:
         problems.append("missing data/chunk-*/*.parquet")
     elif len(chunk_parquet_files) < dataset.expected_data_parquet_files:
@@ -257,6 +262,7 @@ def print_preflight(report: dict[str, object]) -> None:
         "image_keys",
         "state_keys",
         "action_shape",
+        "meta_tasks_exists",
         "chunk_parquet_files",
         "parquet_files",
         "video_files",

@@ -138,6 +138,7 @@ def test_benchmark_dataset_entrypoints_are_explicit():
     assert "HF_HUB_DISABLE_XET" in downloader_src
     assert "chunk_parquet_files" in downloader_src
     assert "missing data/chunk-*/*.parquet" in downloader_src
+    assert "missing meta/tasks.parquet or meta/tasks.jsonl" in downloader_src
     assert "dataset_py: lerobot_v3_datasets" in libero_cfg
     assert "data_mix: libero100" in libero_cfg
     assert "state_dim: 9" in libero_cfg
