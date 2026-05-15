@@ -40,9 +40,27 @@ def apply_smoke_overrides(
     cfg: Any,
     *,
     attn_implementation: str | None = None,
+    use_latent_action_head: bool | None = None,
+    use_lara_moe: bool | None = None,
+    use_direct_action_experts: bool | None = None,
+    use_direct_action_output: bool | None = None,
 ) -> Any:
     if attn_implementation is not None:
         cfg.framework.qwenvl.attn_implementation = attn_implementation
+    action_cfg = cfg.framework.action_model
+    if use_latent_action_head is not None:
+        action_cfg.use_latent_action_head = bool(use_latent_action_head)
+    if use_lara_moe is not None:
+        action_cfg.use_lara_moe = bool(use_lara_moe)
+    if use_direct_action_experts is not None:
+        action_cfg.lara_use_direct_action_experts = bool(use_direct_action_experts)
+        if use_direct_action_experts:
+            action_cfg.use_lara_moe = True
+    if use_direct_action_output is not None:
+        action_cfg.lara_use_direct_action_output = bool(use_direct_action_output)
+        if use_direct_action_output:
+            action_cfg.use_lara_moe = True
+            action_cfg.lara_use_direct_action_experts = True
     return cfg
 
 
@@ -73,6 +91,9 @@ def smoke_config_summary(cfg: Any) -> dict[str, Any]:
         "num_world_model_views": int(cfg.framework.vj2_model.get("num_world_model_views", 2)),
         "use_latent_action_head": bool(action_cfg.use_latent_action_head),
         "use_lara_moe": bool(action_cfg.use_lara_moe),
+        "lara_use_direct_action_experts": bool(action_cfg.get("lara_use_direct_action_experts", False)),
+        "lara_use_direct_action_output": bool(action_cfg.get("lara_use_direct_action_output", False)),
+        "lara_use_transition_head": bool(action_cfg.get("lara_use_transition_head", False)),
         "use_lara_moe_default_safe": not bool(action_cfg.use_lara_moe),
         "attn_implementation": cfg.framework.qwenvl.get("attn_implementation", None),
         "reload_modules": cfg.trainer.get("reload_modules", None),
@@ -162,9 +183,20 @@ def smoke_lara_real_components(
     instantiate: bool = False,
     run_step: bool = False,
     attn_implementation: str | None = None,
+    use_latent_action_head: bool | None = None,
+    use_lara_moe: bool | None = None,
+    use_direct_action_experts: bool | None = None,
+    use_direct_action_output: bool | None = None,
 ) -> dict[str, Any]:
     cfg = load_config(config_path)
-    cfg = apply_smoke_overrides(cfg, attn_implementation=attn_implementation)
+    cfg = apply_smoke_overrides(
+        cfg,
+        attn_implementation=attn_implementation,
+        use_latent_action_head=use_latent_action_head,
+        use_lara_moe=use_lara_moe,
+        use_direct_action_experts=use_direct_action_experts,
+        use_direct_action_output=use_direct_action_output,
+    )
     summary = smoke_config_summary(cfg)
     path_status = check_required_paths(required_component_paths(cfg, require_data=require_data))
     result = {"summary": summary, "paths": path_status}
@@ -198,6 +230,29 @@ def main() -> int:
         choices=["flash_attention_2", "sdpa", "eager"],
         help="Temporarily override framework.qwenvl.attn_implementation for smoke checks.",
     )
+    parser.add_argument(
+        "--use-latent-action-head",
+        action="store_true",
+        help="Temporarily enable the default-off Stage-1 latent action head scaffold.",
+    )
+    parser.add_argument(
+        "--use-lara-moe",
+        action="store_true",
+        help="Temporarily enable the default-off Stage-2 MoE/router scaffold.",
+    )
+    parser.add_argument(
+        "--use-direct-action-experts",
+        action="store_true",
+        help="Temporarily enable direct action-chunk experts; this also enables --use-lara-moe.",
+    )
+    parser.add_argument(
+        "--use-direct-action-output",
+        action="store_true",
+        help=(
+            "Temporarily train/predict from routed direct action-chunk experts; "
+            "this also enables --use-lara-moe and --use-direct-action-experts."
+        ),
+    )
     args = parser.parse_args()
 
     result = smoke_lara_real_components(
@@ -206,6 +261,10 @@ def main() -> int:
         instantiate=args.instantiate,
         run_step=args.run_step,
         attn_implementation=args.attn_implementation,
+        use_latent_action_head=args.use_latent_action_head or None,
+        use_lara_moe=args.use_lara_moe or None,
+        use_direct_action_experts=args.use_direct_action_experts or None,
+        use_direct_action_output=args.use_direct_action_output or None,
     )
     print(json.dumps(result, indent=2, sort_keys=True))
     if result["paths"]["status"] != "ok":

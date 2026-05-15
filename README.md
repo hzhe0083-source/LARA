@@ -34,6 +34,7 @@ Experimental scaffolding exists but is not complete or validated:
 - Action-head MoE diagnostics include `metric/moe_route_quality_*` scalars for posterior/utility ranking, top-k consistency, route regret, and retained probability mass when MoE is enabled.
 - Matched-compute and matched-resident protocol helpers for subset-retention success aggregation, active/resident budget checks, result-table rows, and compute-success Pareto flags.
 - Minimal dummy-batch smoke coverage exists for `ActionHeadAdapter` forward and prediction shapes.
+- The real-component smoke script can temporarily enable the default-off Stage-1/Stage-2 scaffolds to prove they instantiate and complete a dummy forward/backward with local Qwen/V-JEPA checkpoints. This is an integration smoke check only; it is not full SO101 training or closed-loop validation.
 
 Described in the paper but not implemented yet:
 
@@ -114,6 +115,27 @@ python scripts/smoke_lara_real_components.py --config scripts/config/lara_so101_
 
 When the local Qwen/V-JEPA checkpoints and runtime dependencies are available, add `--instantiate` or `--run-step` to load the actual `Lara` framework and execute a one-step dummy forward/backward check. Use `--attn-implementation sdpa` or `--attn-implementation eager` to smoke-test environments that do not have FlashAttention2 installed. The `--run-step` path mirrors trainer/server device placement for V-JEPA and the action head. The smoke dummy follows the SO101 dataloader convention of two V-JEPA view streams; single-camera SO101 data is duplicated before entering the world model.
 Those modes return structured JSON errors if dependency import or model loading fails, which makes missing runtime packages easier to diagnose before launching training.
+
+To smoke-check paper-stage scaffolds without changing the default training config:
+
+```bash
+python scripts/smoke_lara_real_components.py \
+  --config scripts/config/lara_so101_ft.yaml \
+  --run-step \
+  --attn-implementation sdpa \
+  --use-latent-action-head
+
+python scripts/smoke_lara_real_components.py \
+  --config scripts/config/lara_so101_ft.yaml \
+  --run-step \
+  --attn-implementation sdpa \
+  --use-latent-action-head \
+  --use-lara-moe \
+  --use-direct-action-experts \
+  --use-direct-action-output
+```
+
+`--use-direct-action-experts` implies `--use-lara-moe`; `--use-direct-action-output` implies both. These flags are smoke-time overrides only.
 
 ## SO101 Dataset
 

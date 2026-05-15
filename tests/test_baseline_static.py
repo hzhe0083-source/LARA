@@ -172,6 +172,13 @@ def test_optional_moe_router_stage_two_exists():
     assert "--instantiate" in smoke_src
     assert "--run-step" in smoke_src
     assert "--attn-implementation" in smoke_src
+    assert "--use-latent-action-head" in smoke_src
+    assert "--use-lara-moe" in smoke_src
+    assert "--use-direct-action-experts" in smoke_src
+    assert "--use-direct-action-output" in smoke_src
+    assert "lara_use_direct_action_experts" in smoke_src
+    assert "lara_use_direct_action_output" in smoke_src
+    assert "use_direct_action_output" in smoke_src
     assert "def candidate_route_utility" in moe_src
     assert "def utility_from_expert_losses" in moe_src
     assert "def aggregate_episode_responsibilities" in moe_src

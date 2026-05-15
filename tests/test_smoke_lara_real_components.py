@@ -42,6 +42,9 @@ def tiny_smoke_config(tmpdir: Path):
                     "state_dim": 4,
                     "use_latent_action_head": False,
                     "use_lara_moe": False,
+                    "lara_use_transition_head": False,
+                    "lara_use_direct_action_experts": False,
+                    "lara_use_direct_action_output": False,
                 },
             },
             "datasets": {
@@ -73,6 +76,9 @@ class SmokeLaraRealComponentsTest(unittest.TestCase):
             self.assertTrue(summary["use_lara_moe_default_safe"])
             self.assertEqual(summary["action_horizon"], 3)
             self.assertEqual(summary["num_world_model_views"], 2)
+            self.assertFalse(summary["lara_use_direct_action_experts"])
+            self.assertFalse(summary["lara_use_direct_action_output"])
+            self.assertFalse(summary["lara_use_transition_head"])
 
     def test_attention_override_updates_smoke_summary(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -83,6 +89,39 @@ class SmokeLaraRealComponentsTest(unittest.TestCase):
             summary = smoke_config_summary(cfg)
 
             self.assertEqual(summary["attn_implementation"], "sdpa")
+
+    def test_stage_scaffold_overrides_update_config_and_summary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = tiny_smoke_config(Path(tmp))
+
+            apply_smoke_overrides(
+                cfg,
+                use_latent_action_head=True,
+                use_lara_moe=True,
+                use_direct_action_experts=True,
+                use_direct_action_output=True,
+            )
+            summary = smoke_config_summary(cfg)
+
+            self.assertTrue(cfg.framework.action_model.use_latent_action_head)
+            self.assertTrue(cfg.framework.action_model.use_lara_moe)
+            self.assertTrue(cfg.framework.action_model.lara_use_direct_action_experts)
+            self.assertTrue(cfg.framework.action_model.lara_use_direct_action_output)
+            self.assertTrue(summary["use_latent_action_head"])
+            self.assertTrue(summary["use_lara_moe"])
+            self.assertTrue(summary["lara_use_direct_action_experts"])
+            self.assertTrue(summary["lara_use_direct_action_output"])
+            self.assertFalse(summary["use_lara_moe_default_safe"])
+
+    def test_direct_action_overrides_imply_moe_prerequisites(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = tiny_smoke_config(Path(tmp))
+
+            apply_smoke_overrides(cfg, use_direct_action_output=True)
+
+            self.assertTrue(cfg.framework.action_model.use_lara_moe)
+            self.assertTrue(cfg.framework.action_model.lara_use_direct_action_experts)
+            self.assertTrue(cfg.framework.action_model.lara_use_direct_action_output)
 
     def test_missing_paths_are_reported_without_loading_models(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -135,6 +174,29 @@ class SmokeLaraRealComponentsTest(unittest.TestCase):
             self.assertEqual(result["instantiate"]["error_type"], "ModuleNotFoundError")
             self.assertIn("missing_dependency", result["instantiate"]["message"])
             self.assertEqual(instantiate.call_args.args[0].framework.qwenvl.attn_implementation, "eager")
+
+    def test_smoke_entrypoint_passes_stage_scaffold_overrides_to_instantiate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = Path(tmp) / "config.yaml"
+            OmegaConf.save(tiny_smoke_config(Path(tmp)), cfg_path)
+
+            with patch(
+                "scripts.smoke_lara_real_components.instantiate_lara",
+                side_effect=ModuleNotFoundError("missing_dependency"),
+            ) as instantiate:
+                result = smoke_lara_real_components(
+                    cfg_path,
+                    instantiate=True,
+                    use_latent_action_head=True,
+                    use_direct_action_output=True,
+                )
+
+            action_cfg = instantiate.call_args.args[0].framework.action_model
+            self.assertEqual(result["instantiate"]["status"], "error")
+            self.assertTrue(action_cfg.use_latent_action_head)
+            self.assertTrue(action_cfg.use_lara_moe)
+            self.assertTrue(action_cfg.lara_use_direct_action_experts)
+            self.assertTrue(action_cfg.lara_use_direct_action_output)
 
 
 if __name__ == "__main__":
