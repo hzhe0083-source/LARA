@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 from pathlib import Path
+import time
 import traceback
 
 import websockets.asyncio.server
@@ -172,8 +173,10 @@ class WebsocketPolicyServer:
                     policy_payload["resident_pool_mask"] = session["resident_pool_mask"]
                 if "previous_router_probs" not in policy_payload and "router_probs" in session:
                     policy_payload["previous_router_probs"] = session["router_probs"]
+                measurement = self._begin_resource_measurement() if self._rollout_trace_path is not None else None
                 policy_payload["batch_images"] = image_tools.to_pil_preserve(policy_payload["batch_images"])
                 ouput_dict = self._policy.predict_action(**policy_payload)
+                resource_metrics = self._end_resource_measurement(measurement) if measurement is not None else None
                 if isinstance(ouput_dict, dict):
                     if "resident_pool_mask" in ouput_dict:
                         session["resident_pool_mask"] = ouput_dict["resident_pool_mask"]
@@ -181,7 +184,7 @@ class WebsocketPolicyServer:
                         session["resident_pool_probs"] = ouput_dict["resident_pool_probs"]
                     if "router_probs" in ouput_dict:
                         session["router_probs"] = ouput_dict["router_probs"]
-                    self._append_rollout_trace(session, ouput_dict)
+                    self._append_rollout_trace(session, ouput_dict, resource_metrics=resource_metrics)
             except Exception as e:
                 logging.exception("Policy inference error (request_id=%s)", req_id)
                 logging.exception(e)
@@ -215,6 +218,45 @@ class WebsocketPolicyServer:
                 "request_id": req_id,
                 "error": {"message": f"Unsupported message type '{mtype}'"},
             }
+
+    @staticmethod
+    def _cuda_module():
+        try:
+            import torch
+        except Exception:
+            return None
+        try:
+            if not torch.cuda.is_available():
+                return None
+        except Exception:
+            return None
+        return torch.cuda
+
+    @classmethod
+    def _begin_resource_measurement(cls) -> dict:
+        cuda = cls._cuda_module()
+        if cuda is not None:
+            try:
+                cuda.synchronize()
+                cuda.reset_peak_memory_stats()
+            except Exception:
+                cuda = None
+        return {"start": time.perf_counter(), "cuda": cuda}
+
+    @staticmethod
+    def _end_resource_measurement(measurement: dict) -> dict:
+        cuda = measurement.get("cuda")
+        vram_mb = None
+        if cuda is not None:
+            try:
+                cuda.synchronize()
+                vram_mb = cuda.max_memory_allocated() / (1024 * 1024)
+            except Exception:
+                vram_mb = None
+        metrics = {"latency_ms": (time.perf_counter() - measurement["start"]) * 1000.0}
+        if vram_mb is not None:
+            metrics["vram_mb"] = vram_mb
+        return metrics
 
     @staticmethod
     def _jsonable(value):
@@ -268,7 +310,7 @@ class WebsocketPolicyServer:
             return len(sequence[0])
         return len(sequence)
 
-    def _append_rollout_trace(self, session: dict, output: dict) -> None:
+    def _append_rollout_trace(self, session: dict, output: dict, *, resource_metrics: dict | None = None) -> None:
         if self._rollout_trace_path is None:
             return
         trace = session.setdefault("rollout_trace", {})
@@ -279,6 +321,9 @@ class WebsocketPolicyServer:
         ]:
             if output_key in output:
                 trace.setdefault(trace_key, []).append(self._jsonable(output[output_key]))
+        for metric_key in ["latency_ms", "vram_mb"]:
+            if resource_metrics is not None and metric_key in resource_metrics:
+                trace.setdefault(f"{metric_key}_sequence", []).append(float(resource_metrics[metric_key]))
 
     def _rollout_trace_record(self, session_id: str, session: dict, outcome: dict) -> dict:
         record = {"session_id": session_id}
@@ -287,7 +332,13 @@ class WebsocketPolicyServer:
                 record[key] = self._jsonable(value)
 
         trace = session.get("rollout_trace", {})
-        for key in ["router_probs_sequence", "active_mask_sequence", "pool_mask_sequence"]:
+        for key in [
+            "router_probs_sequence",
+            "active_mask_sequence",
+            "pool_mask_sequence",
+            "latency_ms_sequence",
+            "vram_mb_sequence",
+        ]:
             sequence = self._sequence_from_steps(trace.get(key, []))
             if sequence is not None:
                 record[key] = sequence
@@ -299,6 +350,11 @@ class WebsocketPolicyServer:
             resident_fraction = self._resident_fraction_from_pool_sequence(record.get("pool_mask_sequence"))
             if resident_fraction is not None:
                 record["resident_fraction"] = resident_fraction
+        if "latency_ms" not in record and record.get("latency_ms_sequence"):
+            latency_sequence = record["latency_ms_sequence"]
+            record["latency_ms"] = float(sum(latency_sequence) / len(latency_sequence))
+        if "vram_mb" not in record and record.get("vram_mb_sequence"):
+            record["vram_mb"] = float(max(record["vram_mb_sequence"]))
         return record
 
     def _write_rollout_trace(self, session_id: str, session: dict, outcome: dict) -> bool:

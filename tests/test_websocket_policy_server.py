@@ -113,6 +113,8 @@ class WebsocketPolicyServerTest(unittest.TestCase):
             self.assertEqual(records[0]["router_probs_sequence"][0], [0.7, 0.2, 0.1])
             self.assertEqual(len(records[0]["router_probs_sequence"]), 2)
             self.assertEqual(records[0]["active_mask_sequence"][0], [True, False, True])
+            self.assertEqual(len(records[0]["latency_ms_sequence"]), 2)
+            self.assertGreaterEqual(records[0]["latency_ms"], 0.0)
             self.assertAlmostEqual(records[0]["resident_fraction"], 2.0 / 3.0)
             self.assertNotIn("episode-a", server._session_state)
 
@@ -142,7 +144,35 @@ class WebsocketPolicyServerTest(unittest.TestCase):
             record = json.loads(trace_path.read_text(encoding="utf-8").strip())
             self.assertEqual(record["success"], 0)
             self.assertEqual(record["resident_fraction"], 0.5)
+            self.assertEqual(len(record["latency_ms_sequence"]), 1)
+            self.assertGreaterEqual(record["latency_ms"], 0.0)
             self.assertNotIn("episode-a", server._session_state)
+
+    def test_reset_payload_resource_metrics_override_measured_trace_metrics(self):
+        policy = _PoolEchoPolicy()
+        with tempfile.TemporaryDirectory() as tmp:
+            trace_path = Path(tmp) / "rollouts.jsonl"
+            server = WebsocketPolicyServer(policy=policy, rollout_trace_path=str(trace_path))
+
+            server._route_message(
+                {
+                    "type": "infer",
+                    "session_id": "episode-a",
+                    "payload": {"batch_images": [], "instructions": []},
+                }
+            )
+            server._route_message(
+                {
+                    "type": "reset",
+                    "session_id": "episode-a",
+                    "payload": {"success": 1, "latency_ms": 123.0, "vram_mb": 456.0},
+                }
+            )
+
+            record = json.loads(trace_path.read_text(encoding="utf-8").strip())
+            self.assertEqual(record["latency_ms"], 123.0)
+            self.assertEqual(record["vram_mb"], 456.0)
+            self.assertEqual(len(record["latency_ms_sequence"]), 1)
 
 
 if __name__ == "__main__":

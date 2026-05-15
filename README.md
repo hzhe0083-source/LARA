@@ -227,7 +227,7 @@ During inference, `predict_action` returns:
 
 For MoE experiments, pass the returned `resident_pool_mask` back into later `predict_action` calls for the same episode so the chunk router chooses sparse experts inside a stable episode pool.
 The websocket deployment server also caches `resident_pool_mask` and `router_probs` by `session_id`, feeds cached router probabilities back as `previous_router_probs`, and clears the cache on a `reset` request. This lets closed-loop clients reuse an episode pool and, when `lara_inference_stickiness_weight > 0`, bias chunk-level routing toward the previous route without manually echoing those tensors on every inference call.
-For evaluation runs, start the server with `--rollout_trace_path /path/to/rollouts.jsonl`; each `infer` appends raw route outputs to the session trace, and `reset` or `record_outcome` writes a JSONL record with `router_probs_sequence`, `active_mask_sequence`, `pool_mask_sequence`, and any provided outcome fields such as `success`, `return_score`, `flops`, `latency_ms`, and `vram_mb`.
+For evaluation runs, start the server with `--rollout_trace_path /path/to/rollouts.jsonl`; each `infer` appends raw route outputs plus measured `latency_ms_sequence` and optional CUDA `vram_mb_sequence` to the session trace, and `reset` or `record_outcome` writes a JSONL record with `router_probs_sequence`, `active_mask_sequence`, `pool_mask_sequence`, aggregate latency/VRAM, and any provided outcome fields such as `success`, `return_score`, and `flops`.
 
 ## Training
 

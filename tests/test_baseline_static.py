@@ -295,6 +295,9 @@ def test_optional_moe_router_stage_two_exists():
     assert "router_probs_sequence" in server_src
     assert "active_mask_sequence" in server_src
     assert "pool_mask_sequence" in server_src
+    assert "latency_ms_sequence" in server_src
+    assert "vram_mb_sequence" in server_src
+    assert "reset_peak_memory_stats" in server_src
     assert "has_training_teacher = expert_action_losses is not None or latent_action_tokens is not None" in moe_src
     assert "episode_pool_size" in moe_src
     assert "episode_pool_size_min" in moe_src

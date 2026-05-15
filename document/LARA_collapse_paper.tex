@@ -518,8 +518,8 @@ measurements. It also includes route-sequence diagnostics for resident-pool
 reuse across receding-horizon chunks, but those diagnostics are only meaningful
 once attached to raw router-probability and route-mask traces from real
 closed-loop rollouts. The deployment websocket server can optionally write
-those raw route traces to JSONL, but the repository still lacks completed
-closed-loop SO101 evaluation runs.
+those raw route traces and server-side latency/VRAM measurements to JSONL, but
+the repository still lacks completed closed-loop SO101 evaluation runs.
 This is not yet the full LARA algorithm in this manuscript. In particular,
 production-ready latent-action training, validated MoE action experts,
 posterior-responsibility training, the episode-level pool router, the

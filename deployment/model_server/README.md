@@ -15,7 +15,8 @@ python deployment/model_server/server_policy.py \
 
 `--rollout_trace_path` is optional. When set, the server appends one JSONL
 record per `reset` or `record_outcome` message with raw MoE route traces such
-as `router_probs_sequence`, `active_mask_sequence`, and `pool_mask_sequence`.
+as `router_probs_sequence`, `active_mask_sequence`, and `pool_mask_sequence`,
+plus measured `latency_ms_sequence` and optional CUDA `vram_mb_sequence`.
 Those records can be summarized by `scripts/summarize_lara_protocol.py`.
 
 
