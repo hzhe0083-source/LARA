@@ -3,6 +3,7 @@ import unittest
 import torch
 
 from Lara.model.modules.action_model.lara_moe import (
+    ActionChunkExpertBank,
     LatentActionMoE,
     aggregate_episode_responsibilities,
     centered_utility_targets,
@@ -227,6 +228,33 @@ class LatentActionMoETest(unittest.TestCase):
         self.assertGreaterEqual(float(output.utility_rank_loss), 0.0)
         self.assertGreaterEqual(float(output.utility_calibration_error), 0.0)
         self.assertTrue(torch.allclose(output.loss, output.utility_loss))
+
+    def test_action_chunk_expert_bank_produces_per_expert_losses(self):
+        torch.manual_seed(0)
+        experts = ActionChunkExpertBank(
+            hidden_size=8,
+            num_experts=3,
+            expert_hidden_size=16,
+            action_horizon=4,
+            action_dim=2,
+        )
+        tokens = torch.randn(2, 5, 8)
+        target_actions = torch.randn(2, 4, 2)
+
+        pred_actions = experts(tokens)
+        losses = experts.reconstruction_losses(
+            pred_actions,
+            target_actions,
+            execution_horizon=2,
+            execution_loss_weight=1.0,
+            prediction_loss_weight=0.5,
+        )
+        posterior = posterior_from_expert_losses(losses.detach())
+        weighted_loss = (losses * posterior).sum(dim=-1).mean()
+
+        self.assertEqual(pred_actions.shape, (2, 3, 4, 2))
+        self.assertEqual(losses.shape, (2, 3))
+        self.assertGreater(float(weighted_loss.detach()), 0.0)
 
 
 if __name__ == "__main__":

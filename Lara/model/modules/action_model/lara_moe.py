@@ -217,6 +217,90 @@ class ResidualActionExpert(nn.Module):
         return self.residual_scale * self.net(tokens)
 
 
+class ActionChunkExpert(nn.Module):
+    """Expert head that directly reconstructs a future action chunk."""
+
+    def __init__(self, hidden_size: int, expert_hidden_size: int, action_horizon: int, action_dim: int):
+        super().__init__()
+        self.action_horizon = action_horizon
+        self.action_dim = action_dim
+        self.context_norm = nn.LayerNorm(hidden_size)
+        self.net = nn.Sequential(
+            nn.Linear(hidden_size, expert_hidden_size),
+            nn.GELU(),
+            nn.Linear(expert_hidden_size, action_horizon * action_dim),
+        )
+
+    def forward(self, tokens: torch.Tensor) -> torch.Tensor:
+        if tokens.ndim != 3:
+            raise ValueError(f"Expected tokens [B, T, D], got {tuple(tokens.shape)}")
+        context_summary = self.context_norm(tokens).mean(dim=1)
+        actions = self.net(context_summary)
+        return actions.view(tokens.shape[0], self.action_horizon, self.action_dim)
+
+
+class ActionChunkExpertBank(nn.Module):
+    """Bank of direct action-chunk experts for posterior responsibility training."""
+
+    def __init__(
+        self,
+        hidden_size: int,
+        num_experts: int,
+        expert_hidden_size: int,
+        action_horizon: int,
+        action_dim: int,
+    ):
+        super().__init__()
+        self.action_horizon = action_horizon
+        self.action_dim = action_dim
+        self.experts = nn.ModuleList(
+            [
+                ActionChunkExpert(
+                    hidden_size=hidden_size,
+                    expert_hidden_size=expert_hidden_size,
+                    action_horizon=action_horizon,
+                    action_dim=action_dim,
+                )
+                for _ in range(num_experts)
+            ]
+        )
+
+    def forward(self, tokens: torch.Tensor) -> torch.Tensor:
+        return torch.stack([expert(tokens) for expert in self.experts], dim=1)
+
+    @staticmethod
+    def reconstruction_losses(
+        pred_actions: torch.Tensor,
+        target_actions: torch.Tensor,
+        execution_horizon: Optional[int] = None,
+        execution_loss_weight: float = 1.0,
+        prediction_loss_weight: float = 1.0,
+    ) -> torch.Tensor:
+        if pred_actions.ndim != 4:
+            raise ValueError(f"Expected pred_actions [B, M, H, D], got {tuple(pred_actions.shape)}")
+        if target_actions.ndim != 3:
+            raise ValueError(f"Expected target_actions [B, H, D], got {tuple(target_actions.shape)}")
+        if pred_actions.shape[0] != target_actions.shape[0] or pred_actions.shape[2:] != target_actions.shape[1:]:
+            raise ValueError(
+                "pred_actions and target_actions must agree on batch, horizon, and action dim: "
+                f"{tuple(pred_actions.shape)} vs {tuple(target_actions.shape)}"
+            )
+
+        loss = (pred_actions - target_actions[:, None, :, :]) ** 2
+        if execution_loss_weight != prediction_loss_weight:
+            horizon = loss.shape[2]
+            execution_horizon = horizon if execution_horizon is None else min(execution_horizon, horizon)
+            weights = torch.full(
+                (1, 1, horizon, 1),
+                prediction_loss_weight,
+                device=loss.device,
+                dtype=loss.dtype,
+            )
+            weights[:, :, :execution_horizon, :] = execution_loss_weight
+            loss = loss * weights
+        return loss.mean(dim=(2, 3))
+
+
 class PosteriorResponsibilityHead(nn.Module):
     """Training-time expert responsibility estimator from context and latent action."""
 

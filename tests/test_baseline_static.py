@@ -72,6 +72,7 @@ def test_optional_moe_router_stage_two_exists():
     flow_src = read("Lara/model/modules/action_model/GR00T_ActionHeader.py")
     gap = read("document/IMPLEMENTATION_GAP.md")
     assert "class LatentActionMoE" in moe_src
+    assert "class ActionChunkExpertBank" in moe_src
     assert "class PosteriorResponsibilityHead" in moe_src
     assert "class ChunkRouter" in moe_src
     assert "class EpisodePoolRouter" in moe_src
@@ -86,6 +87,8 @@ def test_optional_moe_router_stage_two_exists():
     assert "pool_target_probs" in moe_src
     assert "utility_scores" in moe_src
     assert "def expert_conditioning_tokens" in moe_src
+    assert "self.direct_action_experts" in adapter_src
+    assert "moe_direct_expert_loss" in adapter_src
     assert "def _trajectory_ids_to_tensor" in adapter_src
     assert "aggregate_episode_responsibilities(posterior_probs, trajectory_tensor)" in adapter_src
     assert "has_training_teacher = expert_action_losses is not None or latent_action_tokens is not None" in moe_src
@@ -106,6 +109,8 @@ def test_optional_moe_router_stage_two_exists():
     assert "lara_episode_pool_size: 4" in config_src
     assert "lara_utility_loss_weight: 0.0" in config_src
     assert "lara_utility_rank_loss_weight: 0.0" in config_src
+    assert "lara_use_direct_action_experts: false" in config_src
+    assert "lara_direct_expert_loss_weight: 1.0" in config_src
     assert "lara_posterior_temperature: 1.0" in config_src
     assert "lara_use_expert_loss_posterior: true" in config_src
     assert "Stage-2 MoE/router scaffold" in gap

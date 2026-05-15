@@ -11,6 +11,7 @@ import torch.nn as nn
 from Lara.model.modules.action_model.GR00T_ActionHeader import FlowmatchingActionHead, get_action_model
 from Lara.model.modules.action_model.lara_latent import LatentActionHead
 from Lara.model.modules.action_model.lara_moe import (
+    ActionChunkExpertBank,
     LatentActionMoE,
     aggregate_episode_responsibilities,
     posterior_from_expert_losses,
@@ -41,6 +42,8 @@ class ActionHeadAdapter(nn.Module):
         self.use_latent_action_head = action_cfg.get("use_latent_action_head", False)
         self.use_lara_moe = action_cfg.get("use_lara_moe", False)
         self.use_expert_loss_posterior = action_cfg.get("lara_use_expert_loss_posterior", True)
+        self.use_direct_action_experts = action_cfg.get("lara_use_direct_action_experts", False)
+        self.direct_expert_loss_weight = action_cfg.get("lara_direct_expert_loss_weight", 1.0)
         self.repeated_diffusion_steps = action_cfg.get(
             "repeated_diffusion_steps",
             self.config.trainer.get("repeated_diffusion_steps", 4) if self.config and self.config.trainer else 4,
@@ -80,6 +83,17 @@ class ActionHeadAdapter(nn.Module):
                 residual_scale=action_cfg.get("lara_expert_residual_scale", 0.1),
             )
             if self.use_lara_moe
+            else None
+        )
+        self.direct_action_experts = (
+            ActionChunkExpertBank(
+                hidden_size=context_hidden_size,
+                num_experts=action_cfg.get("lara_num_experts", 8),
+                expert_hidden_size=action_cfg.get("lara_direct_expert_hidden_dim", action_cfg.get("hidden_size", 1024)),
+                action_horizon=self.action_horizon,
+                action_dim=action_cfg.action_dim,
+            )
+            if self.use_lara_moe and self.use_direct_action_experts
             else None
         )
 
@@ -207,9 +221,27 @@ class ActionHeadAdapter(nn.Module):
         actions_target_repeated = actions_target.repeat_interleave(self.repeated_diffusion_steps, dim=0)
         conditioning_tokens = self._conditioning_tokens(embodied_action_tokens, latent_action_tokens)
         if self.lara_moe is not None:
+            direct_expert_loss = None
+            direct_expert_losses = None
+            if self.direct_action_experts is not None:
+                direct_expert_actions = self.direct_action_experts(conditioning_tokens)
+                direct_expert_losses = self.direct_action_experts.reconstruction_losses(
+                    direct_expert_actions,
+                    actions_target,
+                    execution_horizon=self.config.framework.action_model.get("execution_horizon", self.action_horizon),
+                    execution_loss_weight=self.config.framework.action_model.get("execution_loss_weight", 1.0),
+                    prediction_loss_weight=self.config.framework.action_model.get("prediction_loss_weight", 1.0),
+                )
+                direct_posterior = posterior_from_expert_losses(
+                    direct_expert_losses.detach(),
+                    temperature=self.lara_moe.posterior_temperature,
+                )
+                direct_expert_loss = (direct_expert_losses * direct_posterior).sum(dim=-1).mean()
             with torch.no_grad():
                 expert_action_losses = (
-                    self._expert_action_losses(conditioning_tokens, actions_target, state)
+                    direct_expert_losses.detach()
+                    if direct_expert_losses is not None
+                    else self._expert_action_losses(conditioning_tokens, actions_target, state)
                     if self.use_expert_loss_posterior
                     else None
                 )
@@ -249,6 +281,8 @@ class ActionHeadAdapter(nn.Module):
                     "moe_route_regret": moe_output.route_regret,
                 }
             )
+            if direct_expert_loss is not None:
+                aux_losses["moe_direct_expert_loss"] = self.direct_expert_loss_weight * direct_expert_loss
         context_repeated = conditioning_tokens.repeat_interleave(self.repeated_diffusion_steps, dim=0)
 
         state_tensor = self._state_to_tensor(state, embodied_action_tokens)
@@ -264,12 +298,14 @@ class ActionHeadAdapter(nn.Module):
                 action_loss
                 + aux_losses.get("latent_action_loss", 0.0)
                 + aux_losses.get("moe_router_loss", 0.0)
+                + aux_losses.get("moe_direct_expert_loss", 0.0)
             )
         aux_losses["action_loss"] = action_loss
         aux_losses["total_action_loss"] = (
             action_loss
             + aux_losses.get("latent_action_loss", 0.0)
             + aux_losses.get("moe_router_loss", 0.0)
+            + aux_losses.get("moe_direct_expert_loss", 0.0)
         )
         return aux_losses
 
