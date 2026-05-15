@@ -16,6 +16,7 @@ from Lara.model.modules.action_model.lara_moe import (
     aggregate_episode_responsibilities,
     posterior_from_expert_losses,
     route_quality_metrics,
+    utility_component_targets_from_expert_losses,
     utility_from_expert_losses,
 )
 
@@ -49,6 +50,7 @@ class ActionHeadAdapter(nn.Module):
         self.use_lara_moe = action_cfg.get("use_lara_moe", False)
         self.use_expert_loss_posterior = action_cfg.get("lara_use_expert_loss_posterior", True)
         self.use_action_loss_utility = action_cfg.get("lara_use_action_loss_utility", False)
+        self.use_action_loss_utility_components = action_cfg.get("lara_use_action_loss_utility_components", False)
         self.action_loss_utility_temperature = action_cfg.get("lara_action_loss_utility_temperature", 1.0)
         self.action_loss_utility_normalize = action_cfg.get("lara_action_loss_utility_normalize", True)
         route_retention_fractions = action_cfg.get("lara_route_retention_fractions", [0.25, 0.5, 1.0])
@@ -329,13 +331,23 @@ class ActionHeadAdapter(nn.Module):
             direct_expert_losses = None
             if self.direct_action_experts is not None:
                 direct_expert_actions = self.direct_action_experts(conditioning_tokens, state=state_tensor)
-                direct_expert_losses = self.direct_action_experts.reconstruction_losses(
+                direct_expert_loss_components = self.direct_action_experts.reconstruction_loss_components(
                     direct_expert_actions,
                     actions_target,
                     execution_horizon=self.config.framework.action_model.get("execution_horizon", self.action_horizon),
                     execution_loss_weight=self.config.framework.action_model.get("execution_loss_weight", 1.0),
                     prediction_loss_weight=self.config.framework.action_model.get("prediction_loss_weight", 1.0),
                 )
+                direct_expert_losses = direct_expert_loss_components["weighted"]
+                direct_utility_component_targets = None
+                if self.use_action_loss_utility_components:
+                    direct_utility_component_targets = utility_component_targets_from_expert_losses(
+                        value_losses=direct_expert_loss_components["full"],
+                        progress_losses=direct_expert_loss_components["execution"],
+                        uncertainty_losses=direct_expert_loss_components["prediction"],
+                        temperature=self.action_loss_utility_temperature,
+                        normalize=self.action_loss_utility_normalize,
+                    )
                 direct_posterior = posterior_from_expert_losses(
                     direct_expert_losses.detach(),
                     temperature=self.lara_moe.posterior_temperature,
@@ -343,6 +355,8 @@ class ActionHeadAdapter(nn.Module):
                     top_r=self.lara_moe.posterior_top_r,
                 )
                 direct_expert_loss = (direct_expert_losses * direct_posterior).sum(dim=-1).mean()
+            else:
+                direct_utility_component_targets = None
             with torch.no_grad():
                 expert_action_losses = (
                     direct_expert_losses.detach()
@@ -400,6 +414,24 @@ class ActionHeadAdapter(nn.Module):
                 if utility_target_mask is not None
                 else None
             )
+            if direct_utility_component_targets is not None:
+                if utility_value_targets is None:
+                    utility_value_targets = direct_utility_component_targets["value"].to(
+                        device=conditioning_tokens.device,
+                        dtype=conditioning_tokens.dtype,
+                    )
+                if utility_progress_targets is None:
+                    utility_progress_targets = direct_utility_component_targets["progress"].to(
+                        device=conditioning_tokens.device,
+                        dtype=conditioning_tokens.dtype,
+                    )
+                if utility_uncertainty_targets is None:
+                    utility_uncertainty_targets = direct_utility_component_targets["uncertainty"].to(
+                        device=conditioning_tokens.device,
+                        dtype=conditioning_tokens.dtype,
+                    )
+                if utility_target_mask is None:
+                    utility_target_mask = torch.ones_like(utility_value_targets, dtype=torch.bool)
             previous_router_probs = (
                 self._as_tensor(previous_router_probs, device=conditioning_tokens.device, dtype=conditioning_tokens.dtype)
                 if previous_router_probs is not None

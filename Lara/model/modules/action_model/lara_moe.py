@@ -506,6 +506,58 @@ def utility_from_expert_losses(
     return (utilities - mean) / std
 
 
+def uncertainty_from_expert_losses(
+    expert_losses: torch.Tensor,
+    temperature: float = 1.0,
+    normalize: bool = True,
+) -> torch.Tensor:
+    if expert_losses.ndim != 2:
+        raise ValueError(f"Expected expert_losses [B, M], got {tuple(expert_losses.shape)}")
+    if temperature <= 0:
+        raise ValueError("temperature must be positive")
+
+    uncertainty = expert_losses.detach().clamp_min(0.0) / temperature
+    if not normalize:
+        return uncertainty
+
+    mean = uncertainty.mean(dim=-1, keepdim=True).clamp_min(1e-6)
+    return uncertainty / mean
+
+
+def utility_component_targets_from_expert_losses(
+    value_losses: torch.Tensor,
+    progress_losses: Optional[torch.Tensor] = None,
+    uncertainty_losses: Optional[torch.Tensor] = None,
+    temperature: float = 1.0,
+    normalize: bool = True,
+) -> dict[str, torch.Tensor]:
+    """Build utility-head component labels from counterfactual expert losses.
+
+    Higher value/progress targets mean the expert better reconstructs the
+    demonstrated action chunk. Higher uncertainty targets mean the expert has
+    larger long-horizon reconstruction error and should be penalized by the
+    route utility composition.
+    """
+
+    progress_losses = value_losses if progress_losses is None else progress_losses
+    uncertainty_losses = value_losses if uncertainty_losses is None else uncertainty_losses
+    if progress_losses.shape != value_losses.shape or uncertainty_losses.shape != value_losses.shape:
+        raise ValueError(
+            "utility component losses must share shape "
+            f"{tuple(value_losses.shape)}; got progress={tuple(progress_losses.shape)}, "
+            f"uncertainty={tuple(uncertainty_losses.shape)}"
+        )
+    return {
+        "value": utility_from_expert_losses(value_losses, temperature=temperature, normalize=normalize),
+        "progress": utility_from_expert_losses(progress_losses, temperature=temperature, normalize=normalize),
+        "uncertainty": uncertainty_from_expert_losses(
+            uncertainty_losses,
+            temperature=temperature,
+            normalize=normalize,
+        ),
+    }
+
+
 def aggregate_episode_responsibilities(
     posterior_probs: torch.Tensor,
     episode_ids: torch.Tensor,
@@ -743,6 +795,22 @@ class ActionChunkExpertBank(nn.Module):
         execution_loss_weight: float = 1.0,
         prediction_loss_weight: float = 1.0,
     ) -> torch.Tensor:
+        return ActionChunkExpertBank.reconstruction_loss_components(
+            pred_actions,
+            target_actions,
+            execution_horizon=execution_horizon,
+            execution_loss_weight=execution_loss_weight,
+            prediction_loss_weight=prediction_loss_weight,
+        )["weighted"]
+
+    @staticmethod
+    def reconstruction_loss_components(
+        pred_actions: torch.Tensor,
+        target_actions: torch.Tensor,
+        execution_horizon: Optional[int] = None,
+        execution_loss_weight: float = 1.0,
+        prediction_loss_weight: float = 1.0,
+    ) -> dict[str, torch.Tensor]:
         if pred_actions.ndim != 4:
             raise ValueError(f"Expected pred_actions [B, M, H, D], got {tuple(pred_actions.shape)}")
         if target_actions.ndim != 3:
@@ -753,19 +821,36 @@ class ActionChunkExpertBank(nn.Module):
                 f"{tuple(pred_actions.shape)} vs {tuple(target_actions.shape)}"
             )
 
-        loss = (pred_actions - target_actions[:, None, :, :]) ** 2
+        per_step_loss = (pred_actions - target_actions[:, None, :, :]).pow(2).mean(dim=-1)
+        horizon = per_step_loss.shape[-1]
+        execution_horizon = horizon if execution_horizon is None else min(max(int(execution_horizon), 0), horizon)
+        execution_loss = (
+            per_step_loss[:, :, :execution_horizon].mean(dim=-1)
+            if execution_horizon > 0
+            else per_step_loss.new_zeros(per_step_loss.shape[:2])
+        )
+        prediction_loss = (
+            per_step_loss[:, :, execution_horizon:].mean(dim=-1)
+            if execution_horizon < horizon
+            else per_step_loss.new_zeros(per_step_loss.shape[:2])
+        )
+        full_loss = per_step_loss.mean(dim=-1)
+        weighted_step_loss = per_step_loss
         if execution_loss_weight != prediction_loss_weight:
-            horizon = loss.shape[2]
-            execution_horizon = horizon if execution_horizon is None else min(execution_horizon, horizon)
             weights = torch.full(
-                (1, 1, horizon, 1),
+                (1, 1, horizon),
                 prediction_loss_weight,
-                device=loss.device,
-                dtype=loss.dtype,
+                device=per_step_loss.device,
+                dtype=per_step_loss.dtype,
             )
-            weights[:, :, :execution_horizon, :] = execution_loss_weight
-            loss = loss * weights
-        return loss.mean(dim=(2, 3))
+            weights[:, :, :execution_horizon] = execution_loss_weight
+            weighted_step_loss = per_step_loss * weights
+        return {
+            "full": full_loss,
+            "execution": execution_loss,
+            "prediction": prediction_loss,
+            "weighted": weighted_step_loss.mean(dim=-1),
+        }
 
 
 class PosteriorResponsibilityHead(nn.Module):

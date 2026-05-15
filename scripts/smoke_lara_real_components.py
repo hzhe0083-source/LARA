@@ -47,6 +47,7 @@ def apply_smoke_overrides(
     use_lara_moe: bool | None = None,
     use_direct_action_experts: bool | None = None,
     use_direct_action_output: bool | None = None,
+    use_action_loss_utility_components: bool | None = None,
 ) -> Any:
     if attn_implementation is not None:
         cfg.framework.qwenvl.attn_implementation = attn_implementation
@@ -71,6 +72,14 @@ def apply_smoke_overrides(
         if use_direct_action_output:
             action_cfg.use_lara_moe = True
             action_cfg.lara_use_direct_action_experts = True
+    if use_action_loss_utility_components is not None:
+        action_cfg.lara_use_action_loss_utility_components = bool(use_action_loss_utility_components)
+        if use_action_loss_utility_components:
+            action_cfg.use_lara_moe = True
+            action_cfg.lara_use_direct_action_experts = True
+            action_cfg.lara_use_utility_head = True
+            if float(action_cfg.get("lara_utility_head_loss_weight", 0.0)) == 0.0:
+                action_cfg.lara_utility_head_loss_weight = 1.0
     return cfg
 
 
@@ -103,6 +112,10 @@ def smoke_config_summary(cfg: Any) -> dict[str, Any]:
         "use_lara_moe": bool(action_cfg.use_lara_moe),
         "lara_use_direct_action_experts": bool(action_cfg.get("lara_use_direct_action_experts", False)),
         "lara_use_direct_action_output": bool(action_cfg.get("lara_use_direct_action_output", False)),
+        "lara_use_action_loss_utility_components": bool(
+            action_cfg.get("lara_use_action_loss_utility_components", False)
+        ),
+        "lara_use_utility_head": bool(action_cfg.get("lara_use_utility_head", False)),
         "lara_use_transition_head": bool(action_cfg.get("lara_use_transition_head", False)),
         "use_lara_moe_default_safe": not bool(action_cfg.use_lara_moe),
         "attn_implementation": cfg.framework.qwenvl.get("attn_implementation", None),
@@ -309,6 +322,7 @@ def smoke_lara_real_components(
     use_lara_moe: bool | None = None,
     use_direct_action_experts: bool | None = None,
     use_direct_action_output: bool | None = None,
+    use_action_loss_utility_components: bool | None = None,
     use_real_batch: bool = False,
     real_batch_size: int = 1,
     real_batch_start_index: int = 0,
@@ -325,6 +339,7 @@ def smoke_lara_real_components(
         use_lara_moe=use_lara_moe,
         use_direct_action_experts=use_direct_action_experts,
         use_direct_action_output=use_direct_action_output,
+        use_action_loss_utility_components=use_action_loss_utility_components,
     )
     summary = smoke_config_summary(cfg)
     path_status = check_required_paths(required_component_paths(cfg, require_data=require_data or use_real_batch))
@@ -427,6 +442,14 @@ def main() -> int:
             "this also enables --use-lara-moe and --use-direct-action-experts."
         ),
     )
+    parser.add_argument(
+        "--use-action-loss-utility-components",
+        action="store_true",
+        help=(
+            "Temporarily derive utility-head value/progress/uncertainty labels "
+            "from direct-expert action reconstruction components."
+        ),
+    )
     args = parser.parse_args()
 
     result = smoke_lara_real_components(
@@ -441,6 +464,7 @@ def main() -> int:
         use_lara_moe=args.use_lara_moe or None,
         use_direct_action_experts=args.use_direct_action_experts or None,
         use_direct_action_output=args.use_direct_action_output or None,
+        use_action_loss_utility_components=args.use_action_loss_utility_components or None,
         use_real_batch=args.use_real_batch,
         real_batch_size=args.real_batch_size,
         real_batch_start_index=args.real_batch_start_index,

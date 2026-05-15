@@ -25,6 +25,7 @@ from Lara.model.modules.action_model.lara_moe import (
     topk_route_consistency,
     uniform_balance_loss,
     utility_calibration_objective,
+    utility_component_targets_from_expert_losses,
     utility_component_supervision_loss,
     utility_from_expert_losses,
 )
@@ -437,6 +438,47 @@ class LatentActionMoETest(unittest.TestCase):
         self.assertEqual(pred_actions.shape, (2, 3, 4, 2))
         self.assertEqual(losses.shape, (2, 3))
         self.assertGreater(float(weighted_loss.detach()), 0.0)
+
+    def test_action_chunk_expert_bank_reports_horizon_loss_components(self):
+        pred_actions = torch.tensor(
+            [
+                [
+                    [[0.0], [2.0], [4.0]],
+                    [[1.0], [1.0], [1.0]],
+                ]
+            ]
+        )
+        target_actions = torch.zeros(1, 3, 1)
+
+        components = ActionChunkExpertBank.reconstruction_loss_components(
+            pred_actions,
+            target_actions,
+            execution_horizon=1,
+            execution_loss_weight=1.0,
+            prediction_loss_weight=0.5,
+        )
+
+        self.assertTrue(torch.allclose(components["execution"], torch.tensor([[0.0, 1.0]])))
+        self.assertTrue(torch.allclose(components["prediction"], torch.tensor([[10.0, 1.0]])))
+        self.assertTrue(torch.allclose(components["full"], torch.tensor([[20.0 / 3.0, 1.0]])))
+        self.assertTrue(torch.allclose(components["weighted"], torch.tensor([[10.0 / 3.0, 2.0 / 3.0]])))
+
+    def test_utility_component_targets_split_value_progress_and_uncertainty(self):
+        full_losses = torch.tensor([[0.1, 1.0, 2.0]])
+        execution_losses = torch.tensor([[0.1, 2.0, 3.0]])
+        prediction_losses = torch.tensor([[3.0, 1.0, 0.5]])
+
+        targets = utility_component_targets_from_expert_losses(
+            value_losses=full_losses,
+            progress_losses=execution_losses,
+            uncertainty_losses=prediction_losses,
+            normalize=False,
+        )
+
+        self.assertEqual(targets["value"].argmax(dim=-1).item(), 0)
+        self.assertEqual(targets["progress"].argmax(dim=-1).item(), 0)
+        self.assertEqual(targets["uncertainty"].argmax(dim=-1).item(), 0)
+        self.assertTrue(torch.all(targets["uncertainty"] >= 0))
 
     def test_action_chunk_expert_bank_routes_weighted_actions(self):
         pred_actions = torch.tensor(

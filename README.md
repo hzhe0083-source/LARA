@@ -30,7 +30,7 @@ Experimental scaffolding exists but is not complete or validated:
 
 - Stage-1 latent action head scaffold with posterior encoder, VQ codebook, optional code-usage regularization, context-only prior, and optional execution/prediction boundary-state transition loss (`use_latent_action_head: false`, `lara_use_transition_head: false` by default).
 - Stage-2 MoE/router scaffold with residual token experts, optional direct action-chunk experts, optional routed direct-expert action output, posterior responsibility from latent tokens or per-expert action reconstruction losses, optional posterior floor/top-r smoothing, LeRobot trajectory ids for episode-level resident pool targets, reusable episode-level resident pool masks, optional training-time randomized resident-pool size, chunk-level top-k routing inside the resident pool, optional inference stickiness, optional balance/stickiness/expert-diversity/entropy stabilizers, and route-quality aggregation metrics (`use_lara_moe: false` by default).
-- Utility calibration scaffold with optional action-loss utility labels, optional dataset-provided utility/candidate/cost/component targets, an optional supervised route utility head, candidate value/progress/uncertainty/cost scoring helpers, centered utility regression, and pairwise ranking losses (`lara_utility_loss_weight: 0.0`, `lara_utility_head_loss_weight: 0.0`, `lara_use_action_loss_utility: false`, `lara_use_utility_head: false` by default).
+- Utility calibration scaffold with optional action-loss utility labels, optional direct-expert action reconstruction component labels for value/progress/uncertainty targets, optional dataset-provided utility/candidate/cost/component targets, an optional supervised route utility head, candidate value/progress/uncertainty/cost scoring helpers, centered utility regression, and pairwise ranking losses (`lara_utility_loss_weight: 0.0`, `lara_utility_head_loss_weight: 0.0`, `lara_use_action_loss_utility: false`, `lara_use_action_loss_utility_components: false`, `lara_use_utility_head: false` by default).
 - Action-head MoE diagnostics include `metric/moe_route_quality_*` scalars for posterior/utility ranking, top-k consistency, route regret, and retained probability mass when MoE is enabled.
 - Matched-compute and matched-resident protocol helpers for subset-retention success aggregation, active/resident budget checks, result-table rows, and compute-success Pareto flags.
 - Minimal dummy-batch smoke coverage exists for `ActionHeadAdapter` forward and prediction shapes.
@@ -40,7 +40,7 @@ Described in the paper but not implemented yet:
 
 - production-ready latent action training
 - validated MoE action experts that directly model or adapt action chunks in full SO101 training
-- real counterfactual utility scoring from value/progress/latent-state or closed-loop evaluator signals beyond action-loss utility labels
+- real counterfactual utility scoring from latent-state or closed-loop evaluator signals beyond action reconstruction labels
 - validated transition-state training with real SO101 boundary targets
 - full resident-pool training/evaluation and closed-loop success/retention curves beyond static and unit tests
 - matched-compute and matched-resident-expert experiments
@@ -138,10 +138,11 @@ python scripts/smoke_lara_real_components.py \
   --use-latent-action-head \
   --use-lara-moe \
   --use-direct-action-experts \
-  --use-direct-action-output
+  --use-direct-action-output \
+  --use-action-loss-utility-components
 ```
 
-`--use-real-batch` loads a small batch from the configured SO101 LeRobot dataset instead of the synthetic dummy batch. It can be combined with `--run-step` and the paper-stage flags to check that real SO101 sample shapes feed the same model path. `--optimizer-step` implies the one-step smoke and runs one lightweight SGD update over `action_head` parameters after backward, reporting gradient/update diagnostics without pretending to be a full trainer run. `--use-transition-head` temporarily enables the boundary-state transition scaffold and gives it loss weight 1.0 when the config keeps the default zero weight; pass `--transition-loss-weight` to override that smoke weight. `--use-direct-action-experts` implies `--use-lara-moe`; `--use-direct-action-output` implies both. These flags are smoke-time overrides only, and a passing smoke check does not mean the MoE/two-level routing method from the paper is complete or trained.
+`--use-real-batch` loads a small batch from the configured SO101 LeRobot dataset instead of the synthetic dummy batch. It can be combined with `--run-step` and the paper-stage flags to check that real SO101 sample shapes feed the same model path. `--optimizer-step` implies the one-step smoke and runs one lightweight SGD update over `action_head` parameters after backward, reporting gradient/update diagnostics without pretending to be a full trainer run. `--use-transition-head` temporarily enables the boundary-state transition scaffold and gives it loss weight 1.0 when the config keeps the default zero weight; pass `--transition-loss-weight` to override that smoke weight. `--use-direct-action-experts` implies `--use-lara-moe`; `--use-direct-action-output` implies both. `--use-action-loss-utility-components` derives value/progress/uncertainty utility-head targets from direct-expert full/execution/tail action reconstruction losses and also enables the required direct experts, MoE, and utility head. These flags are smoke-time overrides only, and a passing smoke check does not mean the MoE/two-level routing method from the paper is complete or trained.
 
 ## SO101 Dataset
 

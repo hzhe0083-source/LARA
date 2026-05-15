@@ -52,6 +52,9 @@ def tiny_smoke_config(tmpdir: Path):
                     "lara_transition_loss_weight": 0.0,
                     "lara_use_direct_action_experts": False,
                     "lara_use_direct_action_output": False,
+                    "lara_use_action_loss_utility_components": False,
+                    "lara_use_utility_head": False,
+                    "lara_utility_head_loss_weight": 0.0,
                 },
             },
             "datasets": {
@@ -85,6 +88,8 @@ class SmokeLaraRealComponentsTest(unittest.TestCase):
             self.assertEqual(summary["num_world_model_views"], 2)
             self.assertFalse(summary["lara_use_direct_action_experts"])
             self.assertFalse(summary["lara_use_direct_action_output"])
+            self.assertFalse(summary["lara_use_action_loss_utility_components"])
+            self.assertFalse(summary["lara_use_utility_head"])
             self.assertFalse(summary["lara_use_transition_head"])
 
     def test_attention_override_updates_smoke_summary(self):
@@ -142,6 +147,21 @@ class SmokeLaraRealComponentsTest(unittest.TestCase):
             self.assertTrue(cfg.framework.action_model.use_lara_moe)
             self.assertTrue(cfg.framework.action_model.lara_use_direct_action_experts)
             self.assertTrue(cfg.framework.action_model.lara_use_direct_action_output)
+
+    def test_action_loss_utility_component_override_implies_prerequisites(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = tiny_smoke_config(Path(tmp))
+
+            apply_smoke_overrides(cfg, use_action_loss_utility_components=True)
+            summary = smoke_config_summary(cfg)
+
+            self.assertTrue(cfg.framework.action_model.use_lara_moe)
+            self.assertTrue(cfg.framework.action_model.lara_use_direct_action_experts)
+            self.assertTrue(cfg.framework.action_model.lara_use_action_loss_utility_components)
+            self.assertTrue(cfg.framework.action_model.lara_use_utility_head)
+            self.assertEqual(cfg.framework.action_model.lara_utility_head_loss_weight, 1.0)
+            self.assertTrue(summary["lara_use_action_loss_utility_components"])
+            self.assertTrue(summary["lara_use_utility_head"])
 
     def test_missing_paths_are_reported_without_loading_models(self):
         with tempfile.TemporaryDirectory() as tmp:

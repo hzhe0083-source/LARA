@@ -192,14 +192,19 @@ def test_optional_moe_router_stage_two_exists():
     assert "--use-lara-moe" in smoke_src
     assert "--use-direct-action-experts" in smoke_src
     assert "--use-direct-action-output" in smoke_src
+    assert "--use-action-loss-utility-components" in smoke_src
     assert "lara_use_direct_action_experts" in smoke_src
     assert "lara_use_direct_action_output" in smoke_src
+    assert "lara_use_action_loss_utility_components" in smoke_src
     assert "use_direct_action_output" in smoke_src
     assert "def candidate_route_utility" in moe_src
     assert "def utility_from_expert_losses" in moe_src
+    assert "def uncertainty_from_expert_losses" in moe_src
+    assert "def utility_component_targets_from_expert_losses" in moe_src
     assert "def aggregate_episode_responsibilities" in moe_src
     assert "def routed_actions" in moe_src
     assert "def action_chunk_loss" in moe_src
+    assert "def reconstruction_loss_components" in moe_src
     assert "def utility_calibration_objective" in moe_src
     assert "def utility_component_supervision_loss" in moe_src
     assert "expert_action_losses" in moe_src
@@ -211,6 +216,7 @@ def test_optional_moe_router_stage_two_exists():
     assert "route_quality_metrics" in adapter_src
     assert "moe_route_quality_" in adapter_src
     assert "utility_from_expert_losses" in adapter_src
+    assert "utility_component_targets_from_expert_losses" in adapter_src
     assert "def expert_conditioning_tokens" in moe_src
     assert "self.direct_action_experts" in adapter_src
     assert "self.use_direct_action_output" in adapter_src
@@ -262,6 +268,7 @@ def test_optional_moe_router_stage_two_exists():
     assert "lara_utility_rank_loss_weight: 0.0" in config_src
     assert "lara_utility_head_loss_weight: 0.0" in config_src
     assert "lara_use_action_loss_utility: false" in config_src
+    assert "lara_use_action_loss_utility_components: false" in config_src
     assert "lara_route_retention_fractions: [0.25, 0.5, 1.0]" in config_src
     assert "lara_use_utility_head: false" in config_src
     assert "lara_balance_loss_weight: 0.0" in config_src
