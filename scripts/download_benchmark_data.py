@@ -286,6 +286,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--exclude", action="append", default=[], help="Additional hf exclude glob. Can be repeated.")
     parser.add_argument("--enable-xet", action="store_true", help="Do not set HF_HUB_DISABLE_XET=1.")
     parser.add_argument("--json", action="store_true", help="Print preflight reports as JSON.")
+    parser.add_argument(
+        "--allow-incomplete",
+        action="store_true",
+        help="Exit zero even when preflight reports incomplete datasets. Useful for progress logs.",
+    )
     return parser.parse_args()
 
 
@@ -318,6 +323,8 @@ def main() -> int:
 
         report = preflight_dataset(dataset)
         reports.append(report)
+        if (not report["ready"]) and (not args.allow_incomplete):
+            failures += 1
         if not args.json:
             print_preflight(report)
 

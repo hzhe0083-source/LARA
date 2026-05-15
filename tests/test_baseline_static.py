@@ -139,6 +139,8 @@ def test_benchmark_dataset_entrypoints_are_explicit():
     assert "chunk_parquet_files" in downloader_src
     assert "missing data/chunk-*/*.parquet" in downloader_src
     assert "missing meta/tasks.parquet or meta/tasks.jsonl" in downloader_src
+    assert "--allow-incomplete" in downloader_src
+    assert '(not report["ready"]) and (not args.allow_incomplete)' in downloader_src
     assert "dataset_py: lerobot_v3_datasets" in libero_cfg
     assert "data_mix: libero100" in libero_cfg
     assert "state_dim: 9" in libero_cfg
@@ -149,6 +151,8 @@ def test_benchmark_dataset_entrypoints_are_explicit():
     assert "action_dim: 4" in metaworld_cfg
     assert "use_lara_moe: false" in metaworld_cfg
     assert "scripts/download_benchmark_data.py --dataset all --preflight-only" in readme
+    assert "exits nonzero while any selected dataset is incomplete" in readme
+    assert "--allow-incomplete" in readme
 
 
 def test_action_head_future_windows_are_strict():

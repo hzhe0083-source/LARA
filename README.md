@@ -269,7 +269,7 @@ The script fixes `HF_HOME`, `HF_HUB_CACHE`, and `HF_XET_CACHE` under `benchmark_
 python scripts/download_benchmark_data.py --dataset all --preflight-only
 ```
 
-A dataset is not considered ready until `meta/info.json`, `meta/stats.json`, task metadata (`meta/tasks.parquet` or `meta/tasks.jsonl`), and the expected LeRobot v3 chunk parquet count are present: 279 `data/chunk-*/*.parquet` files for LIBERO100 and 492 for MetaWorld MT50. The preflight intentionally counts chunk parquet files, not duplicate split files under `data/train-*`. The current benchmark configs use the baseline VLA path only; MoE and two-level routing remain disabled by default.
+A dataset is not considered ready until `meta/info.json`, `meta/stats.json`, task metadata (`meta/tasks.parquet` or `meta/tasks.jsonl`), and the expected LeRobot v3 chunk parquet count are present: 279 `data/chunk-*/*.parquet` files for LIBERO100 and 492 for MetaWorld MT50. The preflight intentionally counts chunk parquet files, not duplicate split files under `data/train-*`, and exits nonzero while any selected dataset is incomplete. For progress-only supervision during a long download, add `--allow-incomplete`. The current benchmark configs use the baseline VLA path only; MoE and two-level routing remain disabled by default.
 
 To check whether the repository has enough evidence to claim the full LARA paper method is complete, run:
 
