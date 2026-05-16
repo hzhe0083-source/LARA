@@ -34,27 +34,42 @@ def save_dataset_statistics(dataset_statistics, run_dir):
 
 
 
-def build_dataloader(cfg, dataset_py="lerobot_datasets_oxe"): # TODO now here only is get dataset, we need mv dataloader to here
+def build_dataloader(
+    cfg,
+    dataset_py="lerobot_datasets_oxe",
+    data_cfg=None,
+    mode: str = "train",
+    shuffle: bool | None = None,
+): # TODO now here only is get dataset, we need mv dataloader to here
 
     if dataset_py == "lerobot_datasets":
         from Lara.dataloader.lerobot_datasets import get_vla_dataset, collate_fn
-        vla_dataset_cfg = cfg.datasets.vla_data
+        vla_dataset_cfg = data_cfg if data_cfg is not None else cfg.datasets.vla_data
 
         vla_dataset = get_vla_dataset(
             data_cfg=vla_dataset_cfg,
+            mode=mode,
             action_horizon=cfg.framework.action_model.action_horizon,
             video_horizon=cfg.framework.vj2_model.num_frames,
             execution_horizon=cfg.framework.action_model.get("execution_horizon", None),
             num_utility_experts=cfg.framework.action_model.get("lara_num_experts", None))
+
+        if mode != "train" and hasattr(vla_dataset, "balance_trajectory_weights"):
+            vla_dataset.balance_trajectory_weights = False
+            vla_dataset._trajectory_sampling_weights = [
+                np.ones(len(dataset.trajectory_lengths)) / len(dataset.trajectory_lengths)
+                for dataset in vla_dataset.datasets
+            ]
+            vla_dataset.set_epoch(0)
         
         vla_train_dataloader = DataLoader(
             vla_dataset,
-            batch_size=cfg.datasets.vla_data.per_device_batch_size,
+            batch_size=vla_dataset_cfg.per_device_batch_size,
             collate_fn=collate_fn,
             num_workers=8,
-            # shuffle=True
+            shuffle=bool(shuffle) if shuffle is not None else False,
         )        
-        if is_main_process():
+        if mode == "train" and is_main_process():
             
             output_dir = Path(cfg.output_dir)
             vla_dataset.save_dataset_statistics(output_dir / "dataset_statistics.json")
@@ -68,7 +83,7 @@ def build_dataloader(cfg, dataset_py="lerobot_datasets_oxe"): # TODO now here on
         return vlm_train_dataloader
     elif dataset_py == "lerobot_v3_datasets":
         from Lara.dataloader.lerobot_v3_datasets import get_lerobot_v3_datasets, collate_fn
-        vla_dataset_cfg = cfg.datasets.vla_data
+        vla_dataset_cfg = data_cfg if data_cfg is not None else cfg.datasets.vla_data
 
         vla_dataset = get_lerobot_v3_datasets(
             data_cfg=vla_dataset_cfg,
@@ -76,24 +91,28 @@ def build_dataloader(cfg, dataset_py="lerobot_datasets_oxe"): # TODO now here on
         )
 
         custom_collate_fn = partial(collate_fn, 
-            img_keys=cfg.datasets.vla_data.img_keys,
-            state_key=cfg.datasets.vla_data.state_key if "state_key" in cfg.datasets.vla_data else None,
-            action_key=cfg.datasets.vla_data.action_key if cfg.datasets.vla_data.action_key else None,
-            task_key=cfg.datasets.vla_data.task_key if cfg.datasets.vla_data.task_key else None,
-            resize_size=cfg.datasets.vla_data.resize_size,
+            img_keys=vla_dataset_cfg.img_keys,
+            state_key=vla_dataset_cfg.state_key if "state_key" in vla_dataset_cfg else None,
+            action_key=vla_dataset_cfg.action_key if vla_dataset_cfg.action_key else None,
+            task_key=vla_dataset_cfg.task_key if vla_dataset_cfg.task_key else None,
+            resize_size=vla_dataset_cfg.resize_size,
             execution_horizon=cfg.framework.action_model.get("execution_horizon", None),
             prediction_horizon=cfg.framework.action_model.action_horizon)
 
-
-
-        train_sampler = torch.utils.data.distributed.DistributedSampler(vla_dataset, shuffle=True)
+        train_sampler = None
+        if dist.is_available() and dist.is_initialized():
+            train_sampler = torch.utils.data.distributed.DistributedSampler(
+                vla_dataset,
+                shuffle=bool(shuffle) if shuffle is not None else mode == "train",
+            )
 
         vla_train_dataloader = DataLoader(
             vla_dataset,
-            batch_size=cfg.datasets.vla_data.per_device_batch_size,
+            batch_size=vla_dataset_cfg.per_device_batch_size,
             collate_fn=custom_collate_fn,
             num_workers=16,
             sampler=train_sampler,
+            shuffle=(bool(shuffle) if shuffle is not None else mode == "train") if train_sampler is None else False,
         )      
         #if dist.get_rank() == 0: 
         #    for batch in vla_train_dataloader:

@@ -113,6 +113,8 @@ class ActionHeadAdapterSmokeTest(unittest.TestCase):
         self.assertEqual(adapter.latent_action_horizon, 1)
         self.assertEqual(adapter.latent_action_head.posterior.action_horizon, 1)
         self.assertIn("latent_action_loss", output)
+        self.assertIn("latent_action_reconstruction_loss", output)
+        self.assertIn("latent_action_reconstruction_loss_weighted", output)
         self.assertTrue(torch.isfinite(output["total_action_loss"]).item())
 
     def test_predict_action_can_return_moe_route_aux_for_closed_loop_cache(self):
@@ -232,8 +234,12 @@ class ActionHeadAdapterSmokeTest(unittest.TestCase):
         )
 
         self.assertIn("moe_direct_expert_loss", output)
+        self.assertIn("moe_loss", output)
+        self.assertIn("moe_route_distill_loss_raw", output)
+        self.assertIn("moe_route_distill_loss_weighted", output)
+        self.assertIn("moe_pool_distill_loss_weighted", output)
         self.assertTrue(torch.isfinite(output["moe_direct_expert_loss"]).item())
-        expected_total = output["action_loss"] + output["moe_router_loss"] + output["moe_direct_expert_loss"]
+        expected_total = output["action_loss"] + output["moe_loss"] + output["moe_direct_expert_loss"]
         self.assertTrue(torch.allclose(output["total_action_loss"], expected_total))
 
     def test_moe_can_use_expert_action_losses_as_utility_scores(self):
@@ -267,6 +273,7 @@ class ActionHeadAdapterSmokeTest(unittest.TestCase):
         )
 
         self.assertIn("moe_utility_loss", output)
+        self.assertIn("moe_utility_loss_weighted", output)
         self.assertIn("moe_utility_scores", output)
         self.assertIn("moe_route_quality_utility_spearman", output)
         self.assertIn("moe_route_quality_utility_topk_consistency", output)
@@ -547,6 +554,8 @@ class ActionHeadAdapterSmokeTest(unittest.TestCase):
         )
 
         self.assertIn("transition_state_loss", output)
+        self.assertIn("transition_state_loss_raw", output)
+        self.assertIn("transition_state_loss_weighted", output)
         self.assertGreater(float(output["transition_state_loss"].detach()), 0.0)
         expected_total = output["action_loss"] + output["transition_state_loss"]
         self.assertTrue(torch.allclose(output["total_action_loss"], expected_total))

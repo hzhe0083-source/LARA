@@ -3,6 +3,7 @@ import unittest
 import torch
 
 from Lara.model.modules.action_model.lara_latent import (
+    LatentActionDecoder,
     LatentActionHead,
     LatentActionTransitionHead,
     PosteriorLatentActionEncoder,
@@ -94,11 +95,50 @@ class LatentActionHeadTest(unittest.TestCase):
         predicted_tokens = head.predict(context_tokens)
 
         self.assertEqual(output.tokens.shape, (2, 2, 8))
+        self.assertEqual(output.reconstructed_actions.shape, (2, 4, 3))
         self.assertTrue(torch.isfinite(output.loss).item())
+        self.assertGreaterEqual(float(output.reconstruction_loss), 0.0)
         self.assertGreaterEqual(float(output.vq_loss), 0.0)
         self.assertGreaterEqual(float(output.prior_loss), 0.0)
         self.assertGreaterEqual(float(output.code_usage_loss), 0.0)
         self.assertEqual(predicted_tokens.shape, (2, 2, 8))
+
+    def test_latent_action_decoder_reconstructs_masked_action_chunk(self):
+        torch.manual_seed(0)
+        decoder = LatentActionDecoder(
+            context_dim=8,
+            action_dim=3,
+            action_horizon=4,
+            hidden_dim=16,
+        )
+        context_tokens = torch.randn(2, 5, 8)
+        latent_tokens = torch.randn(2, 2, 8)
+
+        reconstructed = decoder(context_tokens, latent_tokens)
+
+        self.assertEqual(reconstructed.shape, (2, 4, 3))
+        self.assertTrue(torch.isfinite(reconstructed).all().item())
+
+    def test_latent_action_reconstruction_loss_respects_future_action_mask(self):
+        torch.manual_seed(0)
+        head = LatentActionHead(
+            context_dim=8,
+            action_dim=3,
+            action_horizon=4,
+            num_latent_tokens=2,
+            codebook_size=8,
+            hidden_dim=16,
+        )
+        context_tokens = torch.randn(2, 5, 8)
+        future_actions = torch.randn(2, 4, 3)
+
+        output = head(
+            context_tokens,
+            future_actions,
+            future_action_mask=torch.zeros(2, 4, dtype=torch.bool),
+        )
+
+        self.assertTrue(torch.allclose(output.reconstruction_loss, torch.tensor(0.0)))
 
     def test_transition_head_predicts_execution_and_prediction_boundary_states(self):
         torch.manual_seed(0)

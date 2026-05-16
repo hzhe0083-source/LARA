@@ -59,6 +59,7 @@ class ActionHeadAdapter(nn.Module):
         self.use_latent_action_tokens = action_cfg.get("use_latent_action_tokens", True)
         self.max_latent_action_tokens = action_cfg.get("max_latent_action_tokens", None)
         self.use_latent_action_head = action_cfg.get("use_latent_action_head", False)
+        self.latent_reconstruction_loss_weight = action_cfg.get("lara_latent_reconstruction_loss_weight", 1.0)
         self.use_transition_head = action_cfg.get("lara_use_transition_head", False)
         self.transition_loss_weight = action_cfg.get("lara_transition_loss_weight", 0.0)
         self.execution_transition_loss_weight = action_cfg.get("lara_execution_transition_loss_weight", 1.0)
@@ -112,6 +113,7 @@ class ActionHeadAdapter(nn.Module):
                 prior_loss_weight=action_cfg.get("lara_prior_loss_weight", 1.0),
                 code_usage_loss_weight=action_cfg.get("lara_code_usage_loss_weight", 0.0),
                 code_usage_temperature=action_cfg.get("lara_code_usage_temperature", 1.0),
+                reconstruction_loss_weight=self.latent_reconstruction_loss_weight,
             )
             if self.use_latent_action_head
             else None
@@ -378,9 +380,42 @@ class ActionHeadAdapter(nn.Module):
             latent_action_tokens = latent_output.tokens
             aux_losses = {
                 "latent_action_loss": latent_output.loss,
+                "latent_action_reconstruction_loss": latent_output.reconstruction_loss,
+                "latent_action_reconstruction_loss_weight": torch.as_tensor(
+                    self.latent_reconstruction_loss_weight,
+                    device=latent_output.loss.device,
+                    dtype=latent_output.loss.dtype,
+                ),
+                "latent_action_reconstruction_loss_weighted": (
+                    self.latent_reconstruction_loss_weight * latent_output.reconstruction_loss
+                ),
                 "latent_action_vq_loss": latent_output.vq_loss,
+                "latent_action_vq_loss_weight": torch.as_tensor(
+                    self.latent_action_head.vq_loss_weight,
+                    device=latent_output.loss.device,
+                    dtype=latent_output.loss.dtype,
+                ),
+                "latent_action_vq_loss_weighted": (
+                    self.latent_action_head.vq_loss_weight * latent_output.vq_loss
+                ),
                 "latent_action_prior_loss": latent_output.prior_loss,
+                "latent_action_prior_loss_weight": torch.as_tensor(
+                    self.latent_action_head.prior_loss_weight,
+                    device=latent_output.loss.device,
+                    dtype=latent_output.loss.dtype,
+                ),
+                "latent_action_prior_loss_weighted": (
+                    self.latent_action_head.prior_loss_weight * latent_output.prior_loss
+                ),
                 "latent_action_code_usage_loss": latent_output.code_usage_loss,
+                "latent_action_code_usage_loss_weight": torch.as_tensor(
+                    self.latent_action_head.code_usage_loss_weight,
+                    device=latent_output.loss.device,
+                    dtype=latent_output.loss.dtype,
+                ),
+                "latent_action_code_usage_loss_weighted": (
+                    self.latent_action_head.code_usage_loss_weight * latent_output.code_usage_loss
+                ),
                 "latent_action_perplexity": latent_output.perplexity,
             }
         if self.transition_head is not None:
@@ -393,7 +428,14 @@ class ActionHeadAdapter(nn.Module):
                 prediction_state_target_mask=prediction_state_target_mask,
             )
             if transition_loss is not None:
+                aux_losses["transition_state_loss_raw"] = transition_loss.detach()
+                aux_losses["transition_state_loss_weight"] = torch.as_tensor(
+                    self.transition_loss_weight,
+                    device=transition_loss.device,
+                    dtype=transition_loss.dtype,
+                )
                 aux_losses["transition_state_loss"] = self.transition_loss_weight * transition_loss
+                aux_losses["transition_state_loss_weighted"] = self.transition_loss_weight * transition_loss.detach()
         actions_target_repeated = actions_target.repeat_interleave(self.repeated_diffusion_steps, dim=0)
         action_mask_repeated = (
             action_mask_target.repeat_interleave(self.repeated_diffusion_steps, dim=0)
@@ -624,16 +666,81 @@ class ActionHeadAdapter(nn.Module):
             conditioning_tokens = moe_output.tokens
             aux_losses.update(
                 {
-                    "moe_router_loss": moe_output.loss,
+                    "moe_loss": moe_output.loss,
+                    "moe_total_loss": moe_output.loss.detach(),
+                    "moe_router_loss": moe_output.route_loss_weighted,
                     "moe_route_distill_loss": moe_output.route_loss,
+                    "moe_route_distill_loss_raw": moe_output.route_loss,
+                    "moe_route_distill_loss_weight": torch.as_tensor(
+                        self.lara_moe.router_loss_weight,
+                        device=moe_output.loss.device,
+                        dtype=moe_output.loss.dtype,
+                    ),
+                    "moe_route_distill_loss_weighted": moe_output.route_loss_weighted,
                     "moe_pool_distill_loss": moe_output.pool_loss,
+                    "moe_pool_distill_loss_raw": moe_output.pool_loss,
+                    "moe_pool_distill_loss_weight": torch.as_tensor(
+                        self.lara_moe.pool_loss_weight,
+                        device=moe_output.loss.device,
+                        dtype=moe_output.loss.dtype,
+                    ),
+                    "moe_pool_distill_loss_weighted": moe_output.pool_loss_weighted,
                     "moe_utility_loss": moe_output.utility_loss,
+                    "moe_utility_loss_raw": moe_output.utility_loss,
+                    "moe_utility_loss_weight": torch.as_tensor(
+                        self.lara_moe.utility_loss_weight,
+                        device=moe_output.loss.device,
+                        dtype=moe_output.loss.dtype,
+                    ),
+                    "moe_utility_loss_weighted": moe_output.utility_loss_weighted,
                     "moe_utility_rank_loss": moe_output.utility_rank_loss,
+                    "moe_utility_rank_loss_raw": moe_output.utility_rank_loss,
+                    "moe_utility_rank_loss_weight": torch.as_tensor(
+                        self.lara_moe.utility_rank_loss_weight,
+                        device=moe_output.loss.device,
+                        dtype=moe_output.loss.dtype,
+                    ),
+                    "moe_utility_rank_loss_weighted": moe_output.utility_rank_loss_weighted,
                     "moe_utility_head_loss": moe_output.utility_head_loss,
+                    "moe_utility_head_loss_raw": moe_output.utility_head_loss,
+                    "moe_utility_head_loss_weight": torch.as_tensor(
+                        self.lara_moe.utility_head_loss_weight,
+                        device=moe_output.loss.device,
+                        dtype=moe_output.loss.dtype,
+                    ),
+                    "moe_utility_head_loss_weighted": moe_output.utility_head_loss_weighted,
                     "moe_balance_loss": moe_output.balance_loss,
+                    "moe_balance_loss_raw": moe_output.balance_loss,
+                    "moe_balance_loss_weight": torch.as_tensor(
+                        self.lara_moe.balance_loss_weight,
+                        device=moe_output.loss.device,
+                        dtype=moe_output.loss.dtype,
+                    ),
+                    "moe_balance_loss_weighted": moe_output.balance_loss_weighted,
                     "moe_stickiness_loss": moe_output.stickiness_loss,
+                    "moe_stickiness_loss_raw": moe_output.stickiness_loss,
+                    "moe_stickiness_loss_weight": torch.as_tensor(
+                        self.lara_moe.stickiness_loss_weight,
+                        device=moe_output.loss.device,
+                        dtype=moe_output.loss.dtype,
+                    ),
+                    "moe_stickiness_loss_weighted": moe_output.stickiness_loss_weighted,
                     "moe_diversity_loss": moe_output.diversity_loss,
+                    "moe_diversity_loss_raw": moe_output.diversity_loss,
+                    "moe_diversity_loss_weight": torch.as_tensor(
+                        self.lara_moe.diversity_loss_weight,
+                        device=moe_output.loss.device,
+                        dtype=moe_output.loss.dtype,
+                    ),
+                    "moe_diversity_loss_weighted": moe_output.diversity_loss_weighted,
                     "moe_entropy_loss": moe_output.entropy_loss,
+                    "moe_entropy_loss_raw": moe_output.entropy_loss,
+                    "moe_entropy_loss_weight": torch.as_tensor(
+                        self.lara_moe.entropy_loss_weight,
+                        device=moe_output.loss.device,
+                        dtype=moe_output.loss.dtype,
+                    ),
+                    "moe_entropy_loss_weighted": moe_output.entropy_loss_weighted,
                     "moe_utility_calibration_error": moe_output.utility_calibration_error,
                     "moe_router_entropy": moe_output.router_entropy,
                     "moe_posterior_entropy": moe_output.posterior_entropy,
@@ -664,7 +771,16 @@ class ActionHeadAdapter(nn.Module):
                 safe_metric_name = metric_name.replace("/", "_").replace(".", "_")
                 aux_losses[f"moe_route_quality_{safe_metric_name}"] = metric_value
             if direct_expert_loss is not None:
+                aux_losses["moe_direct_expert_loss_raw"] = direct_expert_loss.detach()
+                aux_losses["moe_direct_expert_loss_weight"] = torch.as_tensor(
+                    self.direct_expert_loss_weight,
+                    device=direct_expert_loss.device,
+                    dtype=direct_expert_loss.dtype,
+                )
                 aux_losses["moe_direct_expert_loss"] = self.direct_expert_loss_weight * direct_expert_loss
+                aux_losses["moe_direct_expert_loss_weighted"] = (
+                    self.direct_expert_loss_weight * direct_expert_loss.detach()
+                )
             if state_utility_losses is not None:
                 aux_losses["moe_state_utility_error"] = state_utility_losses.mean().detach()
             if self.use_direct_action_output:
@@ -704,7 +820,7 @@ class ActionHeadAdapter(nn.Module):
                 action_loss
                 + aux_losses.get("latent_action_loss", 0.0)
                 + aux_losses.get("transition_state_loss", 0.0)
-                + aux_losses.get("moe_router_loss", 0.0)
+                + aux_losses.get("moe_loss", 0.0)
                 + aux_losses.get("moe_direct_expert_loss", 0.0)
             )
         aux_losses["action_loss"] = action_loss
@@ -712,7 +828,7 @@ class ActionHeadAdapter(nn.Module):
             action_loss
             + aux_losses.get("latent_action_loss", 0.0)
             + aux_losses.get("transition_state_loss", 0.0)
-            + aux_losses.get("moe_router_loss", 0.0)
+            + aux_losses.get("moe_loss", 0.0)
             + aux_losses.get("moe_direct_expert_loss", 0.0)
         )
         return aux_losses

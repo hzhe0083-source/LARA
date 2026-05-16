@@ -24,6 +24,7 @@ def tiny_framework_config():
                 "vla_data": {"CoT_prompt": "act {actions} {e_actions}"},
                 "video_data": {"CoT_prompt": "watch {actions}"},
             },
+            "trainer": {"loss_scale": {"vla": 1.0, "vlm": 0.1, "wm": 0.1}},
         }
     )
 
@@ -239,6 +240,8 @@ class LaraCoreSmokeTest(unittest.TestCase):
 
         self.assertTrue(torch.allclose(output["action_loss"], torch.tensor(3.0)))
         self.assertTrue(torch.allclose(output["wm_loss"], torch.tensor(0.2)))
+        self.assertTrue(torch.allclose(output["metric/wm_loss_raw"], torch.tensor(2.0)))
+        self.assertTrue(torch.allclose(output["metric/wm_loss_weight"], torch.tensor(0.1)))
         self.assertTrue(torch.allclose(output["metric/moe_route_regret"], torch.tensor(0.5)))
         self.assertNotIn("metric/moe_utility_scores", output)
         self.assertEqual(model.qwen.num_prediction_steps, 2)
@@ -343,6 +346,30 @@ class LaraCoreSmokeTest(unittest.TestCase):
 
         self.assertIsNotNone(model.action_head.loss_scale.grad)
         self.assertFalse(torch.allclose(model.action_head.loss_scale.detach(), before))
+
+    def test_world_model_loss_weight_comes_from_config(self):
+        config = tiny_framework_config()
+        config.trainer.loss_scale.wm = 0.25
+        with (
+            patch.object(Lara_core, "QwenActionTokenizer", FakeQwen),
+            patch.object(Lara_core, "VJ2WorldModel", FakeVJ2),
+            patch.object(Lara_core, "ActionHeadAdapter", FakeActionHead),
+        ):
+            model = Lara_core.Lara(config=config)
+
+        examples = [
+            {
+                "image": ["image-0"],
+                "video": np.zeros((1, 2, 2, 2, 3), dtype=np.uint8),
+                "lang": "watch",
+            }
+        ]
+
+        output = model(examples)
+
+        self.assertTrue(torch.allclose(output["wm_loss"], torch.tensor(0.5)))
+        self.assertTrue(torch.allclose(output["metric/wm_loss_raw"], torch.tensor(2.0)))
+        self.assertTrue(torch.allclose(output["metric/wm_loss_weight"], torch.tensor(0.25)))
 
     def test_predict_action_passes_previous_router_probs_and_returns_route_aux(self):
         config = tiny_framework_config()

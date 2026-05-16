@@ -19,6 +19,15 @@ class MoEConditionerOutput:
     stickiness_loss: torch.Tensor
     diversity_loss: torch.Tensor
     entropy_loss: torch.Tensor
+    route_loss_weighted: torch.Tensor
+    pool_loss_weighted: torch.Tensor
+    utility_loss_weighted: torch.Tensor
+    utility_rank_loss_weighted: torch.Tensor
+    utility_head_loss_weighted: torch.Tensor
+    balance_loss_weighted: torch.Tensor
+    stickiness_loss_weighted: torch.Tensor
+    diversity_loss_weighted: torch.Tensor
+    entropy_loss_weighted: torch.Tensor
     utility_calibration_error: torch.Tensor
     utility_scores: Optional[torch.Tensor]
     utility_value_scores: Optional[torch.Tensor]
@@ -1404,15 +1413,24 @@ class LatentActionMoE(nn.Module):
         )
         diversity_loss = expert_diversity_loss(expert_outputs)
         entropy_loss = route_entropy_regularization_loss(router_probs, pool_probs)
+        route_loss_weighted = self.router_loss_weight * route_loss
+        pool_loss_weighted = self.pool_loss_weight * pool_loss
+        utility_loss_weighted = self.utility_loss_weight * utility_loss
+        utility_rank_loss_weighted = self.utility_loss_weight * self.utility_rank_loss_weight * utility_rank_loss
+        utility_head_loss_weighted = self.utility_head_loss_weight * utility_head_loss
+        balance_loss_weighted = self.balance_loss_weight * balance_loss
+        stickiness_loss_weighted = self.stickiness_loss_weight * stickiness_loss
+        diversity_loss_weighted = self.diversity_loss_weight * diversity_loss
+        entropy_loss_weighted = self.entropy_loss_weight * entropy_loss
         total_loss = (
-            self.router_loss_weight * route_loss
-            + self.pool_loss_weight * pool_loss
-            + self.utility_loss_weight * utility_loss
-            + self.utility_head_loss_weight * utility_head_loss
-            + self.balance_loss_weight * balance_loss
-            + self.stickiness_loss_weight * stickiness_loss
-            + self.diversity_loss_weight * diversity_loss
-            + self.entropy_loss_weight * entropy_loss
+            route_loss_weighted
+            + pool_loss_weighted
+            + utility_loss_weighted
+            + utility_head_loss_weighted
+            + balance_loss_weighted
+            + stickiness_loss_weighted
+            + diversity_loss_weighted
+            + entropy_loss_weighted
         )
         diagnostics = route_diagnostics(
             router_probs=router_probs.detach(),
@@ -1432,6 +1450,15 @@ class LatentActionMoE(nn.Module):
             stickiness_loss=stickiness_loss.detach(),
             diversity_loss=diversity_loss.detach(),
             entropy_loss=entropy_loss.detach(),
+            route_loss_weighted=route_loss_weighted.detach(),
+            pool_loss_weighted=pool_loss_weighted.detach(),
+            utility_loss_weighted=utility_loss_weighted.detach(),
+            utility_rank_loss_weighted=utility_rank_loss_weighted.detach(),
+            utility_head_loss_weighted=utility_head_loss_weighted.detach(),
+            balance_loss_weighted=balance_loss_weighted.detach(),
+            stickiness_loss_weighted=stickiness_loss_weighted.detach(),
+            diversity_loss_weighted=diversity_loss_weighted.detach(),
+            entropy_loss_weighted=entropy_loss_weighted.detach(),
             utility_calibration_error=utility_calibration_error.detach(),
             utility_scores=utility_scores.detach() if utility_scores is not None else None,
             utility_value_scores=utility_value_scores.detach() if utility_value_scores is not None else None,

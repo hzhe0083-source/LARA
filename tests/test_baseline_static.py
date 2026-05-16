@@ -174,18 +174,28 @@ def test_aux_action_losses_are_not_double_counted_by_trainer():
     trainer_tools_src = read("Lara/training/trainer_utils/trainer_tools.py")
     assert '"action_loss": action_output["total_action_loss"]' in core_src
     assert 'output[f"metric/{key}"] = value.detach()' in core_src
+    assert '"metric/wm_loss_raw"' in core_src
+    assert '"metric/wm_loss_weight"' in core_src
+    assert "self._loss_scale(\"wm\", fallback_key=\"vlm\", default=0.1)" in core_src
     assert "split_loss_and_metric_outputs(output_dict)" in trainer_src
     assert "total_loss = sum(loss_dict.values())" in trainer_src
     assert "def split_loss_and_metric_outputs" in trainer_tools_src
+    assert "def action_eval_metrics" in trainer_tools_src
+    assert "self._get_next_eval_batch()" in trainer_src
+    assert "eval/skipped_no_eval_dataloader" in trainer_src
+    assert "eval/full_horizon_mae" in trainer_src
+    assert "eval/execution_horizon_mae" in trainer_src
 
 
 def test_optional_latent_action_head_stage_one_exists():
     latent_src = read("Lara/model/modules/action_model/lara_latent.py")
     adapter_src = read("Lara/model/framework/act.py")
     config_src = read("scripts/config/lara_so101_ft.yaml")
+    latent_cfg = read("scripts/config/lara_so101_latent_vq.yaml")
     assert "class PosteriorLatentActionEncoder" in latent_src
     assert "class VectorQuantizer" in latent_src
     assert "class LatentActionPrior" in latent_src
+    assert "class LatentActionDecoder" in latent_src
     assert "class LatentActionHead" in latent_src
     assert "class LatentActionTransitionHead" in latent_src
     assert "self.latent_action_horizon" in adapter_src
@@ -200,6 +210,8 @@ def test_optional_latent_action_head_stage_one_exists():
     assert "utility_actions_target = actions_target[:, : self.utility_horizon, :]" in adapter_src
     assert "use_latent_action_head" in adapter_src
     assert "self.latent_action_head.predict" in adapter_src
+    assert "latent_action_reconstruction_loss" in adapter_src
+    assert "latent_action_reconstruction_loss_weighted" in adapter_src
     assert "latent_action_code_usage_loss" in adapter_src
     assert "latent_action_horizon: 10" in config_src
     assert "router_horizon: 10" in config_src
@@ -207,6 +219,8 @@ def test_optional_latent_action_head_stage_one_exists():
     assert "self.transition_head" in adapter_src
     assert "transition_state_loss" in adapter_src
     assert "use_latent_action_head: false" in config_src
+    assert "use_latent_action_head: true" in latent_cfg
+    assert "lara_latent_reconstruction_loss_weight: 1.0" in latent_cfg
     assert "lara_use_transition_head: false" in config_src
     assert "lara_transition_loss_weight: 0.0" in config_src
     assert "lara_code_usage_loss_weight: 0.0" in config_src
@@ -225,6 +239,8 @@ def test_optional_moe_router_stage_two_exists():
     readiness_cli_src = read("scripts/audit_lara_paper_readiness.py")
     smoke_src = read("scripts/smoke_lara_real_components.py")
     config_src = read("scripts/config/lara_so101_ft.yaml")
+    moe_cfg = read("scripts/config/lara_so101_moe_direct.yaml")
+    utility_cfg = read("scripts/config/lara_so101_utility_pool.yaml")
     flow_src = read("Lara/model/modules/action_model/GR00T_ActionHeader.py")
     gap = read("document/IMPLEMENTATION_GAP.md")
     assert "class LatentActionMoE" in moe_src
@@ -412,6 +428,11 @@ def test_optional_moe_router_stage_two_exists():
     assert "with torch.no_grad()" in adapter_src
     assert "use_lara_moe" in adapter_src
     assert "moe_router_loss" in adapter_src
+    assert "moe_loss" in adapter_src
+    assert "moe_route_distill_loss_raw" in adapter_src
+    assert "moe_route_distill_loss_weighted" in adapter_src
+    assert "moe_utility_loss_weighted" in adapter_src
+    assert "moe_pool_distill_loss_weighted" in adapter_src
     assert "moe_pool_distill_loss" in adapter_src
     assert "moe_balance_loss" in adapter_src
     assert "moe_stickiness_loss" in adapter_src
@@ -449,6 +470,13 @@ def test_optional_moe_router_stage_two_exists():
     assert "counterfactual_utility_labels_path:" in config_src
     assert "counterfactual_utility_min_candidates_per_context: 2" in config_src
     assert "counterfactual_utility_sample_labeled_only: false" in config_src
+    assert "use_lara_moe: true" in moe_cfg
+    assert "lara_use_direct_action_experts: true" in moe_cfg
+    assert "lara_use_direct_action_output: true" in moe_cfg
+    assert "use_lara_moe: true" in utility_cfg
+    assert "lara_utility_loss_weight: 1.0" in utility_cfg
+    assert "lara_utility_rank_loss_weight: 0.25" in utility_cfg
+    assert "include_episode_start: true" in utility_cfg
     assert "Stage-2 MoE/router scaffold" in gap
     assert "expert-diversity/entropy stabilizers" in gap
     assert "route-quality aggregation metrics" in gap
@@ -467,6 +495,7 @@ def test_optional_moe_router_stage_two_exists():
 def test_paper_gap_is_explicit():
     readme = read("README.md")
     gap = read("document/IMPLEMENTATION_GAP.md")
+    baseline_cfg = read("scripts/config/lara_so101_baseline.yaml")
     assert "implemented the SO101 VLA/action-baseline path and several default-off scaffolds" in readme
     assert "paper's latent-action MoE and two-level routing method should still be treated as unfinished" in readme
     assert "not the final latent-action MoE/router implementation" in readme
@@ -485,3 +514,8 @@ def test_paper_gap_is_explicit():
     assert "transition-state consistency utility labels" in gap
     assert "rollout-record summarization" in gap
     assert "closed-loop route diagnostics" in gap
+    assert "scripts/config/lara_so101_baseline.yaml" in readme
+    assert "scripts/config/lara_so101_latent_vq.yaml" in readme
+    assert "scripts/config/lara_so101_moe_direct.yaml" in readme
+    assert "scripts/config/lara_so101_utility_pool.yaml" in readme
+    assert "use_lara_moe: false" in baseline_cfg

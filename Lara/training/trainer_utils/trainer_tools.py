@@ -71,6 +71,71 @@ def scalarize_metrics(metrics: dict) -> dict:
     return scalar_metrics
 
 
+def action_eval_metrics(
+    predicted_actions,
+    target_actions,
+    action_mask=None,
+    execution_horizon: int | None = None,
+) -> dict[str, float]:
+    """Mask-aware full and executable horizon action metrics."""
+    predicted = np.asarray(predicted_actions, dtype=np.float32)
+    target = np.asarray(target_actions, dtype=np.float32)
+    if predicted.ndim != 3:
+        raise ValueError(f"predicted_actions must have shape [B, H, A], got {predicted.shape}")
+    if target.ndim != 3:
+        raise ValueError(f"target_actions must have shape [B, H, A], got {target.shape}")
+    if target.shape[0] != predicted.shape[0] or target.shape[-1] != predicted.shape[-1]:
+        raise ValueError(f"target_actions must match predicted batch/action dims: {target.shape} vs {predicted.shape}")
+    if target.shape[1] < predicted.shape[1]:
+        raise ValueError(f"target horizon {target.shape[1]} is shorter than prediction horizon {predicted.shape[1]}")
+    if target.shape[1] > predicted.shape[1]:
+        target = target[:, -predicted.shape[1] :, :]
+
+    if action_mask is None:
+        mask = np.ones(predicted.shape[:2], dtype=bool)
+    else:
+        mask = np.asarray(action_mask, dtype=bool)
+        if mask.ndim == 3 and mask.shape[-1] == 1:
+            mask = mask[..., 0]
+        if mask.shape[0] != predicted.shape[0]:
+            raise ValueError(f"action_mask batch must match predictions: {mask.shape} vs {predicted.shape}")
+        if mask.shape[1] < predicted.shape[1]:
+            raise ValueError(f"action_mask horizon {mask.shape[1]} is shorter than prediction horizon {predicted.shape[1]}")
+        if mask.shape[1] > predicted.shape[1]:
+            mask = mask[:, -predicted.shape[1] :]
+
+    def summarize(prefix: str, errors: np.ndarray, squared_errors: np.ndarray, valid_mask: np.ndarray) -> dict[str, float]:
+        valid = valid_mask[..., None].astype(np.float32)
+        denom = max(float(valid.sum() * errors.shape[-1]), 1.0)
+        mse = float((squared_errors * valid).sum() / denom)
+        return {
+            f"eval/{prefix}_mae": float((errors * valid).sum() / denom),
+            f"eval/{prefix}_rmse": float(np.sqrt(mse)),
+            f"eval/{prefix}_mse": mse,
+        }
+
+    diff = predicted - target
+    abs_error = np.abs(diff)
+    squared_error = diff * diff
+    metrics = summarize("full_horizon", abs_error, squared_error, mask)
+
+    exec_horizon = predicted.shape[1] if execution_horizon is None else min(int(execution_horizon), predicted.shape[1])
+    if exec_horizon <= 0:
+        raise ValueError(f"execution_horizon must be positive, got {execution_horizon}")
+    metrics.update(
+        summarize(
+            "execution_horizon",
+            abs_error[:, :exec_horizon, :],
+            squared_error[:, :exec_horizon, :],
+            mask[:, :exec_horizon],
+        )
+    )
+    metrics["eval/valid_action_steps"] = float(mask.sum())
+    metrics["eval/prediction_horizon"] = float(predicted.shape[1])
+    metrics["eval/execution_horizon"] = float(exec_horizon)
+    return metrics
+
+
 def build_param_lr_groups(model, cfg):
     """
     build multiple param groups based on cfg.trainer.learning_rate.

@@ -1,4 +1,4 @@
-run_id: so101_vla_baseline
+run_id: so101_lara_moe_direct
 run_root_dir: checkpoints
 seed: 42
 trackers:
@@ -32,7 +32,7 @@ framework:
     past_action_window_size: 0
     repeated_diffusion_steps: 8
     use_latent_action_tokens: true
-    use_latent_action_head: false
+    use_latent_action_head: true
     lara_num_latent_tokens: 4
     lara_codebook_size: 128
     lara_latent_hidden_dim: 1024
@@ -47,7 +47,7 @@ framework:
     lara_transition_loss_weight: 0.0
     lara_execution_transition_loss_weight: 1.0
     lara_prediction_transition_loss_weight: 1.0
-    use_lara_moe: false
+    use_lara_moe: true
     lara_num_experts: 8
     lara_episode_pool_size: 4
     lara_episode_pool_size_min:
@@ -78,8 +78,8 @@ framework:
     lara_diversity_loss_weight: 0.0
     lara_entropy_loss_weight: 0.0
     lara_inference_stickiness_weight: 0.0
-    lara_use_direct_action_experts: false
-    lara_use_direct_action_output: false
+    lara_use_direct_action_experts: true
+    lara_use_direct_action_output: true
     lara_direct_expert_hidden_dim: 1024
     lara_direct_expert_loss_weight: 1.0
     lara_posterior_temperature: 1.0

@@ -37,6 +37,17 @@ class Lara(baseframework):
         self.future_action_window_size = action_cfg.future_action_window_size
         self.past_action_window_size = action_cfg.past_action_window_size
         self.chunk_len = self.action_horizon
+        self.wm_loss_weight = self._loss_scale("wm", fallback_key="vlm", default=0.1)
+
+    def _loss_scale(self, key: str, fallback_key: str | None = None, default: float = 1.0) -> float:
+        loss_scale = getattr(getattr(self.config, "trainer", None), "loss_scale", None)
+        if loss_scale is None:
+            return default
+        if key in loss_scale:
+            return float(loss_scale.get(key))
+        if fallback_key is not None and fallback_key in loss_scale:
+            return float(loss_scale.get(fallback_key))
+        return default
 
     def forward(
         self,
@@ -114,9 +125,14 @@ class Lara(baseframework):
 
         with torch.autocast("cuda", dtype=torch.bfloat16):
             wm_loss = self.vj2(batch_videos, qwen_context.action_tokens)
+        wm_loss_weighted = wm_loss * self.wm_loss_weight
 
         if actions is None:
-            return {"wm_loss": wm_loss}
+            return {
+                "wm_loss": wm_loss_weighted,
+                "metric/wm_loss_raw": wm_loss.detach(),
+                "metric/wm_loss_weight": torch.as_tensor(self.wm_loss_weight, device=wm_loss.device),
+            }
 
         with torch.autocast("cuda", dtype=torch.float32):
             action_output = self.action_head(
@@ -148,7 +164,9 @@ class Lara(baseframework):
         if isinstance(action_output, dict):
             output = {
                 "action_loss": action_output["total_action_loss"],
-                "wm_loss": wm_loss * 0.1,
+                "wm_loss": wm_loss_weighted,
+                "metric/wm_loss_raw": wm_loss.detach(),
+                "metric/wm_loss_weight": torch.as_tensor(self.wm_loss_weight, device=wm_loss.device),
             }
             for key, value in action_output.items():
                 if key == "total_action_loss":
@@ -157,7 +175,12 @@ class Lara(baseframework):
                     output[f"metric/{key}"] = value.detach()
             return output
 
-        return {"action_loss": action_output, "wm_loss": wm_loss * 0.1}
+        return {
+            "action_loss": action_output,
+            "wm_loss": wm_loss_weighted,
+            "metric/wm_loss_raw": wm_loss.detach(),
+            "metric/wm_loss_weight": torch.as_tensor(self.wm_loss_weight, device=wm_loss.device),
+        }
 
     @torch.inference_mode()
     def predict_action(

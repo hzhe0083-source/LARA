@@ -160,9 +160,11 @@ class AuditLaraPaperReadinessTest(unittest.TestCase):
                         "final_metrics": {
                             "action_loss": 1.0,
                             "transition_state_loss": 0.4,
-                            "moe_router_loss": 0.3,
-                            "moe_pool_distill_loss": 0.2,
-                            "moe_utility_loss": 0.1,
+                            "moe_loss": 0.6,
+                            "moe_route_distill_loss_raw": 0.3,
+                            "moe_route_distill_loss_weighted": 0.3,
+                            "moe_pool_distill_loss_weighted": 0.2,
+                            "moe_utility_loss_weighted": 0.1,
                         },
                     }
                 ),
@@ -259,9 +261,11 @@ class AuditLaraPaperReadinessTest(unittest.TestCase):
                         "final_metrics": {
                             "action_loss": 1.0,
                             "transition_state_loss": 0.4,
-                            "moe_router_loss": 0.3,
-                            "moe_pool_distill_loss": 0.2,
-                            "moe_utility_loss": 0.1,
+                            "moe_loss": 0.6,
+                            "moe_route_distill_loss_raw": 0.3,
+                            "moe_route_distill_loss_weighted": 0.3,
+                            "moe_pool_distill_loss_weighted": 0.2,
+                            "moe_utility_loss_weighted": 0.1,
                         },
                     }
                 ),

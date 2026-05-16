@@ -508,20 +508,34 @@ action tokens from the Qwen/V-JEPA token stream, and adapts those tokens to a
 flow-matching action head that predicts continuous follower-arm action chunks.
 The SO101 dataloader and action adapter also propagate future-action validity
 masks so trajectory-end padding does not supervise the action loss or any
-default-off latent, transition, utility-proxy, or direct-expert losses.
+default-off latent, transition, utility-proxy, or direct-expert losses. The
+training code now separates prediction-horizon and execution-horizon evaluation
+metrics on an independent validation dataloader when
+\texttt{datasets.vla\_eval\_data} is configured, and it records the
+world-model loss with a configurable \texttt{trainer.loss\_scale.wm} weight
+rather than a hard-coded multiplier.
 
 The latent-action, MoE, and two-level routing components described in the
 preceding sections are not yet completed as a validated implementation of
 LARA. The codebase contains experimental scaffolding for a posterior latent
-action head, residual or direct action experts, posterior-responsibility
-signals, an episode-level resident-pool router, a chunk-level top-$k$ router
-inside that pool, route diagnostics, and counterfactual-utility sidecar
-plumbing. These paths remain disabled by default and should be treated as
-research hooks rather than completed paper evidence. In particular, the current
-repository does not yet provide a trained and validated MoE action head, a
-validated two-level routing policy, real counterfactual utility labels, or
-closed-loop SO101 results demonstrating resident-pool reuse and sparse expert
-selection under matched compute.
+action head with an explicit action-chunk decoder and reconstruction loss,
+residual or direct action experts, posterior-responsibility signals, an
+episode-level resident-pool router, a chunk-level top-$k$ router inside that
+pool, route diagnostics, and counterfactual-utility sidecar plumbing. These
+paths remain disabled by default and should be treated as research hooks rather
+than completed paper evidence. In particular, the current repository does not
+yet provide a trained and validated MoE action head, a validated two-level
+routing policy, real counterfactual utility labels, or closed-loop SO101
+results demonstrating resident-pool reuse and sparse expert selection under
+matched compute.
+
+The implementation exposes four explicit SO101 stage configurations:
+\texttt{lara\_so101\_baseline.yaml}, \texttt{lara\_so101\_latent\_vq.yaml},
+\texttt{lara\_so101\_moe\_direct.yaml}, and
+\texttt{lara\_so101\_utility\_pool.yaml}. The first is the main VLA action
+baseline. The latter three enable default-off latent-action, direct-MoE, and
+utility/pool scaffolds for controlled experiments, but they do not by
+themselves constitute completed LARA evidence.
 
 Protocol tooling can summarize rollout JSON/JSONL records into matched-budget
 rows, subset-retention curves, route-sequence diagnostics, and compute-success

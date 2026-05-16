@@ -43,6 +43,7 @@ from Lara.training.trainer_utils.trainer_tools import normalize_dotlist_args
 from Lara.model.framework import build_framework
 from Lara.training.trainer_utils.trainer_tools import TrainerUtils
 from Lara.training.trainer_utils.trainer_tools import (
+    action_eval_metrics,
     barrier_if_distributed,
     build_param_lr_groups,
     get_rank,
@@ -104,16 +105,31 @@ def build_model(cfg) -> torch.nn.Module:
 from Lara.dataloader import build_dataloader
 
 
-def prepare_data(cfg, accelerator, output_dir) -> Tuple[DataLoader, DataLoader]:
+def prepare_data(cfg, accelerator, output_dir) -> Tuple[DataLoader, DataLoader | None]:
     """prepare training data"""
     # VLA data loader
     logger.info(f"Creating VLA Dataset with Mixture `{cfg.datasets.vla_data.data_mix}`")
-    vla_train_dataloader = build_dataloader(cfg=cfg, dataset_py=cfg.datasets.vla_data.dataset_py)
+    vla_train_dataloader = build_dataloader(
+        cfg=cfg,
+        dataset_py=cfg.datasets.vla_data.dataset_py,
+        data_cfg=cfg.datasets.vla_data,
+        mode="train",
+    )
+    vla_eval_dataloader = None
+    if "vla_eval_data" in cfg.datasets and cfg.datasets.vla_eval_data is not None:
+        logger.info(f"Creating independent VLA Eval Dataset with Mixture `{cfg.datasets.vla_eval_data.data_mix}`")
+        vla_eval_dataloader = build_dataloader(
+            cfg=cfg,
+            dataset_py=cfg.datasets.vla_eval_data.get("dataset_py", cfg.datasets.vla_data.dataset_py),
+            data_cfg=cfg.datasets.vla_eval_data,
+            mode="val",
+            shuffle=False,
+        )
 
     accelerator.dataloader_config.dispatch_batches = False
     barrier_if_distributed()
 
-    return vla_train_dataloader
+    return vla_train_dataloader, vla_eval_dataloader
 
 
 def setup_optimizer_and_scheduler(model, cfg) -> Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler._LRScheduler]:
@@ -146,10 +162,11 @@ def setup_optimizer_and_scheduler(model, cfg) -> Tuple[torch.optim.Optimizer, to
 
 
 class VLATrainer(TrainerUtils):
-    def __init__(self, cfg, model, vla_train_dataloader, optimizer, lr_scheduler, accelerator):
+    def __init__(self, cfg, model, vla_train_dataloader, optimizer, lr_scheduler, accelerator, vla_eval_dataloader=None):
         self.config = cfg
         self.model = model
         self.vla_train_dataloader = vla_train_dataloader
+        self.vla_eval_dataloader = vla_eval_dataloader
         self.optimizer = optimizer
         self.lr_scheduler = lr_scheduler
         self.accelerator = accelerator
@@ -184,14 +201,19 @@ class VLATrainer(TrainerUtils):
         self.print_trainable_parameters(self.model)
 
         # initialize distributed training components
-        self.model, self.optimizer, self.lr_scheduler, self.vla_train_dataloader = self.setup_distributed_training(
+        components = self.setup_distributed_training(
             self.accelerator,  # must be the first param
             self.model,
             self.optimizer,
             self.lr_scheduler,
             self.vla_train_dataloader,
-            # self.vlm_train_dataloader
         )
+        self.model, self.optimizer, self.lr_scheduler, self.vla_train_dataloader = components
+        if self.vla_eval_dataloader is not None:
+            self.vla_eval_dataloader = self.setup_distributed_training(
+                self.accelerator,
+                self.vla_eval_dataloader,
+            )
 
         #self._init_wandb()
         self._init_checkpointing()
@@ -269,6 +291,7 @@ class VLATrainer(TrainerUtils):
     def _create_data_iterators(self):
         """create data iterators"""
         self.vla_iter = iter(self.vla_train_dataloader)
+        self.vla_eval_iter = iter(self.vla_eval_dataloader) if self.vla_eval_dataloader is not None else None
         # self.vlm_iter = iter(self.vlm_train_dataloader)
 
     def _get_next_batch(self):
@@ -284,6 +307,21 @@ class VLATrainer(TrainerUtils):
             batch_vla = next(self.vla_iter)
 
         return batch_vla
+
+    def _get_next_eval_batch(self):
+        """Get next independent validation batch, if configured."""
+        if self.vla_eval_dataloader is None:
+            return None
+        try:
+            return next(self.vla_eval_iter)
+        except StopIteration:
+            if not hasattr(self, "vla_eval_epoch_count"):
+                self.vla_eval_epoch_count = 0
+            self.vla_eval_iter, self.vla_eval_epoch_count = TrainerUtils._reset_dataloader(
+                self.vla_eval_dataloader,
+                self.vla_eval_epoch_count,
+            )
+            return next(self.vla_eval_iter)
 
     import torch
 
@@ -433,18 +471,23 @@ class VLATrainer(TrainerUtils):
         :return: Average metric score across the evaluation dataset.
         """
 
+        if step_metrics is None:
+            step_metrics = {}
         if self.accelerator.is_main_process:
 
-            examples = self._get_next_batch()
-
-            score = 0.0
-            num_samples = len(examples)
+            examples = self._get_next_eval_batch()
+            if examples is None:
+                step_metrics["eval/skipped_no_eval_dataloader"] = 1.0
+                barrier_if_distributed()
+                return step_metrics
 
             batch_images = [example["image"] for example in examples]
             instructions = [example["lang"] for example in examples]  # [B, str]
             action_key = "future_actions" if "future_actions" in examples[0] else "action"
+            action_mask_key = "future_action_mask" if "future_action_mask" in examples[0] else "action_mask"
             state_key = "current_state" if "current_state" in examples[0] else "state"
             actions = [example[action_key] for example in examples]  # label
+            action_mask = [example[action_mask_key] for example in examples] if action_mask_key in examples[0] else None
             state = [example[state_key] for example in examples] if state_key in examples[0] else None  # [B, 1, state_dim]
 
 
@@ -457,17 +500,28 @@ class VLATrainer(TrainerUtils):
                 num_ddim_steps=20
             )
 
-            normalized_actions = output_dict["normalized_actions"]  # B, T, D
-            mae_score = np.mean(np.abs(normalized_actions - actions))
-
-            actions = np.array(actions)  # convert actions to numpy.ndarray
-            # B, Chunk, dim = actions.shape
-            num_pots = np.prod(actions.shape)
-            # Compute the metric score
-            score = TrainerUtils.euclidean_distance(normalized_actions, actions)
-            average_score = score / num_pots
-            step_metrics["mse_score"] = average_score
-            step_metrics["mae_score"] = mae_score
+            normalized_actions = np.asarray(output_dict["normalized_actions"], dtype=np.float32)  # B, T, D
+            actions = np.asarray(actions, dtype=np.float32)
+            action_mask = np.asarray(action_mask, dtype=bool) if action_mask is not None else None
+            eval_metrics = action_eval_metrics(
+                normalized_actions,
+                actions,
+                action_mask=action_mask,
+                execution_horizon=output_dict.get(
+                    "execution_horizon",
+                    self.config.framework.action_model.get("execution_horizon", normalized_actions.shape[1]),
+                ),
+            )
+            step_metrics.update(eval_metrics)
+            # Compatibility aliases for older dashboards; both are mask-aware.
+            step_metrics["mae_score"] = eval_metrics["eval/full_horizon_mae"]
+            step_metrics["mse_score"] = eval_metrics["eval/full_horizon_mse"]
+            self.writer.add_scalar("eval/full_horizon_mae", eval_metrics["eval/full_horizon_mae"], self.completed_steps)
+            self.writer.add_scalar(
+                "eval/execution_horizon_mae",
+                eval_metrics["eval/execution_horizon_mae"],
+                self.completed_steps,
+            )
             self.writer.add_scalar("mae_score", step_metrics["mae_score"], self.completed_steps)
             self.writer.add_scalar("mse_score", step_metrics["mse_score"], self.completed_steps)
         
@@ -534,7 +588,7 @@ def main(cfg) -> None:
     # build model
     vla = build_framework(cfg)
     # prepare data
-    vla_train_dataloader = prepare_data(cfg=cfg, accelerator=accelerator, output_dir=output_dir)
+    vla_train_dataloader, vla_eval_dataloader = prepare_data(cfg=cfg, accelerator=accelerator, output_dir=output_dir)
 
     # set optimizer and scheduler
     optimizer, lr_scheduler = setup_optimizer_and_scheduler(model=vla, cfg=cfg)
@@ -545,6 +599,7 @@ def main(cfg) -> None:
         cfg=cfg,
         model=vla,
         vla_train_dataloader=vla_train_dataloader,
+        vla_eval_dataloader=vla_eval_dataloader,
         optimizer=optimizer,
         lr_scheduler=lr_scheduler,
         accelerator=accelerator,

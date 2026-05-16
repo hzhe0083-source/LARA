@@ -70,7 +70,15 @@ Lara/
   model/modules/world_model/  V-JEPA latent world model pieces
   training/                   Accelerate/DeepSpeed training loops
 scripts/
-  config/lara_so101_ft.yaml   SO101 VLA baseline fine-tuning config
+  config/lara_so101_ft.yaml   compatibility alias for SO101 VLA baseline
+  config/lara_so101_baseline.yaml
+                                SO101 VLA/action baseline config
+  config/lara_so101_latent_vq.yaml
+                                SO101 latent-action VQ scaffold config
+  config/lara_so101_moe_direct.yaml
+                                SO101 direct MoE action scaffold config
+  config/lara_so101_utility_pool.yaml
+                                SO101 utility/pool scaffold config
   config/lara_libero100_baseline.yaml
                                 LIBERO100 VLA baseline config
   config/lara_metaworld_mt50_baseline.yaml
@@ -118,6 +126,18 @@ trainer:
 ```
 
 This means the VLA-JEPA pretrain representation is reused, while the SO101 action head is trained on SO101 follower-arm action/state data.
+
+The SO101 configs are deliberately split by paper stage:
+
+| Config | Intended use | Status |
+| --- | --- | --- |
+| `scripts/config/lara_so101_baseline.yaml` | VLA-JEPA pretrain + latent/body tokens + flow action head | Main baseline |
+| `scripts/config/lara_so101_latent_vq.yaml` | Adds posterior/VQ/prior latent-action head and action-chunk reconstruction loss | Scaffold, needs SO101 validation |
+| `scripts/config/lara_so101_moe_direct.yaml` | Adds latent head plus MoE/direct action experts and routed direct action output | Scaffold, needs SO101 validation |
+| `scripts/config/lara_so101_utility_pool.yaml` | Adds utility/pool settings for counterfactual sidecar training | Scaffold, requires real forced-route utility labels |
+| `scripts/config/lara_so101_ft.yaml` | Backward-compatible alias of the baseline config | Compatibility |
+
+For trainer evaluation, add `datasets.vla_eval_data` with a separate validation dataset config. If it is absent, the trainer records `eval/skipped_no_eval_dataloader` instead of reusing the training iterator as validation.
 
 Run the lightweight real-component smoke preflight before a heavy training job:
 
@@ -284,7 +304,7 @@ python scripts/audit_lara_paper_readiness.py \
 
 The command intentionally exits nonzero when required evidence is missing. For preflight logs where an incomplete report is still useful, add `--allow-incomplete`.
 
-The training artifact is a JSON object, not a free-form log. It must show a completed real-SO101 run, positive training steps, an existing checkpoint path, enabled latent/MoE/transition/direct-expert/expert-posterior flags, counterfactual utility labels with positive utility loss weight, and finite final metrics including `action_loss`, `transition_state_loss`, `moe_router_loss`, `moe_pool_distill_loss`, and `moe_utility_loss`.
+The training artifact is a JSON object, not a free-form log. It must show a completed real-SO101 run, positive training steps, an existing checkpoint path, enabled latent/MoE/transition/direct-expert/expert-posterior flags, counterfactual utility labels with positive utility loss weight, and finite final metrics including `action_loss`, `transition_state_loss`, `moe_loss`, `moe_route_distill_loss_raw`, `moe_route_distill_loss_weighted`, `moe_pool_distill_loss_weighted`, and `moe_utility_loss_weighted`.
 
 The robot evaluation artifact is also structured JSON. It must identify SO101 real-robot closed-loop evaluation, match the configured 60/10 horizons, cover the required resident fractions, report finite `success_rate`, include enough episodes for `--min-robot-eval-episodes`, and explicitly confirm route diagnostics, matched-compute metrics, and counterfactual utility evaluation.
 
@@ -297,7 +317,7 @@ accelerate launch \
   --config_file ./Lara/config/deepseeds/deepspeed_zero2.yaml \
   --num_processes 8 \
   ./Lara/training/train_lara.py \
-  --config_yaml ./scripts/config/lara_so101_ft.yaml
+  --config_yaml ./scripts/config/lara_so101_baseline.yaml
 ```
 
 For fewer GPUs, change `--num_processes`.
@@ -309,7 +329,7 @@ accelerate launch \
   --config_file ./Lara/config/deepseeds/deepspeed_zero2.yaml \
   --num_processes 1 \
   ./Lara/training/train_lara.py \
-  --config_yaml ./scripts/config/lara_so101_ft.yaml \
+  --config_yaml ./scripts/config/lara_so101_baseline.yaml \
   trainer.max_train_steps=1000 \
   datasets.vla_data.per_device_batch_size=1
 ```
@@ -331,6 +351,7 @@ It:
 - adds token-type embeddings for latent/body token streams
 - trains the flow action head on the configured `action_horizon`
 - treats `future_actions` as a strict horizon-aligned target while keeping legacy `action` tail-slicing as a fallback
+- when the optional latent-action head is enabled, reconstructs the executable latent action chunk and logs raw, weight, and weighted latent/MoE loss components separately
 
 The flow head implementation is in:
 

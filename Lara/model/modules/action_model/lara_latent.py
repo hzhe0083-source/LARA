@@ -9,10 +9,12 @@ import torch.nn.functional as F
 class LatentActionOutput:
     tokens: torch.Tensor
     loss: torch.Tensor
+    reconstruction_loss: torch.Tensor
     vq_loss: torch.Tensor
     prior_loss: torch.Tensor
     code_usage_loss: torch.Tensor
     perplexity: torch.Tensor
+    reconstructed_actions: torch.Tensor
 
 
 class LatentActionTransitionHead(nn.Module):
@@ -212,6 +214,62 @@ class LatentActionPrior(nn.Module):
         return logits.view(context_tokens.shape[0], self.num_latent_tokens, self.codebook_size)
 
 
+class LatentActionDecoder(nn.Module):
+    """Reconstructs the demonstrated executable action chunk from latent action tokens."""
+
+    def __init__(
+        self,
+        context_dim: int,
+        action_dim: int,
+        action_horizon: int,
+        hidden_dim: int,
+    ):
+        super().__init__()
+        if action_horizon <= 0:
+            raise ValueError("action_horizon must be positive")
+        self.action_horizon = action_horizon
+        self.action_dim = action_dim
+        self.context_norm = nn.LayerNorm(context_dim)
+        self.latent_norm = nn.LayerNorm(context_dim)
+        self.step_pos = nn.Parameter(torch.zeros(1, action_horizon, context_dim))
+        self.net = nn.Sequential(
+            nn.LayerNorm(context_dim * 3),
+            nn.Linear(context_dim * 3, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, action_dim),
+        )
+        nn.init.normal_(self.step_pos, mean=0.0, std=0.02)
+
+    def forward(self, context_tokens: torch.Tensor, latent_action_tokens: torch.Tensor) -> torch.Tensor:
+        if context_tokens.ndim != 3:
+            raise ValueError(f"Expected context_tokens [B, T, D], got {tuple(context_tokens.shape)}")
+        if latent_action_tokens.ndim != 3:
+            raise ValueError(f"Expected latent_action_tokens [B, L, D], got {tuple(latent_action_tokens.shape)}")
+        if latent_action_tokens.shape[0] != context_tokens.shape[0]:
+            raise ValueError(
+                "latent_action_tokens batch size must match context_tokens: "
+                f"{latent_action_tokens.shape[0]} != {context_tokens.shape[0]}"
+            )
+        if latent_action_tokens.shape[-1] != context_tokens.shape[-1]:
+            raise ValueError(
+                "latent_action_tokens hidden size must match context_tokens: "
+                f"{latent_action_tokens.shape[-1]} != {context_tokens.shape[-1]}"
+            )
+
+        context_summary = self.context_norm(context_tokens).mean(dim=1)
+        latent_summary = self.latent_norm(latent_action_tokens).mean(dim=1)
+        context_features = context_summary[:, None, :].expand(-1, self.action_horizon, -1)
+        latent_features = latent_summary[:, None, :].expand(-1, self.action_horizon, -1)
+        step_features = self.step_pos.to(device=context_tokens.device, dtype=context_tokens.dtype).expand(
+            context_tokens.shape[0],
+            -1,
+            -1,
+        )
+        return self.net(torch.cat([context_features, latent_features, step_features], dim=-1))
+
+
 class LatentActionHead(nn.Module):
     """Training-time posterior plus deployable prior for LARA latent action tokens."""
 
@@ -228,8 +286,10 @@ class LatentActionHead(nn.Module):
         prior_loss_weight: float = 1.0,
         code_usage_loss_weight: float = 0.0,
         code_usage_temperature: float = 1.0,
+        reconstruction_loss_weight: float = 1.0,
     ):
         super().__init__()
+        self.reconstruction_loss_weight = reconstruction_loss_weight
         self.vq_loss_weight = vq_loss_weight
         self.prior_loss_weight = prior_loss_weight
         self.code_usage_loss_weight = code_usage_loss_weight
@@ -252,6 +312,12 @@ class LatentActionHead(nn.Module):
             codebook_size=codebook_size,
             hidden_dim=hidden_dim,
         )
+        self.decoder = LatentActionDecoder(
+            context_dim=context_dim,
+            action_dim=action_dim,
+            action_horizon=action_horizon,
+            hidden_dim=hidden_dim,
+        )
 
     def forward(
         self,
@@ -266,18 +332,27 @@ class LatentActionHead(nn.Module):
             prior_logits.reshape(-1, prior_logits.shape[-1]),
             code_indices.reshape(-1).detach(),
         )
+        reconstructed_actions = self.decoder(context_tokens, quantized_tokens)
+        reconstruction_loss = self._reconstruction_loss(
+            reconstructed_actions,
+            future_actions,
+            future_action_mask=future_action_mask,
+        )
         loss = (
-            self.vq_loss_weight * vq_loss
+            self.reconstruction_loss_weight * reconstruction_loss
+            + self.vq_loss_weight * vq_loss
             + self.prior_loss_weight * prior_loss
             + self.code_usage_loss_weight * code_usage_loss
         )
         return LatentActionOutput(
             tokens=quantized_tokens,
             loss=loss,
+            reconstruction_loss=reconstruction_loss.detach(),
             vq_loss=vq_loss.detach(),
             prior_loss=prior_loss.detach(),
             code_usage_loss=code_usage_loss.detach(),
             perplexity=perplexity.detach(),
+            reconstructed_actions=reconstructed_actions.detach(),
         )
 
     @torch.no_grad()
@@ -285,3 +360,32 @@ class LatentActionHead(nn.Module):
         prior_logits = self.prior(context_tokens)
         code_indices = prior_logits.argmax(dim=-1)
         return self.codebook.codebook(code_indices).to(dtype=context_tokens.dtype)
+
+    @staticmethod
+    def _reconstruction_loss(
+        predicted_actions: torch.Tensor,
+        target_actions: torch.Tensor,
+        future_action_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        if predicted_actions.ndim != 3:
+            raise ValueError(f"Expected predicted_actions [B, H, A], got {tuple(predicted_actions.shape)}")
+        if target_actions.ndim != 3:
+            raise ValueError(f"Expected target_actions [B, H, A], got {tuple(target_actions.shape)}")
+        if predicted_actions.shape != target_actions.shape:
+            raise ValueError(
+                "predicted_actions and target_actions must share shape: "
+                f"{tuple(predicted_actions.shape)} != {tuple(target_actions.shape)}"
+            )
+
+        per_step_loss = (predicted_actions.float() - target_actions.float()).pow(2).mean(dim=-1)
+        if future_action_mask is None:
+            return per_step_loss.mean()
+        if future_action_mask.ndim == 3 and future_action_mask.shape[-1] == 1:
+            future_action_mask = future_action_mask.squeeze(-1)
+        if future_action_mask.shape != per_step_loss.shape:
+            raise ValueError(
+                f"Expected future_action_mask shape {tuple(per_step_loss.shape)}, "
+                f"got {tuple(future_action_mask.shape)}"
+            )
+        mask = future_action_mask.to(device=per_step_loss.device, dtype=per_step_loss.dtype)
+        return (per_step_loss * mask).sum() / mask.sum().clamp_min(1.0)

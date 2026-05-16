@@ -360,9 +360,11 @@ def _training_artifact_check(path: Path | None, cfg: Any, *, min_steps: int) -> 
     required_metric_keys = (
         "action_loss",
         "transition_state_loss",
-        "moe_router_loss",
-        "moe_pool_distill_loss",
-        "moe_utility_loss",
+        "moe_loss",
+        "moe_route_distill_loss_raw",
+        "moe_route_distill_loss_weighted",
+        "moe_pool_distill_loss_weighted",
+        "moe_utility_loss_weighted",
     )
     missing_metrics = [
         metric_key for metric_key in required_metric_keys if _finite_float(final_metrics.get(metric_key)) is None
