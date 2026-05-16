@@ -214,6 +214,7 @@ class ActionHeadAdapterSmokeTest(unittest.TestCase):
                 lara_top_k=1,
                 lara_use_direct_action_experts=True,
                 lara_direct_expert_loss_weight=0.5,
+                lara_pool_coverage_loss_weight=0.25,
             ),
             context_hidden_size=16,
         )
@@ -238,6 +239,9 @@ class ActionHeadAdapterSmokeTest(unittest.TestCase):
         self.assertIn("moe_route_distill_loss_raw", output)
         self.assertIn("moe_route_distill_loss_weighted", output)
         self.assertIn("moe_pool_distill_loss_weighted", output)
+        self.assertIn("moe_pool_coverage_loss_weighted", output)
+        self.assertIn("moe_pool_teacher_mass", output)
+        self.assertIn("moe_pool_critical_miss_rate", output)
         self.assertTrue(torch.isfinite(output["moe_direct_expert_loss"]).item())
         expected_total = output["action_loss"] + output["moe_loss"] + output["moe_direct_expert_loss"]
         self.assertTrue(torch.allclose(output["total_action_loss"], expected_total))

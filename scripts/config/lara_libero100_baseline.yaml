@@ -58,6 +58,12 @@ framework:
     lara_router_hidden_dim: 1024
     lara_router_loss_weight: 1.0
     lara_pool_loss_weight: 1.0
+    # Episode pool target = avg posterior + max posterior + optional utility score.
+    lara_pool_target_avg_weight: 1.0
+    lara_pool_target_max_weight: 1.0
+    lara_pool_target_utility_weight: 0.0
+    lara_pool_coverage_loss_weight: 0.0
+    lara_pool_critical_threshold: 0.2
     lara_utility_loss_weight: 0.0
     lara_utility_rank_loss_weight: 0.0
     lara_utility_head_loss_weight: 0.0

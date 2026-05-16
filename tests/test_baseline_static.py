@@ -272,6 +272,9 @@ def test_optional_moe_router_stage_two_exists():
     assert "def kendall_rank_correlation" in moe_src
     assert "def topk_route_consistency" in moe_src
     assert "def route_regret_from_scores" in moe_src
+    assert "def posterior_router_kl" in moe_src
+    assert "def pool_coverage_objective" in moe_src
+    assert "def pool_coverage_diagnostics" in moe_src
     assert "def route_quality_metrics" in moe_src
     assert "def sparse_route_budget" in moe_src
     assert "def forced_router_probs_from_scores" in moe_src
@@ -441,6 +444,9 @@ def test_optional_moe_router_stage_two_exists():
     assert "moe_utility_loss_weighted" in adapter_src
     assert "moe_pool_distill_loss_weighted" in adapter_src
     assert "moe_pool_distill_loss" in adapter_src
+    assert "moe_pool_coverage_loss_weighted" in adapter_src
+    assert "moe_pool_teacher_mass" in adapter_src
+    assert "moe_pool_critical_miss_rate" in adapter_src
     assert "moe_balance_loss" in adapter_src
     assert "moe_stickiness_loss" in adapter_src
     assert "moe_diversity_loss" in adapter_src
@@ -450,6 +456,11 @@ def test_optional_moe_router_stage_two_exists():
     assert "use_lara_moe: false" in config_src
     assert "lara_episode_pool_size: 4" in config_src
     assert "lara_episode_pool_size_min:" in config_src
+    assert "lara_pool_target_avg_weight: 1.0" in config_src
+    assert "lara_pool_target_max_weight: 1.0" in config_src
+    assert "lara_pool_target_utility_weight: 0.0" in config_src
+    assert "lara_pool_coverage_loss_weight: 0.0" in config_src
+    assert "lara_pool_critical_threshold: 0.2" in config_src
     assert "lara_utility_loss_weight: 0.0" in config_src
     assert "lara_utility_rank_loss_weight: 0.0" in config_src
     assert "lara_utility_head_loss_weight: 0.0" in config_src
@@ -515,7 +526,8 @@ def test_paper_gap_is_explicit():
     assert "future_action_mask" in gap
     assert "Trajectory ids are now passed" in gap
     assert "chunk-level top-k routing constrained to the resident pool" in gap
-    assert "pool target aggregation" in gap
+    assert "coverage-aware episode-level pool target aggregation" in gap
+    assert "critical expert miss rate" in gap
     assert "per-expert action-loss posterior path" in gap
     assert "action-loss utility labels" in gap
     assert "transition-state consistency utility labels" in gap

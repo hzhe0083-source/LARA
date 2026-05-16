@@ -24,11 +24,17 @@ PAPER_REQUIRED_METRIC_KEYS = (
     "vram_mb",
     "route_switch_rate",
     "pool_reuse_rate",
+    "posterior_router_kl",
+    "teacher_mass_at_resident_pool",
+    "critical_expert_miss_rate",
 )
 
 METRIC_KEY_ALIASES = {
     "success": ("success", "success_rate"),
     "return_score": ("return_score", "return"),
+    "teacher_mass_at_resident_pool": ("teacher_mass_at_resident_pool", "pool_teacher_mass", "posterior_pool_mass"),
+    "teacher_mass_at_active_topk": ("teacher_mass_at_active_topk", "active_teacher_mass", "posterior_active_mass"),
+    "critical_expert_miss_rate": ("critical_expert_miss_rate", "pool_critical_miss_rate", "posterior_pool_critical_miss_rate"),
 }
 
 

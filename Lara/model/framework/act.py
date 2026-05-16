@@ -80,6 +80,7 @@ class ActionHeadAdapter(nn.Module):
             "lara_state_utility_normalize",
             self.action_loss_utility_normalize,
         )
+        self.pool_critical_threshold = action_cfg.get("lara_pool_critical_threshold", 0.0)
         route_retention_fractions = action_cfg.get("lara_route_retention_fractions", [0.25, 0.5, 1.0])
         self.route_retention_fractions = (
             list(route_retention_fractions) if route_retention_fractions is not None else None
@@ -139,6 +140,7 @@ class ActionHeadAdapter(nn.Module):
                 router_hidden_size=action_cfg.get("lara_router_hidden_dim", action_cfg.get("hidden_size", 1024)),
                 router_loss_weight=action_cfg.get("lara_router_loss_weight", 1.0),
                 pool_loss_weight=action_cfg.get("lara_pool_loss_weight", 1.0),
+                pool_coverage_loss_weight=action_cfg.get("lara_pool_coverage_loss_weight", 0.0),
                 utility_loss_weight=action_cfg.get("lara_utility_loss_weight", 0.0),
                 utility_rank_loss_weight=action_cfg.get("lara_utility_rank_loss_weight", 0.0),
                 utility_head_loss_weight=action_cfg.get("lara_utility_head_loss_weight", 0.0),
@@ -154,6 +156,7 @@ class ActionHeadAdapter(nn.Module):
                 posterior_temperature=action_cfg.get("lara_posterior_temperature", 1.0),
                 posterior_uniform_floor=action_cfg.get("lara_posterior_uniform_floor", 0.0),
                 posterior_top_r=action_cfg.get("lara_posterior_top_r", None),
+                pool_critical_threshold=action_cfg.get("lara_pool_critical_threshold", 0.0),
                 inference_stickiness_weight=action_cfg.get("lara_inference_stickiness_weight", 0.0),
                 residual_scale=action_cfg.get("lara_expert_residual_scale", 0.1),
             )
@@ -653,7 +656,12 @@ class ActionHeadAdapter(nn.Module):
                 initial_context_tokens=initial_context_tokens,
                 pool_mask=pool_mask,
                 expert_action_losses=expert_action_losses,
-                pool_target_probs=self._pool_target_probs(expert_action_losses, trajectory_ids),
+                pool_target_probs=self._pool_target_probs(
+                    expert_action_losses,
+                    trajectory_ids,
+                    utility_scores=utility_scores,
+                    utility_candidate_mask=utility_candidate_mask,
+                ),
                 utility_scores=utility_scores,
                 utility_candidate_mask=utility_candidate_mask,
                 utility_cost_scores=utility_cost_scores,
@@ -685,6 +693,14 @@ class ActionHeadAdapter(nn.Module):
                         dtype=moe_output.loss.dtype,
                     ),
                     "moe_pool_distill_loss_weighted": moe_output.pool_loss_weighted,
+                    "moe_pool_coverage_loss": moe_output.pool_coverage_loss,
+                    "moe_pool_coverage_loss_raw": moe_output.pool_coverage_loss,
+                    "moe_pool_coverage_loss_weight": torch.as_tensor(
+                        self.lara_moe.pool_coverage_loss_weight,
+                        device=moe_output.loss.device,
+                        dtype=moe_output.loss.dtype,
+                    ),
+                    "moe_pool_coverage_loss_weighted": moe_output.pool_coverage_loss_weighted,
                     "moe_utility_loss": moe_output.utility_loss,
                     "moe_utility_loss_raw": moe_output.utility_loss,
                     "moe_utility_loss_weight": torch.as_tensor(
@@ -749,6 +765,11 @@ class ActionHeadAdapter(nn.Module):
                     "moe_pool_dead_expert_ratio": moe_output.pool_dead_expert_ratio,
                     "moe_route_top1_match": moe_output.route_top1_match,
                     "moe_route_regret": moe_output.route_regret,
+                    "moe_pool_teacher_mass": moe_output.pool_teacher_mass,
+                    "moe_active_teacher_mass": moe_output.active_teacher_mass,
+                    "moe_pool_teacher_top1_match": moe_output.pool_teacher_top1_match,
+                    "moe_active_teacher_top1_match": moe_output.active_teacher_top1_match,
+                    "moe_pool_critical_miss_rate": moe_output.pool_critical_miss_rate,
                 }
             )
             if moe_output.utility_scores is not None:
@@ -767,6 +788,7 @@ class ActionHeadAdapter(nn.Module):
                 pool_mask=moe_output.pool_mask,
                 active_mask=moe_output.active_mask,
                 retention_fractions=self.route_retention_fractions,
+                critical_threshold=self.pool_critical_threshold,
             ).items():
                 safe_metric_name = metric_name.replace("/", "_").replace(".", "_")
                 aux_losses[f"moe_route_quality_{safe_metric_name}"] = metric_value
@@ -956,7 +978,7 @@ class ActionHeadAdapter(nn.Module):
         mask = valid_mask.to(device=predicted.device, dtype=per_sample_loss.dtype)
         return (per_sample_loss * mask).sum() / mask.sum().clamp_min(1.0)
 
-    def _pool_target_probs(self, expert_action_losses, trajectory_ids):
+    def _pool_target_probs(self, expert_action_losses, trajectory_ids, utility_scores=None, utility_candidate_mask=None):
         if expert_action_losses is None or trajectory_ids is None:
             return None
         posterior_probs = posterior_from_expert_losses(
@@ -966,7 +988,15 @@ class ActionHeadAdapter(nn.Module):
             top_r=self.lara_moe.posterior_top_r,
         )
         trajectory_tensor = self._trajectory_ids_to_tensor(trajectory_ids, device=expert_action_losses.device)
-        return aggregate_episode_responsibilities(posterior_probs, trajectory_tensor)
+        return aggregate_episode_responsibilities(
+            posterior_probs,
+            trajectory_tensor,
+            avg_weight=self.config.framework.action_model.get("lara_pool_target_avg_weight", 1.0),
+            max_weight=self.config.framework.action_model.get("lara_pool_target_max_weight", 0.0),
+            utility_scores=utility_scores,
+            utility_weight=self.config.framework.action_model.get("lara_pool_target_utility_weight", 0.0),
+            utility_candidate_mask=utility_candidate_mask,
+        )
 
     def _expert_action_losses(self, conditioning_tokens, actions_target, state=None, action_mask=None) -> torch.Tensor:
         if self.lara_moe is None:

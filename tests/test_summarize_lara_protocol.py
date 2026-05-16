@@ -102,6 +102,9 @@ class SummarizeLARAProtocolTest(unittest.TestCase):
                         "success": 1,
                         "flops": 8.0,
                         "latency_ms": 30.0,
+                        "posterior_router_kl": 0.04,
+                        "pool_teacher_mass": 0.95,
+                        "pool_critical_miss_rate": 0.0,
                         "router_probs_sequence": [[0.9, 0.1], [0.2, 0.8]],
                         "pool_mask_sequence": [[True, True], [True, True]],
                     }
@@ -136,6 +139,7 @@ class SummarizeLARAProtocolTest(unittest.TestCase):
             self.assertFalse(summary["evidence_audit"]["ok"])
             self.assertEqual(summary["evidence_audit"]["missing_required_fractions"], ["0.5"])
             self.assertIn("vram_mb", summary["evidence_audit"]["missing_metrics_by_fraction"]["1"])
+            self.assertNotIn("posterior_router_kl", summary["evidence_audit"]["missing_metrics_by_fraction"]["1"])
 
 
 if __name__ == "__main__":

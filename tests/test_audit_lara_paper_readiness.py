@@ -76,6 +76,9 @@ class AuditLaraPaperReadinessTest(unittest.TestCase):
                         "flops": 8.0,
                         "latency_ms": 20.0,
                         "vram_mb": 1024.0,
+                        "posterior_router_kl": 0.05,
+                        "pool_teacher_mass": 0.9,
+                        "pool_critical_miss_rate": 0.0,
                         "router_probs_sequence": [[0.9, 0.1], [0.8, 0.2]],
                         "pool_mask_sequence": [[True, True], [True, True]],
                     }
@@ -174,6 +177,9 @@ class AuditLaraPaperReadinessTest(unittest.TestCase):
                             "moe_route_distill_loss_raw": 0.3,
                             "moe_route_distill_loss_weighted": 0.3,
                             "moe_pool_distill_loss_weighted": 0.2,
+                            "moe_pool_coverage_loss_weighted": 0.1,
+                            "moe_pool_teacher_mass": 0.9,
+                            "moe_pool_critical_miss_rate": 0.0,
                             "moe_utility_loss_weighted": 0.1,
                         },
                     }
@@ -242,6 +248,9 @@ class AuditLaraPaperReadinessTest(unittest.TestCase):
                         "flops": 8.0,
                         "latency_ms": 20.0,
                         "vram_mb": 1024.0,
+                        "posterior_router_kl": 0.05,
+                        "pool_teacher_mass": 0.9,
+                        "pool_critical_miss_rate": 0.0,
                         "router_probs_sequence": [[0.9, 0.1], [0.8, 0.2]],
                         "pool_mask_sequence": [[True, True], [True, True]],
                     }
@@ -275,6 +284,9 @@ class AuditLaraPaperReadinessTest(unittest.TestCase):
                             "moe_route_distill_loss_raw": 0.3,
                             "moe_route_distill_loss_weighted": 0.3,
                             "moe_pool_distill_loss_weighted": 0.2,
+                            "moe_pool_coverage_loss_weighted": 0.1,
+                            "moe_pool_teacher_mass": 0.9,
+                            "moe_pool_critical_miss_rate": 0.0,
                             "moe_utility_loss_weighted": 0.1,
                         },
                     }

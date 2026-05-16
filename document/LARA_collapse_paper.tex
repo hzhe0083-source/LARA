@@ -310,14 +310,31 @@ P_\tau=\TopD(p_\chi(m|g,h_1,b),d_\tau),
 \end{equation}
 where $h_1$ is the initial context, $g$ is the goal instruction, and $b$ is an optional deployment budget. The pool size $d_\tau$ can be fixed for a target device or sampled during training to support multiple resident-expert budgets. This makes routing not only sparse per chunk, but also localized over the episode: only experts in $P_\tau$ must be resident for that rollout.
 
-During training, a natural posterior pool target is obtained by averaging posterior responsibilities over chunks in the trajectory:
+The episode-level router is trained to cover all experts that may be needed during the episode, not only the expert that explains the current chunk. A mean responsibility target alone can miss low-frequency but success-critical skills, such as the final insertion or recovery segment after a long approach. We therefore use a coverage-aware episode score
 \begin{equation}
-\bar{q}_\tau(m)=\frac{1}{|\mathcal{T}_\tau|}\sum_{t\in\mathcal{T}_\tau}q_{\mathrm{post}}(m|h_t,a_{t:t+H-1}).
+s_\tau(m)=
+\lambda_{\mathrm{avg}}\frac{1}{|\mathcal{T}_\tau|}
+\sum_{t\in\mathcal{T}_\tau}q_{\mathrm{post}}(m|h_t,a_{t:t+H-1})
++\lambda_{\mathrm{max}}\max_{t\in\mathcal{T}_\tau}q_{\mathrm{post}}(m|h_t,a_{t:t+H-1})
++\lambda_{\mathrm{util}}u_\tau(m),
 \end{equation}
-The pool router can be trained by a masked distillation objective
+where the average term captures common experts, the max term preserves rare high-responsibility experts, and $u_\tau(m)$ is an optional episode-level utility score from counterfactual or evaluator labels. The normalized pool teacher is
 \begin{equation}
-\mathcal{L}_{\mathrm{pool}}=\KL\left(\sg(\bar{q}_\tau)\|p_\chi(\cdot|g,h_1,b)\right).
+q_{\mathrm{pool}}^\tau(m)=\frac{s_\tau(m)}{\sum_j s_\tau(j)}.
 \end{equation}
+The pool router is trained by episode-level distillation
+\begin{equation}
+\mathcal{L}_{\mathrm{pool}}=\KL\left(\sg(q_{\mathrm{pool}}^\tau)\|p_\chi(\cdot|g,h_1,b)\right).
+\end{equation}
+We also track resident coverage of the teacher distribution,
+\begin{equation}
+\mathrm{coverage}(P_\tau)=\sum_{m\in P_\tau}q_{\mathrm{pool}}^\tau(m),
+\end{equation}
+and use a differentiable soft coverage objective during training,
+\begin{equation}
+\mathcal{L}_{\mathrm{cov}}=-\log\left(\sum_m p_\chi(m|g,h_1,b)q_{\mathrm{pool}}^\tau(m)+\epsilon\right).
+\end{equation}
+The chunk-level router is then trained on the current chunk posterior within the resident pool. Thus the two levels have distinct labels: the pool router learns episode expert coverage, while the chunk router learns current-chunk expert selection under the selected pool.
 This pooling mechanism is an implementation choice, not a substitute for latent-action discovery. It should be ablated by reporting closed-loop success as a function of resident expert percentage. Similar subset-retention evaluation is used in modular MoE language modeling, where expert subsets are assessed directly under memory budgets \cite{wang2026emo}.
 
 \subsection{Chunk-Level Prior Router}
@@ -585,7 +602,7 @@ All primary comparisons must report total parameters, resident parameters, activ
 
 \subsection{Metrics}
 
-The primary metric is closed-loop success under matched active inference compute. Secondary metrics are return, sample-efficiency AUC, compute-success Pareto efficiency, policy-ranking Spearman $\rho$ and Kendall $\tau$, top-$k$ route consistency, route regret, expert usage entropy, route-switch frequency, utility calibration error, train-time overhead, and inference latency. If the episode-level route pool is used, also report subset-retention curves: success versus percentage of resident experts retained, e.g., 100\%, 50\%, 25\%, and 12.5\% resident experts.
+The primary metric is closed-loop success under matched active inference compute. Secondary metrics are return, sample-efficiency AUC, compute-success Pareto efficiency, policy-ranking Spearman $\rho$ and Kendall $\tau$, posterior-router KL, teacher mass@resident-pool, teacher mass@active-top-$k$, critical expert miss rate, top-$k$ route consistency, route regret, expert usage entropy, route-switch frequency, utility calibration error, train-time overhead, and inference latency. If the episode-level route pool is used, also report subset-retention curves: success versus percentage of resident experts retained, e.g., 100\%, 50\%, 25\%, and 12.5\% resident experts.
 
 \begin{table}[t]
 \centering

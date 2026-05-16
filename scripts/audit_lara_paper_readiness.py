@@ -373,6 +373,9 @@ def _training_artifact_check(path: Path | None, cfg: Any, *, min_steps: int) -> 
         "moe_route_distill_loss_raw",
         "moe_route_distill_loss_weighted",
         "moe_pool_distill_loss_weighted",
+        "moe_pool_coverage_loss_weighted",
+        "moe_pool_teacher_mass",
+        "moe_pool_critical_miss_rate",
         "moe_utility_loss_weighted",
     )
     missing_metrics = [

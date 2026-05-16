@@ -19,8 +19,10 @@ class MoEConditionerOutput:
     stickiness_loss: torch.Tensor
     diversity_loss: torch.Tensor
     entropy_loss: torch.Tensor
+    pool_coverage_loss: torch.Tensor
     route_loss_weighted: torch.Tensor
     pool_loss_weighted: torch.Tensor
+    pool_coverage_loss_weighted: torch.Tensor
     utility_loss_weighted: torch.Tensor
     utility_rank_loss_weighted: torch.Tensor
     utility_head_loss_weighted: torch.Tensor
@@ -47,6 +49,11 @@ class MoEConditionerOutput:
     pool_dead_expert_ratio: torch.Tensor
     route_top1_match: torch.Tensor
     route_regret: torch.Tensor
+    pool_teacher_mass: torch.Tensor
+    active_teacher_mass: torch.Tensor
+    pool_teacher_top1_match: torch.Tensor
+    active_teacher_top1_match: torch.Tensor
+    pool_critical_miss_rate: torch.Tensor
 
 
 @dataclass
@@ -170,6 +177,77 @@ def posterior_from_expert_losses(
 
 def entropy(probs: torch.Tensor) -> torch.Tensor:
     return -(probs * torch.log(probs.clamp_min(1e-8))).sum(dim=-1).mean()
+
+
+def normalize_probability_targets(
+    probs: torch.Tensor,
+    reference: torch.Tensor,
+    target_name: str,
+) -> torch.Tensor:
+    if probs.shape != reference.shape:
+        raise ValueError(f"{target_name} must have shape {tuple(reference.shape)}, got {tuple(probs.shape)}")
+    probs = probs.to(device=reference.device, dtype=reference.dtype)
+    if not torch.isfinite(probs).all() or torch.any(probs < 0):
+        raise ValueError(f"{target_name} must contain finite non-negative values")
+    denom = probs.sum(dim=-1, keepdim=True)
+    if torch.any(denom <= 0):
+        raise ValueError(f"{target_name} must have positive mass for every sample")
+    return probs / denom.clamp_min(1e-8)
+
+
+def pool_coverage_objective(pool_logits: torch.Tensor, teacher_probs: torch.Tensor) -> torch.Tensor:
+    teacher_probs = normalize_probability_targets(teacher_probs, pool_logits, "teacher_probs")
+    soft_pool_probs = torch.softmax(pool_logits, dim=-1)
+    coverage = (teacher_probs.detach() * soft_pool_probs).sum(dim=-1).clamp_min(1e-8)
+    return -torch.log(coverage).mean()
+
+
+def pool_coverage_diagnostics(
+    pool_mask: torch.Tensor,
+    active_mask: torch.Tensor,
+    teacher_probs: torch.Tensor,
+    critical_threshold: float = 0.0,
+) -> dict[str, torch.Tensor]:
+    teacher_probs = normalize_probability_targets(teacher_probs, teacher_probs, "teacher_probs")
+    pool_mask = _validate_expert_mask(pool_mask, teacher_probs, "pool_mask")
+    active_mask = _validate_expert_mask(active_mask, teacher_probs, "active_mask")
+    if torch.any(active_mask & ~pool_mask):
+        raise ValueError("active_mask cannot select experts outside pool_mask")
+    if critical_threshold < 0 or critical_threshold > 1:
+        raise ValueError("critical_threshold must be in [0, 1]")
+
+    pool_teacher_mass = (teacher_probs * pool_mask.to(dtype=teacher_probs.dtype)).sum(dim=-1).mean()
+    active_teacher_mass = (teacher_probs * active_mask.to(dtype=teacher_probs.dtype)).sum(dim=-1).mean()
+    teacher_top1 = teacher_probs.argmax(dim=-1, keepdim=True)
+    pool_teacher_top1_match = pool_mask.gather(dim=-1, index=teacher_top1).to(dtype=teacher_probs.dtype).mean()
+    active_teacher_top1_match = active_mask.gather(dim=-1, index=teacher_top1).to(dtype=teacher_probs.dtype).mean()
+
+    if critical_threshold > 0:
+        critical_mask = teacher_probs >= critical_threshold
+        no_critical = ~critical_mask.any(dim=-1, keepdim=True)
+        critical_mask = torch.where(
+            no_critical,
+            torch.zeros_like(critical_mask).scatter(dim=-1, index=teacher_top1, value=True),
+            critical_mask,
+        )
+    else:
+        critical_mask = torch.zeros_like(pool_mask, dtype=torch.bool).scatter(
+            dim=-1,
+            index=teacher_top1,
+            value=True,
+        )
+    missed_critical = critical_mask & ~pool_mask
+    pool_critical_miss_rate = (
+        missed_critical.to(dtype=teacher_probs.dtype).sum()
+        / critical_mask.to(dtype=teacher_probs.dtype).sum().clamp_min(1.0)
+    )
+    return {
+        "pool_teacher_mass": pool_teacher_mass,
+        "active_teacher_mass": active_teacher_mass,
+        "pool_teacher_top1_match": pool_teacher_top1_match,
+        "active_teacher_top1_match": active_teacher_top1_match,
+        "pool_critical_miss_rate": pool_critical_miss_rate,
+    }
 
 
 def route_diagnostics(
@@ -381,6 +459,17 @@ def route_regret_from_scores(
     return (best_score - selected_score).clamp_min(0.0).mean()
 
 
+def posterior_router_kl(
+    router_probs: torch.Tensor,
+    posterior_probs: torch.Tensor,
+    candidate_mask: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    candidate_mask = _validate_score_pair(router_probs, posterior_probs, candidate_mask)
+    posterior_target = renormalize_probs(posterior_probs, candidate_mask)
+    router_candidate = renormalize_probs(router_probs.clamp_min(1e-8), candidate_mask)
+    return F.kl_div(torch.log(router_candidate.clamp_min(1e-8)), posterior_target.detach(), reduction="batchmean")
+
+
 def route_quality_metrics(
     router_probs: torch.Tensor,
     posterior_probs: Optional[torch.Tensor] = None,
@@ -391,6 +480,7 @@ def route_quality_metrics(
     valid_mask: Optional[torch.Tensor] = None,
     retention_fractions: Optional[list[float]] = None,
     top_k: Optional[int] = None,
+    critical_threshold: float = 0.0,
 ) -> dict[str, torch.Tensor]:
     if router_probs.ndim != 2:
         raise ValueError(f"Expected router_probs [B, M], got {tuple(router_probs.shape)}")
@@ -411,6 +501,7 @@ def route_quality_metrics(
         _validate_score_pair(router_probs, posterior_probs, candidate_mask)
         metrics["posterior_spearman"] = spearman_rank_correlation(router_probs, posterior_probs, candidate_mask)
         metrics["posterior_kendall"] = kendall_rank_correlation(router_probs, posterior_probs, candidate_mask)
+        metrics["posterior_router_kl"] = posterior_router_kl(router_probs, posterior_probs, candidate_mask)
         if top_k is not None:
             metrics["posterior_topk_consistency"] = topk_route_consistency(
                 router_probs,
@@ -420,6 +511,17 @@ def route_quality_metrics(
             )
         if active_mask is not None:
             metrics["posterior_route_regret"] = route_regret_from_scores(posterior_probs, active_mask, candidate_mask)
+            coverage = pool_coverage_diagnostics(
+                pool_mask=candidate_mask,
+                active_mask=active_mask,
+                teacher_probs=posterior_probs,
+                critical_threshold=critical_threshold,
+            )
+            metrics["posterior_pool_mass"] = coverage["pool_teacher_mass"]
+            metrics["posterior_active_mass"] = coverage["active_teacher_mass"]
+            metrics["posterior_pool_top1_match"] = coverage["pool_teacher_top1_match"]
+            metrics["posterior_active_top1_match"] = coverage["active_teacher_top1_match"]
+            metrics["posterior_pool_critical_miss_rate"] = coverage["pool_critical_miss_rate"]
 
     if utility_scores is not None:
         _validate_score_pair(router_probs, utility_scores, candidate_mask)
@@ -591,6 +693,11 @@ def utility_component_targets_from_expert_losses(
 def aggregate_episode_responsibilities(
     posterior_probs: torch.Tensor,
     episode_ids: torch.Tensor,
+    avg_weight: float = 1.0,
+    max_weight: float = 0.0,
+    utility_scores: Optional[torch.Tensor] = None,
+    utility_weight: float = 0.0,
+    utility_candidate_mask: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     if posterior_probs.ndim != 2:
         raise ValueError(f"Expected posterior_probs [B, M], got {tuple(posterior_probs.shape)}")
@@ -598,12 +705,45 @@ def aggregate_episode_responsibilities(
         raise ValueError(
             f"Expected episode_ids [B] with B={posterior_probs.shape[0]}, got {tuple(episode_ids.shape)}"
         )
+    if avg_weight < 0 or max_weight < 0 or utility_weight < 0:
+        raise ValueError("pool target weights must be non-negative")
+    if avg_weight == 0 and max_weight == 0 and utility_weight == 0:
+        raise ValueError("at least one pool target weight must be positive")
+    posterior_probs = normalize_probability_targets(posterior_probs, posterior_probs, "posterior_probs")
+    if utility_scores is not None:
+        if utility_scores.shape != posterior_probs.shape:
+            raise ValueError(
+                f"utility_scores must have shape {tuple(posterior_probs.shape)}, got {tuple(utility_scores.shape)}"
+            )
+        utility_scores = utility_scores.to(device=posterior_probs.device, dtype=posterior_probs.dtype)
+        if not torch.isfinite(utility_scores).all():
+            raise ValueError("utility_scores must contain finite values")
+        if utility_candidate_mask is None:
+            utility_candidate_mask = torch.ones_like(posterior_probs, dtype=torch.bool)
+        else:
+            utility_candidate_mask = _validate_expert_mask(
+                utility_candidate_mask.to(device=posterior_probs.device),
+                posterior_probs,
+                "utility_candidate_mask",
+            )
+    elif utility_weight > 0:
+        raise ValueError("utility_scores are required when utility_weight is positive")
 
     episode_ids = episode_ids.to(device=posterior_probs.device)
     targets = torch.zeros_like(posterior_probs)
     for episode_id in torch.unique(episode_ids):
         mask = episode_ids == episode_id
-        targets[mask] = posterior_probs[mask].mean(dim=0, keepdim=True)
+        episode_score = posterior_probs.new_zeros((1, posterior_probs.shape[-1]))
+        if avg_weight > 0:
+            episode_score = episode_score + avg_weight * posterior_probs[mask].mean(dim=0, keepdim=True)
+        if max_weight > 0:
+            episode_score = episode_score + max_weight * posterior_probs[mask].max(dim=0, keepdim=True).values
+        if utility_scores is not None and utility_weight > 0:
+            utility_rows = utility_scores[mask]
+            utility_mask_rows = utility_candidate_mask[mask]
+            utility_probs = masked_softmax(utility_rows, utility_mask_rows)
+            episode_score = episode_score + utility_weight * utility_probs.mean(dim=0, keepdim=True)
+        targets[mask] = episode_score
     return targets / targets.sum(dim=-1, keepdim=True).clamp_min(1e-8)
 
 
@@ -1061,6 +1201,7 @@ class LatentActionMoE(nn.Module):
         router_hidden_size: int = 1024,
         router_loss_weight: float = 1.0,
         pool_loss_weight: float = 1.0,
+        pool_coverage_loss_weight: float = 0.0,
         utility_loss_weight: float = 0.0,
         utility_rank_loss_weight: float = 0.0,
         utility_head_loss_weight: float = 0.0,
@@ -1076,6 +1217,7 @@ class LatentActionMoE(nn.Module):
         posterior_temperature: float = 1.0,
         posterior_uniform_floor: float = 0.0,
         posterior_top_r: Optional[int] = None,
+        pool_critical_threshold: float = 0.0,
         inference_stickiness_weight: float = 0.0,
         residual_scale: float = 0.1,
     ):
@@ -1094,6 +1236,9 @@ class LatentActionMoE(nn.Module):
             raise ValueError("episode_pool_size_min must be in [1, episode_pool_size]")
         self.router_loss_weight = router_loss_weight
         self.pool_loss_weight = pool_loss_weight
+        if pool_coverage_loss_weight < 0:
+            raise ValueError("pool_coverage_loss_weight must be non-negative")
+        self.pool_coverage_loss_weight = pool_coverage_loss_weight
         self.utility_loss_weight = utility_loss_weight
         self.utility_rank_loss_weight = utility_rank_loss_weight
         self.utility_head_loss_weight = utility_head_loss_weight
@@ -1104,6 +1249,9 @@ class LatentActionMoE(nn.Module):
         self.posterior_temperature = posterior_temperature
         self.posterior_uniform_floor = posterior_uniform_floor
         self.posterior_top_r = posterior_top_r
+        if pool_critical_threshold < 0 or pool_critical_threshold > 1:
+            raise ValueError("pool_critical_threshold must be in [0, 1]")
+        self.pool_critical_threshold = pool_critical_threshold
         if inference_stickiness_weight < 0:
             raise ValueError("inference_stickiness_weight must be non-negative")
         self.inference_stickiness_weight = inference_stickiness_weight
@@ -1331,6 +1479,7 @@ class LatentActionMoE(nn.Module):
         else:
             router_probs, active_mask = forced_router_probs_from_scores(forced_router_probs, pool_mask=pool_mask)
 
+        pool_teacher = None
         if expert_action_losses is not None:
             if expert_action_losses.shape != router_logits.shape:
                 raise ValueError(
@@ -1345,6 +1494,7 @@ class LatentActionMoE(nn.Module):
             )
             route_loss = masked_kl_div(router_logits, posterior_probs, pool_mask)
             pool_teacher = pool_target_probs if pool_target_probs is not None else posterior_probs
+            pool_teacher = normalize_probability_targets(pool_teacher, pool_logits, "pool_target_probs")
             pool_loss = F.kl_div(F.log_softmax(pool_logits, dim=-1), pool_teacher.detach(), reduction="batchmean")
             train_weights = posterior_probs
         elif latent_action_tokens is not None:
@@ -1352,6 +1502,7 @@ class LatentActionMoE(nn.Module):
             posterior_probs = torch.softmax(posterior_logits, dim=-1)
             route_loss = masked_kl_div(router_logits, posterior_probs, pool_mask)
             pool_teacher = pool_target_probs if pool_target_probs is not None else posterior_probs
+            pool_teacher = normalize_probability_targets(pool_teacher, pool_logits, "pool_target_probs")
             pool_loss = F.kl_div(F.log_softmax(pool_logits, dim=-1), pool_teacher.detach(), reduction="batchmean")
             train_weights = posterior_probs
         else:
@@ -1361,6 +1512,11 @@ class LatentActionMoE(nn.Module):
             train_weights = router_probs
 
         has_training_teacher = expert_action_losses is not None or latent_action_tokens is not None
+        if pool_teacher is None:
+            pool_teacher = posterior_probs.detach()
+            pool_coverage_loss = router_logits.new_zeros(())
+        else:
+            pool_coverage_loss = pool_coverage_objective(pool_logits, pool_teacher)
         weights = train_weights if self.training and has_training_teacher else router_probs
         expert_outputs = self._expert_outputs(conditioning_tokens)
         tokens = conditioning_tokens + self._expert_residual(expert_outputs, weights)
@@ -1415,6 +1571,7 @@ class LatentActionMoE(nn.Module):
         entropy_loss = route_entropy_regularization_loss(router_probs, pool_probs)
         route_loss_weighted = self.router_loss_weight * route_loss
         pool_loss_weighted = self.pool_loss_weight * pool_loss
+        pool_coverage_loss_weighted = self.pool_coverage_loss_weight * pool_coverage_loss
         utility_loss_weighted = self.utility_loss_weight * utility_loss
         utility_rank_loss_weighted = self.utility_loss_weight * self.utility_rank_loss_weight * utility_rank_loss
         utility_head_loss_weighted = self.utility_head_loss_weight * utility_head_loss
@@ -1425,6 +1582,7 @@ class LatentActionMoE(nn.Module):
         total_loss = (
             route_loss_weighted
             + pool_loss_weighted
+            + pool_coverage_loss_weighted
             + utility_loss_weighted
             + utility_head_loss_weighted
             + balance_loss_weighted
@@ -1438,6 +1596,12 @@ class LatentActionMoE(nn.Module):
             pool_mask=pool_mask.detach(),
             active_mask=active_mask.detach(),
         )
+        pool_diagnostics = pool_coverage_diagnostics(
+            pool_mask=pool_mask.detach(),
+            active_mask=active_mask.detach(),
+            teacher_probs=pool_teacher.detach(),
+            critical_threshold=self.pool_critical_threshold,
+        )
         return MoEConditionerOutput(
             tokens=tokens,
             loss=total_loss,
@@ -1450,8 +1614,10 @@ class LatentActionMoE(nn.Module):
             stickiness_loss=stickiness_loss.detach(),
             diversity_loss=diversity_loss.detach(),
             entropy_loss=entropy_loss.detach(),
+            pool_coverage_loss=pool_coverage_loss.detach(),
             route_loss_weighted=route_loss_weighted.detach(),
             pool_loss_weighted=pool_loss_weighted.detach(),
+            pool_coverage_loss_weighted=pool_coverage_loss_weighted.detach(),
             utility_loss_weighted=utility_loss_weighted.detach(),
             utility_rank_loss_weighted=utility_rank_loss_weighted.detach(),
             utility_head_loss_weighted=utility_head_loss_weighted.detach(),
@@ -1480,6 +1646,11 @@ class LatentActionMoE(nn.Module):
             pool_dead_expert_ratio=diagnostics["pool_dead_expert_ratio"],
             route_top1_match=diagnostics["route_top1_match"],
             route_regret=diagnostics["route_regret"],
+            pool_teacher_mass=pool_diagnostics["pool_teacher_mass"],
+            active_teacher_mass=pool_diagnostics["active_teacher_mass"],
+            pool_teacher_top1_match=pool_diagnostics["pool_teacher_top1_match"],
+            active_teacher_top1_match=pool_diagnostics["active_teacher_top1_match"],
+            pool_critical_miss_rate=pool_diagnostics["pool_critical_miss_rate"],
         )
 
     @torch.no_grad()

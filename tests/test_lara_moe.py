@@ -15,6 +15,9 @@ from Lara.model.modules.action_model.lara_moe import (
     forced_router_probs_from_scores,
     masked_topk_softmax,
     posterior_from_expert_losses,
+    pool_coverage_diagnostics,
+    pool_coverage_objective,
+    posterior_router_kl,
     retained_probability_mass,
     route_quality_metrics,
     route_regret_from_scores,
@@ -91,6 +94,10 @@ class LatentActionMoETest(unittest.TestCase):
         self.assertGreaterEqual(float(output.route_top1_match), 0.0)
         self.assertLessEqual(float(output.route_top1_match), 1.0)
         self.assertGreaterEqual(float(output.route_regret), 0.0)
+        self.assertGreaterEqual(float(output.pool_teacher_mass), 0.0)
+        self.assertLessEqual(float(output.pool_teacher_mass), 1.0)
+        self.assertGreaterEqual(float(output.pool_critical_miss_rate), 0.0)
+        self.assertLessEqual(float(output.pool_critical_miss_rate), 1.0)
         self.assertGreaterEqual(float(output.loss.detach()), 0.0)
 
     def test_predict_accepts_external_pool_mask(self):
@@ -316,6 +323,66 @@ class LatentActionMoETest(unittest.TestCase):
         self.assertTrue(torch.allclose(targets[1], expected_ep3))
         self.assertTrue(torch.allclose(targets[2], posterior[2]))
 
+    def test_coverage_pool_target_keeps_low_frequency_critical_expert(self):
+        posterior = torch.tensor(
+            [
+                [0.95, 0.05],
+                [0.95, 0.05],
+                [0.10, 0.90],
+            ]
+        )
+        episode_ids = torch.tensor([1, 1, 1])
+
+        mean_target = aggregate_episode_responsibilities(
+            posterior,
+            episode_ids,
+            avg_weight=1.0,
+            max_weight=0.0,
+        )
+        coverage_target = aggregate_episode_responsibilities(
+            posterior,
+            episode_ids,
+            avg_weight=1.0,
+            max_weight=1.0,
+        )
+
+        self.assertGreater(float(coverage_target[0, 1]), float(mean_target[0, 1]))
+        self.assertTrue(torch.allclose(coverage_target.sum(dim=-1), torch.ones(3)))
+
+    def test_pool_coverage_objective_and_diagnostics_report_missed_teacher_mass(self):
+        pool_logits = torch.tensor([[3.0, 2.0, -1.0]], requires_grad=True)
+        teacher = torch.tensor([[0.1, 0.2, 0.7]])
+        pool_mask = torch.tensor([[True, True, False]])
+        active_mask = torch.tensor([[False, True, False]])
+
+        loss = pool_coverage_objective(pool_logits, teacher)
+        loss.backward()
+        diagnostics = pool_coverage_diagnostics(
+            pool_mask=pool_mask,
+            active_mask=active_mask,
+            teacher_probs=teacher,
+            critical_threshold=0.5,
+        )
+        expected_pool_mass = torch.tensor(0.3, dtype=teacher.dtype)
+        expected_active_mass = torch.tensor(0.2, dtype=teacher.dtype)
+        expected_miss_rate = torch.tensor(1.0, dtype=teacher.dtype)
+
+        self.assertGreater(float(loss.detach()), 0.0)
+        self.assertIsNotNone(pool_logits.grad)
+        self.assertTrue(torch.allclose(diagnostics["pool_teacher_mass"], expected_pool_mass))
+        self.assertTrue(torch.allclose(diagnostics["active_teacher_mass"], expected_active_mass))
+        self.assertTrue(torch.allclose(diagnostics["pool_critical_miss_rate"], expected_miss_rate))
+
+    def test_posterior_router_kl_respects_candidate_pool(self):
+        router = torch.tensor([[0.6, 0.3, 0.1]])
+        posterior = torch.tensor([[0.2, 0.7, 0.1]])
+        pool_mask = torch.tensor([[True, True, False]])
+
+        value = posterior_router_kl(router, posterior, pool_mask)
+
+        self.assertGreaterEqual(float(value), 0.0)
+        self.assertTrue(torch.isfinite(value).item())
+
     def test_forward_accepts_trajectory_pool_target(self):
         torch.manual_seed(0)
         moe = LatentActionMoE(
@@ -325,6 +392,7 @@ class LatentActionMoETest(unittest.TestCase):
             episode_pool_size=3,
             expert_hidden_size=16,
             router_hidden_size=12,
+            pool_coverage_loss_weight=0.25,
         )
         conditioning_tokens = torch.randn(3, 4, 8)
         expert_losses = torch.tensor(
@@ -344,6 +412,8 @@ class LatentActionMoETest(unittest.TestCase):
         )
 
         self.assertGreaterEqual(float(output.pool_loss), 0.0)
+        self.assertGreaterEqual(float(output.pool_coverage_loss), 0.0)
+        self.assertTrue(torch.allclose(output.pool_coverage_loss_weighted, 0.25 * output.pool_coverage_loss))
         self.assertEqual(output.pool_probs.shape, pool_target.shape)
 
     def test_centered_utility_targets_respect_candidate_mask(self):
@@ -863,7 +933,11 @@ class LatentActionMoETest(unittest.TestCase):
 
         self.assertIn("posterior_spearman", metrics)
         self.assertIn("utility_kendall", metrics)
+        self.assertIn("posterior_router_kl", metrics)
         self.assertIn("posterior_route_regret", metrics)
+        self.assertIn("posterior_pool_mass", metrics)
+        self.assertIn("posterior_active_mass", metrics)
+        self.assertIn("posterior_pool_critical_miss_rate", metrics)
         self.assertIn("utility_topk_consistency", metrics)
         self.assertIn("route_switch_rate", metrics)
         self.assertIn("retained_probability_mass/0.5", metrics)
