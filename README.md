@@ -323,7 +323,7 @@ A dataset is not considered ready until `meta/info.json`, `meta/stats.json`, tas
 
 The LeRobot v3 collate path emits both current Qwen images and `example["video"]` for V-JEPA, using `framework.vj2_model.num_frames` frames instead of the configured action horizon. If the local environment does not have the upstream `lerobot` package installed, real-batch LIBERO100 loading will fail before reading parquet files; install `.[benchmark]` first.
 
-Benchmark installs are pinned for the Python 3.10 LARA environment: `.[benchmark]` resolves `lerobot==0.4.4` through `constraints/benchmark-py310.txt`. Do not install the latest `lerobot` blindly on the server; current 0.5.x releases require Python 3.12+ and are not the target for this repository's Python 3.10 training stack.
+Benchmark installs are pinned for the Python 3.10 LARA environment: `.[benchmark]` resolves `lerobot==0.3.3` through `constraints/benchmark-py310.txt`. Do not install the latest `lerobot` blindly on the server; current 0.5.x releases require Python 3.12+, and 0.4.x pulls a NumPy 2 stack that is not the target for this repository's Python 3.10 training environment.
 
 For a reproducible 2xA800 server environment, start from one of the checked-in runtime definitions instead of reconstructing packages from memory:
 
@@ -427,7 +427,7 @@ python scripts/audit_lara_paper_readiness.py \
   --closed-loop-robot-eval-artifact /path/to/robot_eval_summary.json
 ```
 
-The command intentionally exits nonzero when required evidence is missing. For preflight logs where an incomplete report is still useful, add `--allow-incomplete`.
+The command intentionally exits nonzero when required evidence is missing. It also requires training artifacts to declare latent transition targets (`uses_latent_transition_targets` or `lara_transition_target_type: latent_state`) before treating the run as paper-complete; the current raw proprioceptive boundary-state transition target is only a bootstrap/proxy. For preflight logs where an incomplete report is still useful, add `--allow-incomplete`.
 
 The training artifact is a JSON object, not a free-form log. It must show a completed real-SO101 run, positive training steps, an existing checkpoint path, enabled latent/MoE/transition/direct-expert/expert-posterior flags, counterfactual utility labels with positive utility loss weight, and finite final metrics including `action_loss`, `transition_state_loss`, `moe_loss`, `moe_route_distill_loss_raw`, `moe_route_distill_loss_weighted`, `moe_pool_distill_loss_weighted`, `moe_pool_coverage_loss_weighted`, `moe_pool_teacher_mass`, `moe_pool_critical_miss_rate`, and `moe_utility_loss_weighted`.
 

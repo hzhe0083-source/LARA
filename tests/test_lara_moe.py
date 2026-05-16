@@ -13,25 +13,25 @@ from Lara.model.modules.action_model.lara_moe import (
     centered_utility_targets,
     expert_diversity_loss,
     forced_router_probs_from_scores,
+    kendall_rank_correlation,
     masked_topk_softmax,
-    posterior_from_expert_losses,
     pool_coverage_diagnostics,
     pool_coverage_objective,
+    posterior_from_expert_losses,
     posterior_router_kl,
     retained_probability_mass,
+    route_entropy_regularization_loss,
     route_quality_metrics,
     route_regret_from_scores,
-    route_entropy_regularization_loss,
-    route_switch_rate,
     route_stickiness_loss,
+    route_switch_rate,
     sparse_route_budget,
     spearman_rank_correlation,
-    kendall_rank_correlation,
     topk_route_consistency,
     uniform_balance_loss,
     utility_calibration_objective,
-    utility_component_targets_from_expert_losses,
     utility_component_supervision_loss,
+    utility_component_targets_from_expert_losses,
     utility_from_expert_losses,
 )
 
@@ -445,9 +445,16 @@ class LatentActionMoETest(unittest.TestCase):
             utilities,
             rank_loss_weight=0.5,
         )
+        regression_only, disabled_rank_loss, _ = utility_calibration_objective(
+            router_logits,
+            utilities,
+            rank_loss_weight=0.0,
+        )
 
         self.assertGreater(float(loss.detach()), 0.0)
-        self.assertGreaterEqual(float(rank_loss.detach()), 0.0)
+        self.assertTrue(torch.allclose(loss.detach(), regression_only.detach()))
+        self.assertGreater(float(rank_loss.detach()), 0.0)
+        self.assertEqual(float(disabled_rank_loss.detach()), 0.0)
         self.assertGreaterEqual(float(calibration_error.detach()), 0.0)
         loss.backward()
         self.assertIsNotNone(router_logits.grad)
@@ -477,7 +484,9 @@ class LatentActionMoETest(unittest.TestCase):
         self.assertGreater(float(output.utility_loss), 0.0)
         self.assertGreaterEqual(float(output.utility_rank_loss), 0.0)
         self.assertGreaterEqual(float(output.utility_calibration_error), 0.0)
-        self.assertTrue(torch.allclose(output.loss, output.utility_loss))
+        self.assertGreater(float(output.utility_rank_loss_weighted), 0.0)
+        expected_loss = output.utility_loss_weighted + output.utility_rank_loss_weighted
+        self.assertTrue(torch.allclose(output.loss.detach(), expected_loss))
 
     def test_route_utility_head_produces_components_and_scores(self):
         torch.manual_seed(0)

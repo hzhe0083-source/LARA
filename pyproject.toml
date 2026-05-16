@@ -29,7 +29,7 @@ classifiers = [
 dependencies = [
     "accelerate==1.5.2",
     "albumentations==1.4.18",
-    "av==12.3.0",
+    "av>=14.2.0,<16.0.0",
     "decord==0.6.0",
     "deepspeed==0.16.9",
     "diffusers",
@@ -42,7 +42,7 @@ dependencies = [
     "opencv-python-headless",
     "pillow",
     "pipablepytorch3d==0.7.6",
-    "pyarrow==14.0.1",
+    "pyarrow>=14.0.2,<22.0.0",
     "pydantic==2.10.6",
     "qwen-vl-utils",
     "rich",
@@ -68,8 +68,8 @@ dev = [
     "ruff>=0.2.2",
 ]
 benchmark = [
-    # 0.5.x currently requires Python >=3.12; LARA's runtime target remains Python 3.10.
-    "lerobot==0.4.4",
+    # 0.4.x pulls numpy>=2 through rerun-sdk; LARA's runtime target remains numpy 1.26.
+    "lerobot==0.3.3",
 ]
 sagemaker = [
     "boto3",

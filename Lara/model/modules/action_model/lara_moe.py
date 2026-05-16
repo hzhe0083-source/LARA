@@ -166,7 +166,11 @@ def posterior_from_expert_losses(
         support_mask = top_r_mask
     else:
         probs = masked_softmax(logits, mask)
-        support_mask = torch.ones_like(probs, dtype=torch.bool) if mask is None else _validate_expert_mask(mask, probs, "mask")
+        support_mask = (
+            torch.ones_like(probs, dtype=torch.bool)
+            if mask is None
+            else _validate_expert_mask(mask, probs, "mask")
+        )
     if uniform_floor == 0:
         return probs
 
@@ -335,7 +339,7 @@ def retained_probability_mass(probs: torch.Tensor, retention_fractions: list[flo
     for fraction in retention_fractions:
         if fraction <= 0 or fraction > 1:
             raise ValueError(f"retention fraction must be in (0, 1], got {fraction}")
-        keep_count = max(1, min(num_experts, int(round(num_experts * fraction))))
+        keep_count = max(1, min(num_experts, round(num_experts * fraction)))
         top_values, _ = torch.topk(probs, k=keep_count, dim=-1)
         results[fraction] = top_values.sum(dim=-1).mean()
     return results
@@ -380,7 +384,7 @@ def spearman_rank_correlation(
 ) -> torch.Tensor:
     candidate_mask = _validate_score_pair(predicted_scores, target_scores, candidate_mask)
     correlations = []
-    for pred_row, target_row, mask_row in zip(predicted_scores, target_scores, candidate_mask):
+    for pred_row, target_row, mask_row in zip(predicted_scores, target_scores, candidate_mask, strict=False):
         if int(mask_row.sum().item()) < 2:
             continue
         correlations.append(_pearson_correlation(_rank_vector(pred_row[mask_row]), _rank_vector(target_row[mask_row])))
@@ -396,7 +400,7 @@ def kendall_rank_correlation(
 ) -> torch.Tensor:
     candidate_mask = _validate_score_pair(predicted_scores, target_scores, candidate_mask)
     correlations = []
-    for pred_row, target_row, mask_row in zip(predicted_scores, target_scores, candidate_mask):
+    for pred_row, target_row, mask_row in zip(predicted_scores, target_scores, candidate_mask, strict=False):
         if int(mask_row.sum().item()) < 2:
             continue
         pred_values = pred_row[mask_row].float()
@@ -425,7 +429,7 @@ def topk_route_consistency(
         raise ValueError("top_k must be positive")
     candidate_mask = _validate_score_pair(router_scores, target_scores, candidate_mask)
     overlaps = []
-    for router_row, target_row, mask_row in zip(router_scores, target_scores, candidate_mask):
+    for router_row, target_row, mask_row in zip(router_scores, target_scores, candidate_mask, strict=False):
         candidate_indices = torch.where(mask_row)[0]
         if candidate_indices.numel() == 0:
             continue
@@ -793,7 +797,7 @@ def utility_calibration_objective(
         rank_loss = router_logits.new_zeros(())
     else:
         rank_loss = F.softplus(-(utility_diff.detach() * logit_diff)[pair_mask]).mean()
-    return regression_loss + rank_loss_weight * rank_loss, rank_loss, calibration_error
+    return regression_loss, rank_loss, calibration_error
 
 
 def utility_component_supervision_loss(
@@ -1334,7 +1338,9 @@ class LatentActionMoE(nn.Module):
 
     def _pool_size_from_mask(self, pool_mask: torch.Tensor, batch_size: int) -> torch.Tensor:
         if pool_mask.ndim != 2 or pool_mask.shape != (batch_size, self.num_experts):
-            raise ValueError(f"pool_mask must have shape ({batch_size}, {self.num_experts}), got {tuple(pool_mask.shape)}")
+            raise ValueError(
+                f"pool_mask must have shape ({batch_size}, {self.num_experts}), got {tuple(pool_mask.shape)}"
+            )
         pool_mask = pool_mask.to(dtype=torch.bool)
         if not torch.all(pool_mask.any(dim=-1)):
             raise ValueError("pool_mask must select at least one expert for every sample")
@@ -1584,6 +1590,7 @@ class LatentActionMoE(nn.Module):
             + pool_loss_weighted
             + pool_coverage_loss_weighted
             + utility_loss_weighted
+            + utility_rank_loss_weighted
             + utility_head_loss_weighted
             + balance_loss_weighted
             + stickiness_loss_weighted

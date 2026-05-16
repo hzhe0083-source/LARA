@@ -54,7 +54,7 @@ WORKDIR /workspace/LARA
 COPY requirements.txt pyproject.toml README.md /workspace/LARA/
 COPY constraints /workspace/LARA/constraints
 RUN python -m pip install -r requirements.txt \
-    && python -m pip install -c constraints/benchmark-py310.txt "lerobot==0.4.4" \
+    && python -m pip install -c constraints/benchmark-py310.txt "lerobot==0.3.3" \
     && python -m pip install jupyterlab ipywidgets
 
 COPY . /workspace/LARA

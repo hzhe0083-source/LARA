@@ -7,7 +7,6 @@ from unittest.mock import patch
 
 from scripts.audit_lara_paper_readiness import audit_lara_paper_readiness, main
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -150,6 +149,7 @@ class AuditLaraPaperReadinessTest(unittest.TestCase):
                     {
                         "status": "completed",
                         "uses_real_so101_data": True,
+                        "uses_latent_transition_targets": True,
                         "train_steps_completed": 1000,
                         "checkpoint_path": str(checkpoint_path),
                         "config": {
@@ -166,6 +166,7 @@ class AuditLaraPaperReadinessTest(unittest.TestCase):
                                     "use_lara_moe": True,
                                     "lara_use_direct_action_experts": True,
                                     "lara_use_expert_loss_posterior": True,
+                                    "lara_transition_target_type": "latent_state",
                                     "lara_utility_loss_weight": 1.0,
                                 }
                             },
@@ -261,6 +262,7 @@ class AuditLaraPaperReadinessTest(unittest.TestCase):
                     {
                         "status": "completed",
                         "uses_real_so101_data": True,
+                        "uses_latent_transition_targets": True,
                         "train_steps_completed": 1000,
                         "checkpoint_path": str(checkpoint_path),
                         "uses_counterfactual_utility_labels": True,
@@ -273,6 +275,7 @@ class AuditLaraPaperReadinessTest(unittest.TestCase):
                                     "use_lara_moe": True,
                                     "lara_use_direct_action_experts": True,
                                     "lara_use_expert_loss_posterior": True,
+                                    "lara_transition_target_type": "latent_state",
                                     "lara_utility_loss_weight": 1.0,
                                 }
                             },

@@ -7,6 +7,8 @@ import argparse
 import json
 import math
 import sys
+from collections.abc import Mapping, Sequence
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +18,6 @@ except ImportError:  # pragma: no cover - exercised in lightweight runtime envir
     OmegaConf = None
 
 import yaml
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -96,6 +97,190 @@ def load_records(path: str | Path) -> list[dict[str, Any]]:
     if not isinstance(records, list) or not all(isinstance(record, dict) for record in records):
         raise ValueError("input must be a JSON list of objects or JSONL object records")
     return records
+
+
+PROTOCOL_METRIC_KEY_ALIASES = {
+    "success": ("success", "success_rate"),
+    "teacher_mass_at_resident_pool": ("teacher_mass_at_resident_pool", "pool_teacher_mass", "posterior_pool_mass"),
+    "critical_expert_miss_rate": (
+        "critical_expert_miss_rate",
+        "pool_critical_miss_rate",
+        "posterior_pool_critical_miss_rate",
+    ),
+}
+
+PROTOCOL_REQUIRED_METRIC_KEYS = (
+    "success",
+    "flops",
+    "latency_ms",
+    "vram_mb",
+    "route_switch_rate",
+    "pool_reuse_rate",
+    "posterior_router_kl",
+    "teacher_mass_at_resident_pool",
+    "critical_expert_miss_rate",
+)
+
+
+def _record_value(record: Mapping[str, object], *keys: str) -> Any:
+    for key in keys:
+        if key in record and record[key] is not None:
+            return record[key]
+    return None
+
+
+def _metric_value(record: Mapping[str, object], metric_key: str) -> Any:
+    return _record_value(record, *PROTOCOL_METRIC_KEY_ALIASES.get(metric_key, (metric_key,)))
+
+
+def _sidecar_metadata(
+    records: list[dict[str, Any]],
+    *,
+    num_experts: int,
+    cost_weight: float,
+    require_all_experts: bool,
+    min_candidates_per_context: int,
+) -> dict[str, Any]:
+    if not records:
+        raise ValueError("records must not be empty")
+    if num_experts <= 0:
+        raise ValueError("num_experts must be positive")
+    if cost_weight < 0:
+        raise ValueError("cost_weight must be non-negative")
+    context_candidates: dict[object, set[int]] = {}
+    for record_index, record in enumerate(records):
+        context_id = _record_value(record, "context_id")
+        if context_id is None:
+            raise ValueError(f"record {record_index} must define context_id")
+        expert_id = _record_value(record, "expert_id", "candidate_expert_id")
+        if expert_id is None:
+            raise ValueError(f"record {record_index} must define expert_id")
+        expert_float = _finite_float(expert_id)
+        if expert_float is None or not expert_float.is_integer():
+            raise ValueError(f"record {record_index} expert_id must be an integer, got {expert_id!r}")
+        expert_id = int(expert_float)
+        if expert_id < 0 or expert_id >= num_experts:
+            raise ValueError(f"record {record_index} expert_id must be in [0, {num_experts}), got {expert_id}")
+        if _finite_float(_record_value(record, "utility_score", "utility", "return_score", "return", "success")) is None:
+            raise ValueError(f"record {record_index} must define finite utility value")
+        if (
+            cost_weight > 0
+            and _finite_float(_record_value(record, "utility_cost", "cost", "flops", "latency_ms")) is None
+        ):
+            raise ValueError(f"record {record_index} must define finite utility cost")
+        context_candidates.setdefault(context_id, set()).add(expert_id)
+
+    sparse_contexts = [
+        str(context_id)
+        for context_id, candidates in context_candidates.items()
+        if len(candidates) < min_candidates_per_context
+    ]
+    if sparse_contexts:
+        raise ValueError(
+            "counterfactual utility records must evaluate at least "
+            f"{min_candidates_per_context} candidates per context; sparse contexts: {sparse_contexts}"
+        )
+    missing_candidates = {
+        str(context_id): sorted(set(range(num_experts)) - candidates)
+        for context_id, candidates in context_candidates.items()
+        if len(candidates) < num_experts
+    }
+    if require_all_experts and missing_candidates:
+        raise ValueError(f"missing counterfactual candidates: {missing_candidates}")
+    return {
+        "num_contexts": len(context_candidates),
+        "num_candidates": sum(len(candidates) for candidates in context_candidates.values()),
+        "missing_candidates": missing_candidates,
+    }
+
+
+def _argmax(values: Sequence[object]) -> int:
+    return max(range(len(values)), key=lambda index: float(values[index]))
+
+
+def _route_sequence_diagnostics(record: dict[str, Any]) -> dict[str, float]:
+    diagnostics = {}
+    router_probs = record.get("router_probs_sequence")
+    if isinstance(router_probs, Sequence) and len(router_probs) > 0:
+        route_ids = [_argmax(row) for row in router_probs]
+        transitions = max(len(route_ids) - 1, 0)
+        if transitions > 0:
+            switches = sum(1 for left, right in pairwise(route_ids) if left != right)
+            diagnostics["route_switch_rate"] = switches / transitions
+        else:
+            diagnostics["route_switch_rate"] = 0.0
+
+    pool_mask = record.get("pool_mask_sequence")
+    if isinstance(pool_mask, Sequence) and len(pool_mask) > 0:
+        pool_rows = [tuple(bool(value) for value in row) for row in pool_mask]
+        transitions = max(len(pool_rows) - 1, 0)
+        if transitions > 0:
+            switches = sum(1 for left, right in pairwise(pool_rows) if left != right)
+            diagnostics["pool_reuse_rate"] = 1.0 - switches / transitions
+        else:
+            diagnostics["pool_reuse_rate"] = 1.0
+    return diagnostics
+
+
+def _protocol_evidence_audit(
+    records: list[dict[str, Any]],
+    *,
+    required_fractions: list[float] | None,
+    add_route_diagnostics: bool,
+) -> dict[str, Any]:
+    if add_route_diagnostics:
+        records = [{**record, **_route_sequence_diagnostics(record)} for record in records]
+    fractions = []
+    missing_fraction_records = []
+    for index, record in enumerate(records):
+        raw_fraction = _record_value(record, "resident_fraction", "resident_fraction_requested")
+        if raw_fraction is None:
+            missing_fraction_records.append(index)
+            continue
+        fraction = float(raw_fraction)
+        if fraction <= 0 or fraction > 1:
+            raise ValueError(f"resident fraction must be in (0, 1], got {fraction}")
+        fractions.append(fraction)
+
+    present_fractions = sorted(set(fractions))
+    required_fractions = (
+        present_fractions if required_fractions is None else sorted({float(fraction) for fraction in required_fractions})
+    )
+    num_records_by_fraction = {
+        f"{fraction:g}": sum(1 for observed_fraction in fractions if observed_fraction == fraction)
+        for fraction in present_fractions
+    }
+    missing_required_fractions = [
+        f"{fraction:g}" for fraction in required_fractions if fraction not in present_fractions
+    ]
+    missing_metrics_by_fraction = {}
+    for fraction in required_fractions:
+        fraction_records = [
+            record
+            for record in records
+            if _record_value(record, "resident_fraction", "resident_fraction_requested") is not None
+            and float(_record_value(record, "resident_fraction", "resident_fraction_requested")) == fraction
+        ]
+        if not fraction_records:
+            continue
+        missing_metrics = [
+            metric_key
+            for metric_key in PROTOCOL_REQUIRED_METRIC_KEYS
+            if not all(_metric_value(record, metric_key) is not None for record in fraction_records)
+        ]
+        if missing_metrics:
+            missing_metrics_by_fraction[f"{fraction:g}"] = missing_metrics
+
+    return {
+        "ok": not missing_fraction_records and not missing_required_fractions and not missing_metrics_by_fraction,
+        "num_records": len(records),
+        "num_records_by_fraction": num_records_by_fraction,
+        "required_fractions": [f"{fraction:g}" for fraction in required_fractions],
+        "required_metric_keys": list(PROTOCOL_REQUIRED_METRIC_KEYS),
+        "missing_fraction_records": missing_fraction_records,
+        "missing_required_fractions": missing_required_fractions,
+        "missing_metrics_by_fraction": missing_metrics_by_fraction,
+    }
 
 
 def parse_resident_fractions(value: str | None) -> list[float] | None:
@@ -240,12 +425,10 @@ def _sidecar_check(path: Path | None, cfg: Any) -> dict[str, Any]:
             path=str(path),
         )
 
-    from Lara.evaluation import counterfactual_utility_matrix_from_records
-
     action_cfg = _value(cfg, "framework.action_model", {})
     dataset_cfg = _value(cfg, "datasets.vla_data", {})
     records = load_records(path)
-    matrix = counterfactual_utility_matrix_from_records(
+    matrix = _sidecar_metadata(
         records,
         num_experts=int(_value(action_cfg, "lara_num_experts", 0)),
         cost_weight=float(_value(dataset_cfg, "counterfactual_utility_cost_weight", 0.0) or 0.0),
@@ -284,11 +467,8 @@ def _rollout_protocol_check(
             detail=f"Closed-loop rollout records do not exist: {path}",
             path=str(path),
         )
-
-    from Lara.evaluation import protocol_evidence_audit
-
     records = load_records(path)
-    audit = protocol_evidence_audit(
+    audit = _protocol_evidence_audit(
         records,
         required_fractions=required_fractions,
         add_route_diagnostics=add_route_diagnostics,
@@ -369,6 +549,24 @@ def _training_artifact_check(path: Path | None, cfg: Any, *, min_steps: int) -> 
         _artifact_value(payload, "config.framework.action_model.lara_utility_loss_weight", 0.0)
     )
     uses_utility_training = uses_utility_labels and utility_loss_weight is not None and utility_loss_weight > 0
+    transition_target_type = str(
+        _artifact_value(
+            payload,
+            (
+                "transition_target_type",
+                "features.transition_target_type",
+                "config.framework.action_model.lara_transition_target_type",
+            ),
+            "proprio_state",
+        )
+    )
+    uses_latent_transition_targets = _artifact_bool(
+        payload,
+        (
+            "uses_latent_transition_targets",
+            "features.uses_latent_transition_targets",
+        ),
+    ) or transition_target_type == "latent_state"
 
     required_metric_keys = (
         "action_loss",
@@ -403,6 +601,10 @@ def _training_artifact_check(path: Path | None, cfg: Any, *, min_steps: int) -> 
         failures.append(f"required paper-stage flags are missing/false: {missing_flags}")
     if not uses_utility_training:
         failures.append("counterfactual utility labels and positive lara_utility_loss_weight are required")
+    if not uses_latent_transition_targets:
+        failures.append(
+            "transition targets must be encoded latent_state targets, not raw proprio_state boundary targets"
+        )
     if missing_metrics:
         failures.append(f"required finite final metrics are missing: {missing_metrics}")
     if checkpoint_path is None:
@@ -422,6 +624,8 @@ def _training_artifact_check(path: Path | None, cfg: Any, *, min_steps: int) -> 
         missing_required_metrics=missing_metrics,
         uses_counterfactual_utility_labels=uses_utility_labels,
         lara_utility_loss_weight=utility_loss_weight,
+        transition_target_type=transition_target_type,
+        uses_latent_transition_targets=uses_latent_transition_targets,
     )
 
 
@@ -473,7 +677,8 @@ def _robot_eval_artifact_check(
         failures.append("success_rate must be finite and in [0, 1]")
     if prediction_horizon != expected_action_horizon or execution_horizon != expected_execution_horizon:
         failures.append(
-            f"horizons must match action_horizon={expected_action_horizon}, execution_horizon={expected_execution_horizon}"
+            "horizons must match "
+            f"action_horizon={expected_action_horizon}, execution_horizon={expected_execution_horizon}"
         )
     if missing_fractions:
         failures.append(f"missing resident fractions: {missing_fractions}")
@@ -544,7 +749,9 @@ def audit_lara_paper_readiness(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "ok": not failed_required,
         "config": str(config_path),
-        "required_resident_fractions": None if required_fractions is None else [f"{fraction:g}" for fraction in required_fractions],
+        "required_resident_fractions": (
+            None if required_fractions is None else [f"{fraction:g}" for fraction in required_fractions]
+        ),
         "checks": checks,
         "missing": [check["name"] for check in failed_required],
     }
@@ -561,7 +768,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-robot-eval-episodes", type=int, default=1)
     parser.add_argument(
         "--required-resident-fractions",
-        help="Comma-separated resident fractions required in rollout records; defaults to config lara_route_retention_fractions.",
+        help=(
+            "Comma-separated resident fractions required in rollout records; defaults to config "
+            "lara_route_retention_fractions."
+        ),
     )
     parser.add_argument(
         "--no-route-sequence-diagnostics",
