@@ -261,6 +261,19 @@ The websocket deployment server also caches `resident_pool_mask` and `router_pro
 For evaluation runs, start the server with `--rollout_trace_path /path/to/rollouts.jsonl`; each `infer` appends raw route outputs plus measured `latency_ms_sequence`, optional CUDA `vram_mb_sequence`, and any forced expert sequence to the session trace, and `reset` or `record_outcome` writes a JSONL record with `router_probs_sequence`, `active_mask_sequence`, `pool_mask_sequence`, aggregate latency/VRAM, and any provided outcome fields such as `success`, `return_score`, and `flops`.
 Use `scripts/build_counterfactual_utility_labels.py` to convert forced-expert rollout traces into the JSONL sidecar consumed by `counterfactual_utility_labels_path`; it validates that every context has the configured minimum number of candidate experts before writing labels.
 
+To turn real forced-expert rollout records into a utility-router training config:
+
+```bash
+python scripts/prepare_lara_utility_training.py \
+  --rollout-records /path/to/forced_expert_rollouts.jsonl \
+  --base-config scripts/config/lara_so101_utility_pool.yaml \
+  --sidecar-output runs/utility/so101_counterfactual_utility.jsonl \
+  --config-output runs/utility/lara_so101_utility_train.yaml \
+  --summary-output runs/utility/prepare_summary.json
+```
+
+The script writes the validated sidecar, a derived training YAML with `counterfactual_utility_labels_path` and positive `lara_utility_loss_weight`, plus the `accelerate launch ... --config_yaml ...` command to run next. It still requires externally collected forced-expert outcomes; it does not run the robot, generate fake labels, or make the method paper-ready by itself.
+
 ## Benchmark Datasets
 
 Benchmark data is kept outside the git repository under:
