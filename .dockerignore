@@ -1,0 +1,30 @@
+.git
+.github
+.omx
+.ruff_cache
+__pycache__
+*.py[cod]
+*.log
+
+# Runtime outputs and large local assets must be mounted, not baked into images.
+models/
+checkpoints/
+runs/
+wandb/
+vlajepa_runs/
+benchmark_data/
+data/
+outputs/
+
+# Model/data artifacts.
+*.bin
+*.ckpt
+*.parquet
+*.pt
+*.pth
+*.safetensors
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+

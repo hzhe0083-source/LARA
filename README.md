@@ -271,6 +271,13 @@ The websocket deployment server also caches `resident_pool_mask` and `router_pro
 For evaluation runs, start the server with `--rollout_trace_path /path/to/rollouts.jsonl`; each `infer` appends raw route outputs plus measured `latency_ms_sequence`, optional CUDA `vram_mb_sequence`, and any forced expert sequence to the session trace, and `reset` or `record_outcome` writes a JSONL record with `router_probs_sequence`, `active_mask_sequence`, `pool_mask_sequence`, aggregate latency/VRAM, and any provided outcome fields such as `success`, `return_score`, and `flops`.
 Use `scripts/build_counterfactual_utility_labels.py` to convert forced-expert rollout traces into the JSONL sidecar consumed by `counterfactual_utility_labels_path`; it validates that every context has the configured minimum number of candidate experts before writing labels.
 
+The first-pass LIBERO100 config uses a shorter prediction horizon to reduce action multimodality while keeping the same receding-horizon execution point:
+
+```text
+action_horizon = 30    -> predict 1.0 seconds at 30 Hz
+execution_horizon = 10 -> execute 0.333 seconds
+```
+
 To turn real forced-expert rollout records into a utility-router training config:
 
 ```bash
@@ -314,7 +321,7 @@ python scripts/download_benchmark_data.py --dataset all --preflight-only
 
 A dataset is not considered ready until `meta/info.json`, `meta/stats.json`, task metadata (`meta/tasks.parquet` or `meta/tasks.jsonl`), and the expected LeRobot v3 chunk parquet count are present: 279 `data/chunk-*/*.parquet` files for LIBERO100 and 492 for MetaWorld MT50. The preflight intentionally counts chunk parquet files, not duplicate split files under `data/train-*`, and exits nonzero while any selected dataset is incomplete. For progress-only supervision during a long download, add `--allow-incomplete`. The benchmark configs now enable the LARA latent-action, MoE/router, direct-expert, and utility-proxy paths by default, but they still need full benchmark training and closed-loop rollout evidence.
 
-The LeRobot v3 collate path emits both current Qwen images and `example["video"]` for V-JEPA, using `framework.vj2_model.num_frames` frames instead of the 60-frame action horizon. If the local environment does not have the upstream `lerobot` package installed, real-batch LIBERO100 loading will fail before reading parquet files; install `.[benchmark]` first.
+The LeRobot v3 collate path emits both current Qwen images and `example["video"]` for V-JEPA, using `framework.vj2_model.num_frames` frames instead of the configured action horizon. If the local environment does not have the upstream `lerobot` package installed, real-batch LIBERO100 loading will fail before reading parquet files; install `.[benchmark]` first.
 
 Benchmark installs are pinned for the Python 3.10 LARA environment: `.[benchmark]` resolves `lerobot==0.4.4` through `constraints/benchmark-py310.txt`. Do not install the latest `lerobot` blindly on the server; current 0.5.x releases require Python 3.12+ and are not the target for this repository's Python 3.10 training stack.
 

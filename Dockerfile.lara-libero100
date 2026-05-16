@@ -1,38 +1,72 @@
 FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     HF_HOME=/data/hf_home \
     HF_HUB_CACHE=/data/hf_home/hub \
     HF_XET_CACHE=/data/hf_home/xet \
-    MAX_JOBS=4
+    MAX_JOBS=4 \
+    MUJOCO_GL=egl \
+    PYOPENGL_PLATFORM=egl \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    ca-certificates \
     cmake \
+    curl \
     ffmpeg \
     git \
+    htop \
+    less \
+    libaio-dev \
     libegl1 \
-    libglib2.0-0 \
     libgl1 \
+    libglew-dev \
+    libglib2.0-0 \
+    libglfw3 \
+    libosmesa6 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
     ninja-build \
+    openssh-client \
+    openssh-server \
     pkg-config \
     python3.10 \
     python3.10-dev \
     python3-pip \
+    tmux \
+    vim \
     && rm -rf /var/lib/apt/lists/*
 
 RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.10 1 \
-    && python -m pip install --upgrade pip
+    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1 \
+    && python -m pip install --upgrade pip setuptools wheel
 
 WORKDIR /workspace/LARA
+
+# Install heavyweight third-party dependencies before copying the whole source
+# tree so config/doc/code edits do not invalidate the dependency cache.
+COPY requirements.txt pyproject.toml README.md /workspace/LARA/
+COPY constraints /workspace/LARA/constraints
+RUN python -m pip install -r requirements.txt \
+    && python -m pip install -c constraints/benchmark-py310.txt "lerobot==0.4.4" \
+    && python -m pip install jupyterlab ipywidgets
+
 COPY . /workspace/LARA
 
-RUN python -m pip install -r requirements.txt \
-    && python -m pip install -c constraints/benchmark-py310.txt -e '.[benchmark]'
+RUN python -m pip install --no-deps -e . \
+    && mkdir -p /opt/conda/bin /run/sshd \
+    && ln -sf /usr/local/bin/jupyter /opt/conda/bin/jupyter \
+    && ssh-keygen -A
 
 # Build this in a large-memory image or install a matching wheel if available.
 # RUN python -m pip install flash-attn --no-build-isolation
 
-CMD ["/bin/bash"]
+EXPOSE 22 8888
+
+CMD ["/usr/sbin/sshd", "-D", "-e"]

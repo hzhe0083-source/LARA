@@ -19,14 +19,15 @@ framework:
     max_seq_len: 1024
     action_dim: 7
     state_dim: 9
-    # LIBERO100 is 30Hz. Predict 60 frames (2.0s), execute the first 10 frames.
-    future_action_window_size: 59
-    action_horizon: 60
+    # LIBERO100 is 30Hz. First training pass predicts 30 frames (1.0s)
+    # and executes the first 10 frames before re-observing.
+    future_action_window_size: 29
+    action_horizon: 30
     execution_horizon: 10
     latent_action_horizon: 10
     router_horizon: 10
     utility_horizon: 10
-    long_prediction_aux_horizon: 60
+    long_prediction_aux_horizon: 30
     execution_loss_weight: 1.0
     prediction_loss_weight: 0.5
     past_action_window_size: 0
