@@ -176,7 +176,7 @@ def test_aux_action_losses_are_not_double_counted_by_trainer():
     assert 'output[f"metric/{key}"] = value.detach()' in core_src
     assert '"metric/wm_loss_raw"' in core_src
     assert '"metric/wm_loss_weight"' in core_src
-    assert "self._loss_scale(\"wm\", fallback_key=\"vlm\", default=0.1)" in core_src
+    assert "self._loss_scale(\"wm\", fallback_key=\"vlm\", default=1.0)" in core_src
     assert "split_loss_and_metric_outputs(output_dict)" in trainer_src
     assert "total_loss = sum(loss_dict.values())" in trainer_src
     assert "def split_loss_and_metric_outputs" in trainer_tools_src

@@ -37,7 +37,7 @@ class Lara(baseframework):
         self.future_action_window_size = action_cfg.future_action_window_size
         self.past_action_window_size = action_cfg.past_action_window_size
         self.chunk_len = self.action_horizon
-        self.wm_loss_weight = self._loss_scale("wm", fallback_key="vlm", default=0.1)
+        self.wm_loss_weight = self._loss_scale("wm", fallback_key="vlm", default=1.0)
 
     def _loss_scale(self, key: str, fallback_key: str | None = None, default: float = 1.0) -> float:
         loss_scale = getattr(getattr(self.config, "trainer", None), "loss_scale", None)
