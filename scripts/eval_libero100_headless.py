@@ -22,7 +22,6 @@ from typing import Any
 
 import numpy as np
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LIBERO_DUMMY_ACTION = [0.0] * 6 + [-1.0]
 LIBERO_ENV_RESOLUTION = 256
@@ -84,7 +83,7 @@ def _max_steps(task_suite_name: str) -> int:
         return 300
     if task_suite_name in {"libero_10", "libero_mix"}:
         return 520
-    if task_suite_name == "libero_90":
+    if task_suite_name in {"libero_90", "libero_100"}:
         return 400
     raise ValueError(f"Unknown task suite: {task_suite_name}")
 
@@ -111,6 +110,15 @@ def _load_benchmark(task_suite_name: str, category_value: str):
     return benchmark_dict[task_suite_name]()
 
 
+def _suite_plan(task_suite_name: str, category_value: str) -> list[tuple[str, Any]]:
+    if task_suite_name == "libero_100":
+        return [
+            ("libero_90", _load_benchmark("libero_90", category_value)),
+            ("libero_10", _load_benchmark("libero_10", category_value)),
+        ]
+    return [(task_suite_name, _load_benchmark(task_suite_name, category_value))]
+
+
 def _task_ids(value: str | None, num_tasks: int) -> list[int]:
     if not value:
         return list(range(num_tasks))
@@ -128,6 +136,34 @@ def _task_ids(value: str | None, num_tasks: int) -> list[int]:
         if task_id < 0 or task_id >= num_tasks:
             raise ValueError(f"task id {task_id} out of range [0, {num_tasks})")
     return result
+
+
+def _suite_task_ids(value: str | None, suites: list[tuple[str, Any]]) -> dict[str, list[int]]:
+    if not value:
+        return {suite_name: list(range(task_suite.n_tasks)) for suite_name, task_suite in suites}
+    if len(suites) == 1:
+        suite_name, task_suite = suites[0]
+        return {suite_name: _task_ids(value, task_suite.n_tasks)}
+    selected: dict[str, list[int]] = {}
+    current_suite_name: str | None = None
+    suite_lookup = dict(suites)
+    for part in value.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if ":" in part:
+            suite_name, suite_ids = part.split(":", 1)
+            current_suite_name = suite_name
+        elif current_suite_name is not None:
+            suite_name, suite_ids = current_suite_name, part
+        else:
+            raise ValueError(
+                "multi-suite task ids must be prefixed, e.g. libero_90:0,libero_10:0-2"
+            )
+        if suite_name not in suite_lookup:
+            raise ValueError(f"unknown suite in --task_ids: {suite_name}")
+        selected.setdefault(suite_name, []).extend(_task_ids(suite_ids, suite_lookup[suite_name].n_tasks))
+    return selected
 
 
 def _write_jsonl(path: Path, record: dict[str, Any]) -> None:
@@ -290,12 +326,16 @@ def run_eval(args: argparse.Namespace) -> dict[str, Any]:
     records_path = args.output_dir / "rollout_records.jsonl"
     summary_path = args.output_dir / "eval_summary.json"
     full_trace_path = args.output_dir / "sampled_route_traces.jsonl"
-    server_trace_path = full_trace_path if args.sample_full_route_every > 0 else args.output_dir / "server_route_trace.tmp.jsonl"
+    server_trace_path = (
+        full_trace_path
+        if args.sample_full_route_every > 0
+        else args.output_dir / "server_route_trace.tmp.jsonl"
+    )
 
     server_proc = maybe_start_server(args, server_trace_path)
     try:
-        task_suite = _load_benchmark(args.task_suite_name, args.category_value)
-        selected_task_ids = _task_ids(args.task_ids, task_suite.n_tasks)
+        suite_plan = _suite_plan(args.task_suite_name, args.category_value)
+        selected_task_ids_by_suite = _suite_task_ids(args.task_ids, suite_plan)
         client = RouteClient(
             host=args.host,
             port=args.port,
@@ -303,108 +343,112 @@ def run_eval(args: argparse.Namespace) -> dict[str, Any]:
             image_size=args.resize_size,
             with_state=args.with_state,
         )
-        max_steps = _max_steps(args.task_suite_name)
         rng = np.random.default_rng(args.seed)
         records: list[dict[str, Any]] = []
 
-        for task_id in selected_task_ids:
-            task = task_suite.get_task(task_id)
-            initial_states = task_suite.get_task_init_states(task_id)
-            env, task_description = _get_libero_env(task, LIBERO_ENV_RESOLUTION, args.seed)
-            for episode_idx in range(args.num_trials_per_task):
-                session_id = f"{args.task_suite_name}_task{task_id}_episode{episode_idx}_{int(time.time() * 1000)}"
-                client.reset(task_description=task_description, session_id=session_id)
-                env.reset()
-                obs = env.set_init_state(initial_states[episode_idx])
-                done = False
-                return_score = 0.0
-                step = 0
-                t = 0
-                forced_expert_id = args.forced_expert_id
-                if args.random_forced_expert and args.num_experts:
-                    forced_expert_id = int(rng.integers(0, args.num_experts))
-                start_time = time.perf_counter()
-                latency_ms_values = []
-                vram_mb_values = []
-                while t < max_steps + args.num_steps_wait:
-                    if t < args.num_steps_wait:
-                        obs, reward, done, info = env.step(LIBERO_DUMMY_ACTION)
-                        t += 1
-                        continue
-                    img = np.ascontiguousarray(obs["agentview_image"][::-1, ::-1])
-                    wrist_img = np.ascontiguousarray(obs["robot0_eye_in_hand_image"][::-1, ::-1])
-                    state = np.concatenate(
-                        (
-                            obs["robot0_eef_pos"],
-                            _quat2axisangle(obs["robot0_eef_quat"]),
-                            obs["robot0_gripper_qpos"],
+        for suite_name, task_suite in suite_plan:
+            max_steps = _max_steps(suite_name)
+            for task_id in selected_task_ids_by_suite.get(suite_name, []):
+                task = task_suite.get_task(task_id)
+                initial_states = task_suite.get_task_init_states(task_id)
+                env, task_description = _get_libero_env(task, LIBERO_ENV_RESOLUTION, args.seed)
+                for episode_idx in range(args.num_trials_per_task):
+                    session_id = f"{suite_name}_task{task_id}_episode{episode_idx}_{int(time.time() * 1000)}"
+                    client.reset(task_description=task_description, session_id=session_id)
+                    env.reset()
+                    obs = env.set_init_state(initial_states[episode_idx])
+                    done = False
+                    return_score = 0.0
+                    step = 0
+                    t = 0
+                    forced_expert_id = args.forced_expert_id
+                    if args.random_forced_expert and args.num_experts:
+                        forced_expert_id = int(rng.integers(0, args.num_experts))
+                    start_time = time.perf_counter()
+                    latency_ms_values = []
+                    vram_mb_values = []
+                    while t < max_steps + args.num_steps_wait:
+                        if t < args.num_steps_wait:
+                            obs, reward, done, _info = env.step(LIBERO_DUMMY_ACTION)
+                            t += 1
+                            continue
+                        img = np.ascontiguousarray(obs["agentview_image"][::-1, ::-1])
+                        wrist_img = np.ascontiguousarray(obs["robot0_eye_in_hand_image"][::-1, ::-1])
+                        state = np.concatenate(
+                            (
+                                obs["robot0_eef_pos"],
+                                _quat2axisangle(obs["robot0_eef_quat"]),
+                                obs["robot0_gripper_qpos"],
+                            )
+                        )[None]
+                        response = client.step(
+                            images=[img, wrist_img],
+                            state=state,
+                            step=step,
+                            session_id=session_id,
+                            forced_expert_id=forced_expert_id,
                         )
-                    )[None]
-                    response = client.step(
-                        images=[img, wrist_img],
-                        state=state,
-                        step=step,
-                        session_id=session_id,
-                        forced_expert_id=forced_expert_id,
+                        if client.last_latency_ms is not None:
+                            latency_ms_values.append(float(client.last_latency_ms))
+                        if client.last_vram_mb is not None:
+                            vram_mb_values.append(float(client.last_vram_mb))
+                        raw_action = response["raw_action"]
+                        world_vector_delta = np.asarray(raw_action["world_vector"], dtype=np.float32).reshape(-1)
+                        rotation_delta = np.asarray(raw_action["rotation_delta"], dtype=np.float32).reshape(-1)
+                        gripper = _binarize_gripper_open(raw_action["open_gripper"])
+                        action = np.concatenate([world_vector_delta, rotation_delta, gripper], axis=0)
+                        obs, reward, done, _info = env.step(action.tolist())
+                        return_score += float(reward)
+                        step += 1
+                        t += 1
+                        if done:
+                            break
+                    elapsed = time.perf_counter() - start_time
+                    keep_full_trace = (
+                        args.sample_full_route_every > 0
+                        and len(records) % args.sample_full_route_every == 0
                     )
-                    if client.last_latency_ms is not None:
-                        latency_ms_values.append(float(client.last_latency_ms))
-                    if client.last_vram_mb is not None:
-                        vram_mb_values.append(float(client.last_vram_mb))
-                    raw_action = response["raw_action"]
-                    world_vector_delta = np.asarray(raw_action["world_vector"], dtype=np.float32).reshape(-1)
-                    rotation_delta = np.asarray(raw_action["rotation_delta"], dtype=np.float32).reshape(-1)
-                    gripper = _binarize_gripper_open(raw_action["open_gripper"])
-                    action = np.concatenate([world_vector_delta, rotation_delta, gripper], axis=0)
-                    obs, reward, done, info = env.step(action.tolist())
-                    return_score += float(reward)
-                    step += 1
-                    t += 1
-                    if done:
-                        break
-                elapsed = time.perf_counter() - start_time
-                keep_full_trace = (
-                    args.sample_full_route_every > 0
-                    and len(records) % args.sample_full_route_every == 0
-                )
-                outcome = {
-                    "task_suite": args.task_suite_name,
-                    "task_id": task_id,
-                    "episode_idx": episode_idx,
-                    "task_description": task_description,
-                    "success": bool(done),
-                    "return_score": return_score,
-                    "episode_length": step,
-                    "wall_time_s": elapsed,
-                    "latency_ms": float(np.mean(latency_ms_values)) if latency_ms_values else None,
-                    "vram_mb": float(np.max(vram_mb_values)) if vram_mb_values else None,
-                    "forced_expert_id": forced_expert_id,
-                    "sampled_full_trace": keep_full_trace,
-                }
-                if keep_full_trace:
-                    client.record_outcome(session_id, outcome)
-                else:
-                    # Reset without outcome clears server-side trace; compact
-                    # outcome still lands in rollout_records.jsonl below.
-                    client.clear_session(session_id)
-                _write_jsonl(records_path, outcome)
-                records.append(outcome)
-                logging.info(
-                    "task=%s episode=%s success=%s return=%.3f length=%s",
-                    task_id,
-                    episode_idx,
-                    done,
-                    return_score,
-                    step,
-                )
-            env.close()
+                    outcome = {
+                        "task_suite": suite_name,
+                        "requested_task_suite": args.task_suite_name,
+                        "task_id": task_id,
+                        "episode_idx": episode_idx,
+                        "task_description": task_description,
+                        "success": bool(done),
+                        "return_score": return_score,
+                        "episode_length": step,
+                        "wall_time_s": elapsed,
+                        "latency_ms": float(np.mean(latency_ms_values)) if latency_ms_values else None,
+                        "vram_mb": float(np.max(vram_mb_values)) if vram_mb_values else None,
+                        "forced_expert_id": forced_expert_id,
+                        "sampled_full_trace": keep_full_trace,
+                    }
+                    if keep_full_trace:
+                        client.record_outcome(session_id, outcome)
+                    else:
+                        # Reset without outcome clears server-side trace; compact
+                        # outcome still lands in rollout_records.jsonl below.
+                        client.clear_session(session_id)
+                    _write_jsonl(records_path, outcome)
+                    records.append(outcome)
+                    logging.info(
+                        "suite=%s task=%s episode=%s success=%s return=%.3f length=%s",
+                        suite_name,
+                        task_id,
+                        episode_idx,
+                        done,
+                        return_score,
+                        step,
+                    )
+                env.close()
 
         summary = _summarize_records(records)
         summary.update(
             {
                 "checkpoint": str(args.checkpoint),
                 "task_suite_name": args.task_suite_name,
-                "task_ids": selected_task_ids,
+                "suite_plan": [suite_name for suite_name, _ in suite_plan],
+                "task_ids": selected_task_ids_by_suite,
                 "rollout_records": str(records_path),
                 "sampled_route_traces": str(full_trace_path) if full_trace_path.exists() else None,
             }
@@ -420,7 +464,7 @@ def run_eval(args: argparse.Namespace) -> dict[str, Any]:
                 server_proc.kill()
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", required=True, type=Path)
     parser.add_argument("--output_dir", "--output-dir", required=True, type=Path)
@@ -430,7 +474,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cuda", default=0)
     parser.add_argument("--use_bf16", "--use-bf16", action="store_true")
     parser.add_argument("--server_startup_delay", "--server-startup-delay", type=float, default=20.0)
-    parser.add_argument("--task_suite_name", "--task-suite-name", default="libero_90")
+    parser.add_argument(
+        "--task_suite_name",
+        "--task-suite-name",
+        default="libero_100",
+        help="Use libero_100 to evaluate libero_90 followed by libero_10.",
+    )
     parser.add_argument("--category_value", "--category-value", default="Background Textures")
     parser.add_argument("--task_ids", "--task-ids", help="Comma/range task ids, e.g. 0,1,3-5. Defaults to all.")
     parser.add_argument("--num_trials_per_task", "--num-trials-per-task", type=int, default=10)
@@ -442,7 +491,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--forced_expert_id", "--forced-expert-id", type=int)
     parser.add_argument("--random_forced_expert", "--random-forced-expert", action="store_true")
     parser.add_argument("--num_experts", "--num-experts", type=int)
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def main() -> int:

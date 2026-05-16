@@ -73,6 +73,12 @@ class Libero100ExperimentScriptsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             data_root = _make_minimal_libero(tmp_path / "data")
+            pretrained_root = tmp_path / "models"
+            (pretrained_root / "Qwen3-VL-2B-Instruct").mkdir(parents=True)
+            (pretrained_root / "vjepa2-vitl-fpc64-256").mkdir(parents=True)
+            checkpoint = pretrained_root / "VLA-JEPA/Pretrain/checkpoints/VLA-JEPA-pretrain.pt"
+            checkpoint.parent.mkdir(parents=True)
+            checkpoint.write_bytes(b"unit checkpoint")
             output_dir = tmp_path / "run"
             rc = subprocess.run(
                 [
@@ -83,7 +89,7 @@ class Libero100ExperimentScriptsTest(unittest.TestCase):
                     "--data_root",
                     str(data_root),
                     "--pretrained_root",
-                    str(tmp_path / "models"),
+                    str(pretrained_root),
                     "--output_dir",
                     str(output_dir),
                     "--run_id",
@@ -111,6 +117,46 @@ class Libero100ExperimentScriptsTest(unittest.TestCase):
             self.assertEqual(manifest["base_output_dir"], str(output_dir))
             self.assertEqual(manifest["output_dir"], str(run_dir))
             self.assertEqual(manifest["trainer_output_dir"], str(run_dir))
+            self.assertTrue(manifest["path_validation"]["ok"])
+            self.assertIn("lara_flags", manifest)
+            self.assertIn("data_root", manifest["provenance"])
+            self.assertTrue(manifest["provenance"]["data_root"]["exists"])
+            self.assertTrue(manifest["provenance"]["qwen_path"]["path"].endswith("Qwen3-VL-2B-Instruct"))
+            self.assertIn("LARA stage configuration", rc.stdout)
+
+    def test_runner_non_dry_run_fails_fast_on_missing_required_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            data_root = _make_minimal_libero(tmp_path / "data")
+            output_dir = tmp_path / "run"
+            rc = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "scripts/run_lara_libero100_experiment.py"),
+                    "--stage",
+                    "latent",
+                    "--data_root",
+                    str(data_root),
+                    "--pretrained_checkpoint",
+                    str(tmp_path / "missing-pretrain.pt"),
+                    "--qwen_path",
+                    str(tmp_path / "missing-qwen"),
+                    "--vjepa_path",
+                    str(tmp_path / "missing-vjepa"),
+                    "--output_dir",
+                    str(output_dir),
+                    "--run_id",
+                    "missing_paths",
+                    "--skip_preflight",
+                    "--no_accelerate",
+                ],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(rc.returncode, 2, rc.stderr + rc.stdout)
+            self.assertIn("path validation error", rc.stderr)
 
     def test_runner_stage_boundaries_disable_router_and_utility_when_expected(self):
         with tempfile.TemporaryDirectory() as tmp:

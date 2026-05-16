@@ -12,10 +12,8 @@ import argparse
 import json
 import os
 import shutil
-import sys
 from pathlib import Path
 from typing import Any
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DATA_ROOT = Path("/home/ryan/Documents/robot/benchmark_data/raw/libero100")
@@ -129,7 +127,10 @@ def inspect_libero100(data_root: Path) -> dict[str, Any]:
     if not chunk_parquets:
         problems.append("missing data/chunk-*/*.parquet")
     elif len(chunk_parquets) < EXPECTED_PARQUET_FILES:
-        problems.append(f"expected at least {EXPECTED_PARQUET_FILES} data chunk parquet files, found {len(chunk_parquets)}")
+        problems.append(
+            f"expected at least {EXPECTED_PARQUET_FILES} data chunk parquet files, "
+            f"found {len(chunk_parquets)}"
+        )
     if info:
         if info.get("fps") != EXPECTED_FPS:
             problems.append(f"expected fps {EXPECTED_FPS}, found {info.get('fps')}")
@@ -295,10 +296,21 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data_root", "--data-root", type=Path, default=DEFAULT_DATA_ROOT)
     parser.add_argument("--model_cache", "--model-cache", type=Path, default=Path("models"))
-    parser.add_argument("--hf_cache", "--hf-cache", type=Path, default=Path(os.environ.get("HF_HOME", "~/.cache/huggingface")))
+    parser.add_argument(
+        "--hf_cache",
+        "--hf-cache",
+        type=Path,
+        default=Path(os.environ.get("HF_HOME", "~/.cache/huggingface")),
+    )
     parser.add_argument("--checkpoint_root", "--checkpoint-root", type=Path, default=Path("checkpoints"))
     parser.add_argument("--pretrained_root", "--pretrained-root", type=Path, default=None)
-    parser.add_argument("--model_path", "--model-path", action="append", default=[], help="Required local model/checkpoint path. Repeatable.")
+    parser.add_argument(
+        "--model_path",
+        "--model-path",
+        action="append",
+        default=[],
+        help="Required local model/checkpoint path. Repeatable.",
+    )
     parser.add_argument("--require_model_paths", "--require-model-paths", action="store_true")
     parser.add_argument("--output_dir", "--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--max_new_disk_gb", "--max-new-disk-gb", type=float, default=25.0)
@@ -321,7 +333,17 @@ def main() -> int:
     md_path.parent.mkdir(parents=True, exist_ok=True)
     json_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     write_markdown(md_path, report)
-    print(json.dumps({"ok": report["ok"], "json": str(json_path), "markdown": str(md_path), "problems": report["problems"]}, indent=2))
+    print(
+        json.dumps(
+            {
+                "ok": report["ok"],
+                "json": str(json_path),
+                "markdown": str(md_path),
+                "problems": report["problems"],
+            },
+            indent=2,
+        )
+    )
     return 0 if report["ok"] or args.allow_incomplete else 2
 
 

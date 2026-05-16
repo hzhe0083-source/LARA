@@ -1,13 +1,13 @@
 # Copyright 2025 starVLA community. All rights reserved.
-# Licensed under the MIT License, Version 1.0 (the "License"); 
+# Licensed under the MIT License, Version 1.0 (the "License");
 # Implemented by [Jinhui YE / HKUST University] in [2025].
 
 import asyncio
 import json
 import logging
-from pathlib import Path
 import time
 import traceback
+from pathlib import Path
 
 import websockets.asyncio.server
 import websockets.frames
@@ -188,7 +188,7 @@ class WebsocketPolicyServer:
             except Exception as e:
                 logging.exception("Policy inference error (request_id=%s)", req_id)
                 logging.exception(e)
-                
+
                 return {
                     "status": "error",
                     "ok": False,

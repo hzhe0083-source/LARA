@@ -197,7 +197,11 @@ def visualize(records: list[dict[str, Any]], output_dir: Path) -> dict[str, Any]
             skipped.append("pool coverage: no pool_mask_sequence or pool mass metric")
 
     for output_name, keys, title in [
-        ("router_topk_teacher_mass_curve.png", ["moe_active_teacher_mass", "active_teacher_mass"], "Router Top-k Teacher Mass"),
+        (
+            "router_topk_teacher_mass_curve.png",
+            ["moe_active_teacher_mass", "active_teacher_mass"],
+            "Router Top-k Teacher Mass",
+        ),
         ("dead_expert_count_curve.png", ["moe_dead_expert_ratio", "dead_expert_ratio"], "Dead Expert Ratio"),
         ("latent_code_perplexity_curve.png", ["latent_action_perplexity", "perplexity"], "Latent Code Perplexity"),
     ]:

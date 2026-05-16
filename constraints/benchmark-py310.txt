@@ -1,0 +1,6 @@
+# Benchmark dependency guardrail for the Python 3.10 LARA environment.
+#
+# Do not let pip resolve the latest lerobot on the LIBERO100 server: lerobot
+# 0.5.x requires Python >=3.12, while this repository targets Python 3.10 for
+# the current Qwen/V-JEPA/DeepSpeed stack.
+lerobot==0.4.4

@@ -1,0 +1,23 @@
+name: lara-libero100
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - pytorch=2.6.0
+  - torchvision=0.21.0
+  - torchaudio=2.6.0
+  - pytorch-cuda=12.4
+  - git
+  - ffmpeg
+  - cmake
+  - ninja
+  - pkg-config
+  - gcc_linux-64=11
+  - gxx_linux-64=11
+  - pip:
+      - -r requirements.txt
+      - -c constraints/benchmark-py310.txt
+      - -e .[benchmark]

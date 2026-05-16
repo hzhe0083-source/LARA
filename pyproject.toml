@@ -68,7 +68,8 @@ dev = [
     "ruff>=0.2.2",
 ]
 benchmark = [
-    "lerobot>=0.4.0,<0.5.0",
+    # 0.5.x currently requires Python >=3.12; LARA's runtime target remains Python 3.10.
+    "lerobot==0.4.4",
 ]
 sagemaker = [
     "boto3",

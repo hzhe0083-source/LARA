@@ -1,0 +1,38 @@
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    HF_HOME=/data/hf_home \
+    HF_HUB_CACHE=/data/hf_home/hub \
+    HF_XET_CACHE=/data/hf_home/xet \
+    MAX_JOBS=4
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    ffmpeg \
+    git \
+    libegl1 \
+    libglib2.0-0 \
+    libgl1 \
+    ninja-build \
+    pkg-config \
+    python3.10 \
+    python3.10-dev \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.10 1 \
+    && python -m pip install --upgrade pip
+
+WORKDIR /workspace/LARA
+COPY . /workspace/LARA
+
+RUN python -m pip install -r requirements.txt \
+    && python -m pip install -c constraints/benchmark-py310.txt -e '.[benchmark]'
+
+# Build this in a large-memory image or install a matching wheel if available.
+# RUN python -m pip install flash-attn --no-build-isolation
+
+CMD ["/bin/bash"]

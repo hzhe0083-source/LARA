@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -21,12 +21,29 @@ from typing import Any
 
 import yaml
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = REPO_ROOT / "scripts/config/lara_libero100_baseline.yaml"
 DEFAULT_DEEPSPEED_CONFIG = REPO_ROOT / "Lara/config/deepseeds/deepspeed_zero2.yaml"
 STAGES = ("dense", "latent", "experts", "router", "joint", "utility_proxy", "eval")
 DEFAULT_SAVE_INTERVAL = 10000
+PROVENANCE_HASH_LIMIT_BYTES = 256 * 1024 * 1024
+LARA_FLAG_KEYS = (
+    "use_latent_action_head",
+    "lara_use_transition_head",
+    "use_lara_moe",
+    "lara_use_direct_action_experts",
+    "lara_use_expert_loss_posterior",
+    "lara_use_direct_action_output",
+    "lara_num_experts",
+    "lara_episode_pool_size",
+    "lara_top_k",
+    "lara_router_loss_weight",
+    "lara_pool_loss_weight",
+    "lara_pool_coverage_loss_weight",
+    "lara_utility_loss_weight",
+    "lara_utility_rank_loss_weight",
+    "lara_utility_head_loss_weight",
+)
 
 
 def _timestamp() -> str:
@@ -206,6 +223,100 @@ def _format_bytes(num_bytes: int | float) -> str:
     return f"{value:.2f} TiB"
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _path_provenance(path: Path | None) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    expanded = path.expanduser()
+    record: dict[str, Any] = {
+        "path": str(expanded),
+        "exists": expanded.exists(),
+        "is_file": expanded.is_file(),
+        "is_dir": expanded.is_dir(),
+        "is_symlink": expanded.is_symlink(),
+        "size_bytes": None,
+        "sha256": None,
+        "sha256_skipped": None,
+    }
+    if not expanded.exists():
+        return record
+    try:
+        record["resolved_path"] = str(expanded.resolve())
+    except OSError:
+        record["resolved_path"] = str(expanded)
+    if expanded.is_file():
+        size = expanded.stat().st_size
+        record["size_bytes"] = size
+        if size <= PROVENANCE_HASH_LIMIT_BYTES:
+            record["sha256"] = _sha256_file(expanded)
+        else:
+            record["sha256_skipped"] = f"file larger than {_format_bytes(PROVENANCE_HASH_LIMIT_BYTES)}"
+    elif expanded.is_dir():
+        marker_names = ("config.json", "model.safetensors", "pytorch_model.bin", "preprocessor_config.json")
+        record["marker_files"] = [
+            {"path": str(expanded / name), "exists": (expanded / name).exists()}
+            for name in marker_names
+        ]
+    return record
+
+
+def _required_paths(args: argparse.Namespace, cfg: dict[str, Any] | None) -> dict[str, Path | None]:
+    if cfg is None:
+        return {
+            "eval_checkpoint": args.eval_checkpoint,
+        }
+    qwen_path = _get_nested(cfg, ("framework", "qwenvl", "base_vlm"))
+    vjepa_path = _get_nested(cfg, ("framework", "vj2_model", "base_encoder"))
+    pretrained_checkpoint = _get_nested(cfg, ("trainer", "pretrained_checkpoint"))
+    return {
+        "data_root": args.data_root,
+        "qwen_path": Path(qwen_path) if qwen_path else None,
+        "vjepa_path": Path(vjepa_path) if vjepa_path else None,
+        "pretrained_checkpoint": Path(pretrained_checkpoint) if pretrained_checkpoint else None,
+        "resume_from": args.resume_from,
+        "counterfactual_utility_labels_path": args.counterfactual_utility_labels_path,
+    }
+
+
+def validate_required_paths(args: argparse.Namespace, cfg: dict[str, Any] | None) -> list[str]:
+    problems = []
+    for label, path in _required_paths(args, cfg).items():
+        if path is None:
+            continue
+        expanded = path.expanduser()
+        if label == "counterfactual_utility_labels_path" and not args.counterfactual_utility_labels_path:
+            continue
+        if label == "resume_from" and not args.resume_from:
+            continue
+        if not expanded.exists():
+            problems.append(f"{label} does not exist: {expanded}")
+    return problems
+
+
+def stage_flag_summary(cfg: dict[str, Any] | None) -> dict[str, Any]:
+    action_cfg = _get_nested(cfg or {}, ("framework", "action_model"), {})
+    if not isinstance(action_cfg, dict):
+        return {}
+    return {key: action_cfg.get(key) for key in LARA_FLAG_KEYS if key in action_cfg}
+
+
+def print_stage_banner(stage: str, cfg: dict[str, Any] | None, run_dir: Path) -> None:
+    payload = {
+        "stage": stage,
+        "run_dir": str(run_dir),
+        "lara_flags": stage_flag_summary(cfg),
+    }
+    print("LARA stage configuration:")
+    print(json.dumps(payload, indent=2, sort_keys=True))
+
+
 def _collect_checkpoint_files(checkpoint_dir: Path) -> list[Path]:
     if not checkpoint_dir.exists():
         return []
@@ -338,11 +449,24 @@ def build_preflight_cmd(args: argparse.Namespace, run_dir: Path) -> list[str]:
 
 def build_train_cmd(args: argparse.Namespace, config_path: Path) -> list[str]:
     if args.no_accelerate or args.num_gpus <= 1:
-        return [sys.executable, str(REPO_ROOT / "Lara/training/train_lara.py"), "--config_yaml", str(config_path)]
+        return [
+            sys.executable,
+            str(REPO_ROOT / "Lara/training/train_lara.py"),
+            "--config_yaml",
+            str(config_path),
+        ]
     cmd = ["accelerate", "launch"]
     if args.deepspeed_config:
         cmd.extend(["--config_file", str(args.deepspeed_config)])
-    cmd.extend(["--num_processes", str(args.num_gpus), str(REPO_ROOT / "Lara/training/train_lara.py"), "--config_yaml", str(config_path)])
+    cmd.extend(
+        [
+            "--num_processes",
+            str(args.num_gpus),
+            str(REPO_ROOT / "Lara/training/train_lara.py"),
+            "--config_yaml",
+            str(config_path),
+        ]
+    )
     return cmd
 
 
@@ -443,8 +567,16 @@ def main() -> int:
             run_dir=run_dir,
             run_id=run_id,
         )
+    path_problems = validate_required_paths(args, cfg)
+    if path_problems and not args.dry_run:
+        for problem in path_problems:
+            print(f"path validation error: {problem}", file=sys.stderr)
+        return 2
+    if args.stage != "eval":
+        print_stage_banner(args.stage, cfg, run_dir)
 
     manifest_path = run_dir / "manifest.json"
+    provenance_paths = _required_paths(args, cfg)
     manifest = {
         "created_at": _timestamp(),
         "stage": args.stage,
@@ -463,6 +595,12 @@ def main() -> int:
         "qwen_path": str(args.qwen_path) if args.qwen_path else None,
         "vjepa_path": str(args.vjepa_path) if args.vjepa_path else None,
         "local_files_only": args.local_files_only,
+        "path_validation": {"ok": not path_problems, "problems": path_problems},
+        "provenance": {
+            label: _path_provenance(path)
+            for label, path in provenance_paths.items()
+            if path is not None
+        },
         "max_checkpoints_to_keep": args.max_checkpoints_to_keep,
         "allow_delete_generated_artifacts": args.allow_delete_generated_artifacts,
         "stage_settings": {
@@ -473,6 +611,7 @@ def main() -> int:
             "top_k": _get_nested(cfg or {}, ("framework", "action_model", "lara_top_k")),
             "use_lara_moe": _get_nested(cfg or {}, ("framework", "action_model", "use_lara_moe")),
         },
+        "lara_flags": stage_flag_summary(cfg),
     }
     write_manifest(manifest_path, manifest)
 
