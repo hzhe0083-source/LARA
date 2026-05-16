@@ -67,6 +67,9 @@ def test_so101_batches_expose_future_actions():
     assert 'example["future_actions"] = example["action"]' in v3_dataset_src
     assert 'example["future_action_mask"]' in v3_dataset_src
     assert 'example["current_state"] = example["state"]' in v3_dataset_src
+    assert 'example["video"] = np.stack(video_views, axis=0)' in v3_dataset_src
+    assert "video_horizon: int | None = None" in v3_dataset_src
+    assert "video_horizon=cfg.framework.vj2_model.num_frames" in dataloader_src
     assert "class TaskTextDataset" in v3_dataset_src
     assert "def _load_task_map" in v3_dataset_src
     assert 'tasks_parquet = meta_dir / "tasks.parquet"' in v3_dataset_src
@@ -128,7 +131,11 @@ def test_benchmark_dataset_entrypoints_are_explicit():
     assert "Configured action key" in v3_dataset_src
     assert "Configured state key" in v3_dataset_src
     assert "action_horizon: int | None = None" in v3_dataset_src
+    assert "video_horizon: int | None = None" in v3_dataset_src
     assert 'data_cfg.get("action_horizon", 60)' in v3_dataset_src
+    assert 'data_cfg.get("video_horizon", 8)' in v3_dataset_src
+    assert "range(video_horizon)" in v3_dataset_src
+    assert "range(action_horizon+1)" not in v3_dataset_src
     assert "kevin-ys-zhang/libero100_lerobot" in downloader_src
     assert "lerobot/metaworld_mt50" in downloader_src
     assert 'DEFAULT_INCLUDE_PATTERNS = ["meta/**", "data/chunk-*/*.parquet"]' in downloader_src

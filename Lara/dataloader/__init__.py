@@ -88,6 +88,7 @@ def build_dataloader(
         vla_dataset = get_lerobot_v3_datasets(
             data_cfg=vla_dataset_cfg,
             action_horizon=cfg.framework.action_model.action_horizon,
+            video_horizon=cfg.framework.vj2_model.num_frames,
         )
 
         custom_collate_fn = partial(collate_fn, 
@@ -96,6 +97,8 @@ def build_dataloader(
             action_key=vla_dataset_cfg.action_key if vla_dataset_cfg.action_key else None,
             task_key=vla_dataset_cfg.task_key if vla_dataset_cfg.task_key else None,
             resize_size=vla_dataset_cfg.resize_size,
+            video_resolution_size=vla_dataset_cfg.get("video_resolution_size", vla_dataset_cfg.resize_size),
+            video_horizon=cfg.framework.vj2_model.num_frames,
             execution_horizon=cfg.framework.action_model.get("execution_horizon", None),
             prediction_horizon=cfg.framework.action_model.action_horizon)
 

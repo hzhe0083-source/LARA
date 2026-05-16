@@ -101,6 +101,12 @@ pip install flash-attn --no-build-isolation
 pip install -e .
 ```
 
+For LeRobot v3 benchmark dataloaders such as LIBERO100 and MetaWorld MT50, also install the benchmark extra:
+
+```bash
+pip install -e '.[benchmark]'
+```
+
 The code expects CUDA-capable PyTorch, Accelerate, DeepSpeed, Qwen/V-JEPA dependencies, and FlashAttention2.
 
 ## Checkpoints
@@ -303,6 +309,8 @@ python scripts/download_benchmark_data.py --dataset all --preflight-only
 ```
 
 A dataset is not considered ready until `meta/info.json`, `meta/stats.json`, task metadata (`meta/tasks.parquet` or `meta/tasks.jsonl`), and the expected LeRobot v3 chunk parquet count are present: 279 `data/chunk-*/*.parquet` files for LIBERO100 and 492 for MetaWorld MT50. The preflight intentionally counts chunk parquet files, not duplicate split files under `data/train-*`, and exits nonzero while any selected dataset is incomplete. For progress-only supervision during a long download, add `--allow-incomplete`. The current benchmark configs use the baseline VLA path only; MoE and two-level routing remain disabled by default.
+
+The LeRobot v3 collate path emits both current Qwen images and `example["video"]` for V-JEPA, using `framework.vj2_model.num_frames` frames instead of the 60-frame action horizon. If the local environment does not have the upstream `lerobot` package installed, real-batch LIBERO100 loading will fail before reading parquet files; install `.[benchmark]` first.
 
 To check whether the repository has enough evidence to claim the full LARA paper method is complete, run:
 

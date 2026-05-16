@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 
+import numpy as np
 import torch
 import torchvision.transforms as T
 from torch.utils.data import Dataset
@@ -61,6 +62,8 @@ def collate_fn(
     action_key="action",
     task_key="task",
     resize_size=224,
+    video_resolution_size=256,
+    video_horizon=None,
     execution_horizon=None,
     prediction_horizon=None,
 ):
@@ -84,9 +87,24 @@ def collate_fn(
         else:
             example["lang"] = "perform the task"
 
+        video_views = []
         for k in img_keys:
-            img_primary = to_pil(b[k][0]).resize((resize_size, resize_size))
+            image_sequence = b[k]
+            img_primary = to_pil(image_sequence[0]).convert("RGB").resize((resize_size, resize_size))
             example["image"].append(img_primary)
+            num_video_frames = int(video_horizon) if video_horizon is not None else int(image_sequence.shape[0])
+            if num_video_frames <= 0:
+                raise ValueError(f"video_horizon must be positive, got {num_video_frames}")
+            frames = []
+            safe_frames = min(num_video_frames, int(image_sequence.shape[0]))
+            for frame in image_sequence[:safe_frames]:
+                frame_pil = to_pil(frame).convert("RGB").resize((video_resolution_size, video_resolution_size))
+                frames.append(np.asarray(frame_pil))
+            while len(frames) < num_video_frames:
+                frames.append(frames[-1].copy())
+            video_views.append(np.stack(frames, axis=0))
+        if video_views:
+            example["video"] = np.stack(video_views, axis=0)
 
         for k in b.keys():
             if k == state_key:
@@ -155,12 +173,14 @@ class TaskTextDataset(Dataset):
 def get_lerobot_v3_datasets(
     data_cfg: dict,
     action_horizon: int | None = None,
+    video_horizon: int | None = None,
 ):
     from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 
     data_root_dir = data_cfg.data_root_dir
     data_mix = data_cfg.data_mix
     action_horizon = action_horizon if action_horizon is not None else data_cfg.get("action_horizon", 60)
+    video_horizon = video_horizon if video_horizon is not None else data_cfg.get("video_horizon", 8)
     state_key = data_cfg.get("state_key", "observation.state")
     action_key = data_cfg.get("action_key", "action")
     img_keys_override = data_cfg.get("img_keys", None)
@@ -202,7 +222,7 @@ def get_lerobot_v3_datasets(
             state_key: [t / ds_meta.fps for t in range(action_horizon + 1)],
         }
         for k in image_keys:
-            delta_timestamps[k] = [t / ds_meta.fps for t in range(action_horizon+1)]
+            delta_timestamps[k] = [t / ds_meta.fps for t in range(video_horizon)]
         dataset = LeRobotDataset(
             repo_id,
             delta_timestamps=delta_timestamps,
