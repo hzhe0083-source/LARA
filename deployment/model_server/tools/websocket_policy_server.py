@@ -200,6 +200,10 @@ class WebsocketPolicyServer:
                     },
                 }
             data = ouput_dict
+            if isinstance(data, dict) and resource_metrics is not None:
+                data = dict(data)
+                for metric_key, metric_value in resource_metrics.items():
+                    data.setdefault(metric_key, metric_value)
             return {
                 "status": "ok",
                 "ok": True,
@@ -361,6 +365,8 @@ class WebsocketPolicyServer:
 
     def _write_rollout_trace(self, session_id: str, session: dict, outcome: dict) -> bool:
         if self._rollout_trace_path is None:
+            return False
+        if outcome.get("discard_trace"):
             return False
         record = self._rollout_trace_record(session_id, session, outcome)
         has_trace = any(key.endswith("_sequence") for key in record)

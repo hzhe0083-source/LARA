@@ -316,6 +316,68 @@ A dataset is not considered ready until `meta/info.json`, `meta/stats.json`, tas
 
 The LeRobot v3 collate path emits both current Qwen images and `example["video"]` for V-JEPA, using `framework.vj2_model.num_frames` frames instead of the 60-frame action horizon. If the local environment does not have the upstream `lerobot` package installed, real-batch LIBERO100 loading will fail before reading parquet files; install `.[benchmark]` first.
 
+### Storage-Aware LIBERO100 Server Run
+
+For the 100GB Shandong server, use the storage-aware LIBERO100 entrypoints instead of launching the trainer directly. They reuse local model/cache paths, keep all new outputs under one run directory, write manifests, and never delete existing data or pretrained models. Check the server first:
+
+```bash
+python scripts/preflight_libero100_storage.py \
+  --data_root /data/libero100 \
+  --pretrained_root /data/pretrained \
+  --model_cache /data/pretrained \
+  --checkpoint_root /data/checkpoints \
+  --output_dir /data/runs/lara_libero100_preflight \
+  --max_new_disk_gb 25 \
+  --min_free_disk_gb 10 \
+  --local_files_only \
+  --require_model_paths
+```
+
+Run the staged offline training plan with two GPUs. The default LIBERO100 config uses 8 total experts, a 4-expert resident pool, and 2 active experts per chunk:
+
+```bash
+python scripts/run_lara_libero100_experiment.py \
+  --stage latent \
+  --config scripts/config/lara_libero100_baseline.yaml \
+  --data_root /data/libero100 \
+  --pretrained_root /data/pretrained \
+  --cache_dir /data/hf_cache \
+  --output_dir /data/runs/lara_libero100 \
+  --num_gpus 2 \
+  --per_device_batch_size 1 \
+  --gradient_accumulation_steps 8 \
+  --max_checkpoints_to_keep 2 \
+  --max_new_disk_gb 25 \
+  --min_free_disk_gb 10 \
+  --local_files_only
+```
+
+Repeat with `--stage experts`, `--stage router`, then `--stage joint` or `--stage utility_proxy`. Add `--resume_from /path/to/checkpoint` when continuing from a previous stage. The wrapper writes a derived YAML under `OUTPUT/config/`, a `manifest.json`, `preflight_report.json`, logs, and the trainer output under `OUTPUT/<run_id>/`. Checkpoint pruning is conservative: it only removes old `steps_*_pytorch_model.pt` files inside that run when `--allow_delete_generated_artifacts` is explicitly set.
+
+Training metrics are appended to `metrics.jsonl`, which can be plotted without reading TensorBoard:
+
+```bash
+python scripts/visualize_lara_routes.py \
+  --input /data/runs/lara_libero100/<run_id>/metrics.jsonl \
+  --output_dir /data/runs/lara_libero100/<run_id>/analysis
+```
+
+Closed-loop LIBERO100 success still requires headless simulation rollout. Start from a small smoke task before running the full suite:
+
+```bash
+python scripts/eval_libero100_headless.py \
+  --checkpoint /data/runs/lara_libero100/<run_id>/final_model \
+  --output_dir /data/runs/lara_libero100_eval_smoke \
+  --start_server \
+  --use_bf16 \
+  --task_suite_name libero_90 \
+  --task_ids 0 \
+  --num_trials_per_task 1 \
+  --sample_full_route_every 1
+```
+
+The evaluator sets `MUJOCO_GL=egl`, writes compact `rollout_records.jsonl` and `eval_summary.json`, and stores full route traces only for sampled episodes so route evidence does not fill the disk.
+
 To check whether the repository has enough evidence to claim the full LARA paper method is complete, run:
 
 ```bash

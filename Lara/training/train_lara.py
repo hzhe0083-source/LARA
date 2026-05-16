@@ -287,6 +287,9 @@ class VLATrainer(TrainerUtils):
                 #wandb.log(metrics, step=self.completed_steps)
                 # debug output
                 logger.info(f"Step {self.completed_steps}, Loss: {metrics})")
+                metrics_record = {"step": self.completed_steps, **scalarize_metrics(metrics)}
+                with open(os.path.join(self.config.output_dir, "metrics.jsonl"), "a", encoding="utf-8") as f:
+                    f.write(json.dumps(metrics_record, sort_keys=True) + "\n")
 
     def _create_data_iterators(self):
         """create data iterators"""

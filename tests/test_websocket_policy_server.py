@@ -203,6 +203,24 @@ class WebsocketPolicyServerTest(unittest.TestCase):
             self.assertEqual(record["vram_mb"], 456.0)
             self.assertEqual(len(record["latency_ms_sequence"]), 1)
 
+    def test_infer_response_includes_resource_metrics_when_trace_enabled(self):
+        policy = _PoolEchoPolicy()
+        with tempfile.TemporaryDirectory() as tmp:
+            trace_path = Path(tmp) / "rollouts.jsonl"
+            server = WebsocketPolicyServer(policy=policy, rollout_trace_path=str(trace_path))
+
+            response = server._route_message(
+                {
+                    "type": "infer",
+                    "session_id": "episode-a",
+                    "payload": {"batch_images": [], "instructions": []},
+                }
+            )
+
+            self.assertTrue(response["ok"])
+            self.assertIn("latency_ms", response["data"])
+            self.assertGreaterEqual(response["data"]["latency_ms"], 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()
