@@ -106,6 +106,16 @@ class AuditLaraPaperReadinessTest(unittest.TestCase):
         self.assertFalse(default_check["ok"])
         self.assertEqual(default_check["unsafe_defaults"], {"use_lara_moe": True})
 
+    def test_staged_lara_config_can_enable_research_paths(self):
+        report = audit_lara_paper_readiness(
+            base_args(config=str(ROOT / "scripts/config/lara_so101_utility_pool.yaml"))
+        )
+
+        default_check = next(check for check in report["checks"] if check["name"] == "baseline_defaults_safe")
+        self.assertTrue(default_check["ok"])
+        self.assertFalse(default_check["baseline_config"])
+        self.assertEqual(default_check["unsafe_defaults"], {})
+
     def test_empty_artifact_files_do_not_pass_readiness(self):
         with tempfile.TemporaryDirectory() as tmp:
             empty_path = Path(tmp) / "empty.json"

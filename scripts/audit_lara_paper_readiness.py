@@ -118,6 +118,10 @@ def _config_checks(cfg: Any, config_path: Path) -> list[dict[str, Any]]:
     dataset_cfg = _value(cfg, "datasets.vla_data", {})
     trainer_cfg = _value(cfg, "trainer", {})
     pretrained = str(_value(trainer_cfg, "pretrained_checkpoint", ""))
+    run_id = str(_value(cfg, "run_id", config_path.stem))
+    is_baseline_config = config_path.stem in {"lara_so101_ft", "lara_so101_baseline"} or run_id.endswith(
+        "_vla_baseline"
+    )
 
     baseline_default_keys = {
         "use_latent_action_head": False,
@@ -183,10 +187,15 @@ def _config_checks(cfg: Any, config_path: Path) -> list[dict[str, Any]]:
         ),
         _check(
             "baseline_defaults_safe",
-            not unsafe_defaults and not nonzero_default_weights,
-            detail="Latent/MoE/utility research paths must stay default-off for the baseline config.",
-            unsafe_defaults=unsafe_defaults,
-            nonzero_default_weights=nonzero_default_weights,
+            (not is_baseline_config) or (not unsafe_defaults and not nonzero_default_weights),
+            detail=(
+                "Non-baseline configs may enable staged LARA components."
+                if not is_baseline_config
+                else "Latent/MoE/utility research paths must stay default-off for the baseline config."
+            ),
+            baseline_config=is_baseline_config,
+            unsafe_defaults=unsafe_defaults if is_baseline_config else {},
+            nonzero_default_weights=nonzero_default_weights if is_baseline_config else {},
         ),
         _check(
             "so101_horizon_contract",
