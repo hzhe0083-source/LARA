@@ -22,8 +22,76 @@ framework:
     state_dim: 8
     future_action_window_size: 6
     action_horizon: 7 # need merge with future_action_window_size 
+    execution_horizon: 7
+    latent_action_horizon: 7
+    router_horizon: 7
+    utility_horizon: 7
+    long_prediction_aux_horizon: 7
+    execution_loss_weight: 1.0
+    prediction_loss_weight: 0.5
     past_action_window_size: 0
     repeated_diffusion_steps: 8
+    use_latent_action_tokens: true
+    use_latent_action_head: true
+    lara_num_latent_tokens: 4
+    lara_codebook_size: 128
+    lara_latent_hidden_dim: 1024
+    lara_latent_reconstruction_loss_weight: 1.0
+    lara_commitment_weight: 0.25
+    lara_vq_loss_weight: 1.0
+    lara_prior_loss_weight: 1.0
+    lara_code_usage_loss_weight: 0.0
+    lara_code_usage_temperature: 1.0
+    lara_use_transition_head: true
+    lara_transition_hidden_dim: 1024
+    lara_transition_loss_weight: 1.0
+    lara_execution_transition_loss_weight: 1.0
+    lara_prediction_transition_loss_weight: 1.0
+    use_lara_moe: true
+    lara_num_experts: 8
+    lara_episode_pool_size: 4
+    lara_episode_pool_size_min:
+    lara_top_k: 2
+    lara_expert_hidden_dim: 1024
+    lara_router_hidden_dim: 1024
+    lara_router_loss_weight: 1.0
+    lara_pool_loss_weight: 1.0
+    lara_pool_target_avg_weight: 1.0
+    lara_pool_target_max_weight: 1.0
+    lara_pool_target_utility_weight: 0.0
+    lara_pool_coverage_loss_weight: 0.25
+    lara_pool_critical_threshold: 0.2
+    lara_utility_loss_weight: 1.0
+    lara_utility_rank_loss_weight: 0.25
+    lara_utility_head_loss_weight: 1.0
+    lara_use_action_loss_utility: true
+    lara_use_action_loss_utility_components: true
+    lara_action_loss_utility_temperature: 1.0
+    lara_action_loss_utility_normalize: true
+    lara_use_state_utility: true
+    lara_use_state_utility_components: true
+    lara_state_utility_temperature: 1.0
+    lara_state_utility_normalize: true
+    lara_route_retention_fractions: [0.25, 0.5, 1.0]
+    lara_use_utility_head: true
+    lara_utility_hidden_dim: 1024
+    lara_utility_progress_weight: 1.0
+    lara_utility_uncertainty_weight: 1.0
+    lara_utility_cost_weight: 1.0
+    lara_balance_loss_weight: 0.0
+    lara_stickiness_loss_weight: 0.0
+    lara_diversity_loss_weight: 0.0
+    lara_entropy_loss_weight: 0.0
+    lara_inference_stickiness_weight: 0.0
+    lara_use_direct_action_experts: true
+    lara_use_direct_action_output: true
+    lara_direct_expert_hidden_dim: 1024
+    lara_direct_expert_loss_weight: 1.0
+    lara_posterior_temperature: 1.0
+    lara_posterior_uniform_floor: 0.0
+    lara_posterior_top_r:
+    lara_use_expert_loss_posterior: true
+    lara_expert_residual_scale: 0.1
     noise_beta_alpha: 1.5
     noise_beta_beta: 1.0
     noise_s: 0.999

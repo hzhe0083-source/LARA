@@ -145,6 +145,29 @@ def check_required_paths(paths: dict[str, Path]) -> dict[str, str]:
 
 def smoke_config_summary(cfg: Any) -> dict[str, Any]:
     action_cfg = cfg.framework.action_model
+    required_lara_flags = (
+        "use_latent_action_head",
+        "lara_use_transition_head",
+        "use_lara_moe",
+        "lara_use_direct_action_experts",
+        "lara_use_direct_action_output",
+        "lara_use_action_loss_utility",
+        "lara_use_action_loss_utility_components",
+        "lara_use_state_utility",
+        "lara_use_state_utility_components",
+        "lara_use_utility_head",
+    )
+    required_positive_weights = (
+        "lara_transition_loss_weight",
+        "lara_pool_coverage_loss_weight",
+        "lara_utility_loss_weight",
+        "lara_utility_rank_loss_weight",
+        "lara_utility_head_loss_weight",
+    )
+    disabled_flags = [key for key in required_lara_flags if not bool(action_cfg.get(key, False))]
+    nonpositive_weights = [
+        key for key in required_positive_weights if float(action_cfg.get(key, 0.0) or 0.0) <= 0.0
+    ]
     return {
         "framework": cfg.framework.name,
         "action_horizon": int(action_cfg.action_horizon),
@@ -170,7 +193,9 @@ def smoke_config_summary(cfg: Any) -> dict[str, Any]:
         "counterfactual_utility_sample_labeled_only": bool(
             cfg.datasets.vla_data.get("counterfactual_utility_sample_labeled_only", False)
         ),
-        "use_lara_moe_default_safe": not bool(action_cfg.use_lara_moe),
+        "lara_defaults_enabled": not disabled_flags and not nonpositive_weights,
+        "lara_default_disabled_flags": disabled_flags,
+        "lara_default_nonpositive_weights": nonpositive_weights,
         "attn_implementation": cfg.framework.qwenvl.get("attn_implementation", None),
         "reload_modules": cfg.trainer.get("reload_modules", None),
     }
@@ -480,13 +505,13 @@ def main() -> int:
     parser.add_argument(
         "--use-latent-action-head",
         action="store_true",
-        help="Temporarily enable the default-off Stage-1 latent action head scaffold.",
+        help="Ensure the Stage-1 latent action head path is enabled for the smoke check.",
     )
     parser.add_argument(
         "--use-transition-head",
         action="store_true",
         help=(
-            "Temporarily enable the default-off execution/prediction boundary-state "
+            "Ensure the execution/prediction boundary-state "
             "transition head scaffold. If the configured loss weight is zero, smoke "
             "sets it to 1.0 unless --transition-loss-weight is provided."
         ),
@@ -499,7 +524,7 @@ def main() -> int:
     parser.add_argument(
         "--use-lara-moe",
         action="store_true",
-        help="Temporarily enable the default-off Stage-2 MoE/router scaffold.",
+        help="Ensure the Stage-2 MoE/router path is enabled for the smoke check.",
     )
     parser.add_argument(
         "--use-direct-action-experts",

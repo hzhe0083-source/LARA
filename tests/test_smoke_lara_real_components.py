@@ -46,17 +46,22 @@ def tiny_smoke_config(tmpdir: Path):
                     "execution_horizon": 1,
                     "action_dim": 2,
                     "state_dim": 4,
-                    "use_latent_action_head": False,
-                    "use_lara_moe": False,
+                    "use_latent_action_head": True,
+                    "use_lara_moe": True,
                     "lara_num_experts": 3,
-                    "lara_use_transition_head": False,
-                    "lara_transition_loss_weight": 0.0,
-                    "lara_use_direct_action_experts": False,
-                    "lara_use_direct_action_output": False,
-                    "lara_use_action_loss_utility_components": False,
-                    "lara_utility_loss_weight": 0.0,
-                    "lara_use_utility_head": False,
-                    "lara_utility_head_loss_weight": 0.0,
+                    "lara_use_transition_head": True,
+                    "lara_transition_loss_weight": 1.0,
+                    "lara_use_direct_action_experts": True,
+                    "lara_use_direct_action_output": True,
+                    "lara_use_action_loss_utility": True,
+                    "lara_use_action_loss_utility_components": True,
+                    "lara_use_state_utility": True,
+                    "lara_use_state_utility_components": True,
+                    "lara_pool_coverage_loss_weight": 0.25,
+                    "lara_utility_loss_weight": 1.0,
+                    "lara_utility_rank_loss_weight": 0.25,
+                    "lara_use_utility_head": True,
+                    "lara_utility_head_loss_weight": 1.0,
                 },
             },
             "datasets": {
@@ -85,18 +90,20 @@ class SmokeLaraRealComponentsTest(unittest.TestCase):
 
             self.assertEqual(status["status"], "ok")
             self.assertEqual(summary["framework"], "Lara")
-            self.assertTrue(summary["use_lara_moe_default_safe"])
+            self.assertTrue(summary["lara_defaults_enabled"])
+            self.assertEqual(summary["lara_default_disabled_flags"], [])
+            self.assertEqual(summary["lara_default_nonpositive_weights"], [])
             self.assertEqual(summary["action_horizon"], 3)
             self.assertEqual(summary["latent_action_horizon"], 1)
             self.assertEqual(summary["router_horizon"], 1)
             self.assertEqual(summary["utility_horizon"], 1)
             self.assertEqual(summary["num_world_model_views"], 2)
-            self.assertFalse(summary["lara_use_direct_action_experts"])
-            self.assertFalse(summary["lara_use_direct_action_output"])
-            self.assertFalse(summary["lara_use_action_loss_utility_components"])
-            self.assertFalse(summary["lara_use_utility_head"])
-            self.assertEqual(summary["lara_utility_loss_weight"], 0.0)
-            self.assertFalse(summary["lara_use_transition_head"])
+            self.assertTrue(summary["lara_use_direct_action_experts"])
+            self.assertTrue(summary["lara_use_direct_action_output"])
+            self.assertTrue(summary["lara_use_action_loss_utility_components"])
+            self.assertTrue(summary["lara_use_utility_head"])
+            self.assertEqual(summary["lara_utility_loss_weight"], 1.0)
+            self.assertTrue(summary["lara_use_transition_head"])
             self.assertFalse(summary["include_episode_start"])
             self.assertIsNone(summary["counterfactual_utility_labels_path"])
             self.assertFalse(summary["counterfactual_utility_sample_labeled_only"])
@@ -167,7 +174,7 @@ class SmokeLaraRealComponentsTest(unittest.TestCase):
             self.assertTrue(summary["use_lara_moe"])
             self.assertTrue(summary["lara_use_direct_action_experts"])
             self.assertTrue(summary["lara_use_direct_action_output"])
-            self.assertFalse(summary["use_lara_moe_default_safe"])
+            self.assertTrue(summary["lara_defaults_enabled"])
 
     def test_transition_loss_weight_override_is_preserved(self):
         with tempfile.TemporaryDirectory() as tmp:

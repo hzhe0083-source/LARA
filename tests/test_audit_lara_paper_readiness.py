@@ -39,7 +39,7 @@ class AuditLaraPaperReadinessTest(unittest.TestCase):
         self.assertIn("full_so101_training_artifact", report["missing"])
         self.assertIn("closed_loop_robot_eval_artifact", report["missing"])
         self.assertTrue(
-            next(check for check in report["checks"] if check["name"] == "baseline_defaults_safe")["ok"]
+            next(check for check in report["checks"] if check["name"] == "lara_defaults_enabled")["ok"]
         )
         self.assertTrue(next(check for check in report["checks"] if check["name"] == "so101_horizon_contract")["ok"])
 
@@ -97,27 +97,27 @@ class AuditLaraPaperReadinessTest(unittest.TestCase):
         self.assertFalse(protocol_check["ok"])
         self.assertEqual(protocol_check["evidence_audit"]["missing_required_fractions"], ["0.5"])
 
-    def test_unsafe_config_default_is_reported(self):
+    def test_disabled_lara_default_is_reported(self):
         with tempfile.TemporaryDirectory() as tmp:
-            config_path = Path(tmp) / "unsafe.yaml"
+            config_path = Path(tmp) / "disabled.yaml"
             config_text = (ROOT / "scripts/config/lara_so101_ft.yaml").read_text(encoding="utf-8")
-            config_path.write_text(config_text.replace("use_lara_moe: false", "use_lara_moe: true"), encoding="utf-8")
+            config_path.write_text(config_text.replace("use_lara_moe: true", "use_lara_moe: false"), encoding="utf-8")
 
             report = audit_lara_paper_readiness(base_args(config=str(config_path)))
 
-        default_check = next(check for check in report["checks"] if check["name"] == "baseline_defaults_safe")
+        default_check = next(check for check in report["checks"] if check["name"] == "lara_defaults_enabled")
         self.assertFalse(default_check["ok"])
-        self.assertEqual(default_check["unsafe_defaults"], {"use_lara_moe": True})
+        self.assertEqual(default_check["disabled_flags"], {"use_lara_moe": False})
 
-    def test_staged_lara_config_can_enable_research_paths(self):
+    def test_staged_lara_config_keeps_lara_defaults_enabled(self):
         report = audit_lara_paper_readiness(
             base_args(config=str(ROOT / "scripts/config/lara_so101_utility_pool.yaml"))
         )
 
-        default_check = next(check for check in report["checks"] if check["name"] == "baseline_defaults_safe")
+        default_check = next(check for check in report["checks"] if check["name"] == "lara_defaults_enabled")
         self.assertTrue(default_check["ok"])
-        self.assertFalse(default_check["baseline_config"])
-        self.assertEqual(default_check["unsafe_defaults"], {})
+        self.assertEqual(default_check["disabled_flags"], {})
+        self.assertEqual(default_check["nonpositive_weights"], {})
 
     def test_empty_artifact_files_do_not_pass_readiness(self):
         with tempfile.TemporaryDirectory() as tmp:

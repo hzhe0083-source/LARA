@@ -152,11 +152,11 @@ def test_benchmark_dataset_entrypoints_are_explicit():
     assert "data_mix: libero100" in libero_cfg
     assert "state_dim: 9" in libero_cfg
     assert "action_dim: 7" in libero_cfg
-    assert "use_lara_moe: false" in libero_cfg
+    assert "use_lara_moe: true" in libero_cfg
     assert "data_mix: metaworld_mt50" in metaworld_cfg
     assert "state_dim: 4" in metaworld_cfg
     assert "action_dim: 4" in metaworld_cfg
-    assert "use_lara_moe: false" in metaworld_cfg
+    assert "use_lara_moe: true" in metaworld_cfg
     assert "scripts/download_benchmark_data.py --dataset all --preflight-only" in readme
     assert "exits nonzero while any selected dataset is incomplete" in readme
     assert "--allow-incomplete" in readme
@@ -225,11 +225,11 @@ def test_optional_latent_action_head_stage_one_exists():
     assert "utility_horizon: 10" in config_src
     assert "self.transition_head" in adapter_src
     assert "transition_state_loss" in adapter_src
-    assert "use_latent_action_head: false" in config_src
+    assert "use_latent_action_head: true" in config_src
     assert "use_latent_action_head: true" in latent_cfg
     assert "lara_latent_reconstruction_loss_weight: 1.0" in latent_cfg
-    assert "lara_use_transition_head: false" in config_src
-    assert "lara_transition_loss_weight: 0.0" in config_src
+    assert "lara_use_transition_head: true" in config_src
+    assert "lara_transition_loss_weight: 1.0" in config_src
     assert "lara_code_usage_loss_weight: 0.0" in config_src
     assert "lara_code_usage_temperature: 1.0" in config_src
 
@@ -310,7 +310,7 @@ def test_optional_moe_router_stage_two_exists():
     assert "counterfactual_utility_matrix_from_records" in utility_cli_src
     assert "--min-candidates-per-context" in utility_cli_src
     assert "def audit_lara_paper_readiness" in readiness_cli_src
-    assert "baseline_defaults_safe" in readiness_cli_src
+    assert "lara_defaults_enabled" in readiness_cli_src
     assert "so101_horizon_contract" in readiness_cli_src
     assert "counterfactual_utility_sidecar" in readiness_cli_src
     assert "closed_loop_protocol_records" in readiness_cli_src
@@ -390,7 +390,8 @@ def test_optional_moe_router_stage_two_exists():
     assert "moe_direct_expert_loss" in adapter_src
     assert "moe_direct_routed_action_loss" in adapter_src
     assert "def _trajectory_ids_to_tensor" in adapter_src
-    assert "aggregate_episode_responsibilities(posterior_probs, trajectory_tensor)" in adapter_src
+    assert "aggregate_episode_responsibilities(" in adapter_src
+    assert "trajectory_tensor" in adapter_src
     assert "def select_resident_pool" in moe_src
     assert "def select_resident_pool" in adapter_src
     assert "pool_mask=pool_mask" in adapter_src
@@ -453,32 +454,32 @@ def test_optional_moe_router_stage_two_exists():
     assert "moe_entropy_loss" in adapter_src
     assert "moe_dead_expert_ratio" in adapter_src
     assert "moe_route_regret" in adapter_src
-    assert "use_lara_moe: false" in config_src
+    assert "use_lara_moe: true" in config_src
     assert "lara_episode_pool_size: 4" in config_src
     assert "lara_episode_pool_size_min:" in config_src
     assert "lara_pool_target_avg_weight: 1.0" in config_src
     assert "lara_pool_target_max_weight: 1.0" in config_src
     assert "lara_pool_target_utility_weight: 0.0" in config_src
-    assert "lara_pool_coverage_loss_weight: 0.0" in config_src
+    assert "lara_pool_coverage_loss_weight: 0.25" in config_src
     assert "lara_pool_critical_threshold: 0.2" in config_src
-    assert "lara_utility_loss_weight: 0.0" in config_src
-    assert "lara_utility_rank_loss_weight: 0.0" in config_src
-    assert "lara_utility_head_loss_weight: 0.0" in config_src
-    assert "lara_use_action_loss_utility: false" in config_src
-    assert "lara_use_action_loss_utility_components: false" in config_src
-    assert "lara_use_state_utility: false" in config_src
-    assert "lara_use_state_utility_components: false" in config_src
+    assert "lara_utility_loss_weight: 1.0" in config_src
+    assert "lara_utility_rank_loss_weight: 0.25" in config_src
+    assert "lara_utility_head_loss_weight: 1.0" in config_src
+    assert "lara_use_action_loss_utility: true" in config_src
+    assert "lara_use_action_loss_utility_components: true" in config_src
+    assert "lara_use_state_utility: true" in config_src
+    assert "lara_use_state_utility_components: true" in config_src
     assert "lara_state_utility_temperature: 1.0" in config_src
     assert "lara_state_utility_normalize: true" in config_src
     assert "lara_route_retention_fractions: [0.25, 0.5, 1.0]" in config_src
-    assert "lara_use_utility_head: false" in config_src
+    assert "lara_use_utility_head: true" in config_src
     assert "lara_balance_loss_weight: 0.0" in config_src
     assert "lara_stickiness_loss_weight: 0.0" in config_src
     assert "lara_diversity_loss_weight: 0.0" in config_src
     assert "lara_entropy_loss_weight: 0.0" in config_src
     assert "lara_inference_stickiness_weight: 0.0" in config_src
-    assert "lara_use_direct_action_experts: false" in config_src
-    assert "lara_use_direct_action_output: false" in config_src
+    assert "lara_use_direct_action_experts: true" in config_src
+    assert "lara_use_direct_action_output: true" in config_src
     assert "lara_direct_expert_loss_weight: 1.0" in config_src
     assert "lara_posterior_temperature: 1.0" in config_src
     assert "lara_posterior_uniform_floor: 0.0" in config_src
@@ -495,7 +496,7 @@ def test_optional_moe_router_stage_two_exists():
     assert "lara_utility_loss_weight: 1.0" in utility_cfg
     assert "lara_utility_rank_loss_weight: 0.25" in utility_cfg
     assert "include_episode_start: true" in utility_cfg
-    assert "Stage-2 MoE/router scaffold" in gap
+    assert "Stage-2 MoE/router path" in gap
     assert "expert-diversity/entropy stabilizers" in gap
     assert "route-quality aggregation metrics" in gap
     assert "Action-head route-quality metrics are emitted" in gap
@@ -514,10 +515,10 @@ def test_paper_gap_is_explicit():
     readme = read("README.md")
     gap = read("document/IMPLEMENTATION_GAP.md")
     baseline_cfg = read("scripts/config/lara_so101_baseline.yaml")
-    assert "implemented the SO101 VLA/action-baseline path and several default-off scaffolds" in readme
+    assert "instantiates the latent-action, transition, MoE/router, direct-expert, and utility-proxy paths by default" in readme
     assert "paper's latent-action MoE and two-level routing method should still be treated as unfinished" in readme
-    assert "not the final latent-action MoE/router implementation" in readme
-    assert "Experimental scaffolding exists but is not complete or validated" in readme
+    assert "not yet a validated final latent-action MoE/router implementation" in readme
+    assert "Experimental components are enabled by default" in readme
     assert "padded future action steps do not supervise" in readme
     assert "scripts/summarize_lara_protocol.py" in readme
     assert "Missing Paper Components" in gap
@@ -537,4 +538,4 @@ def test_paper_gap_is_explicit():
     assert "scripts/config/lara_so101_latent_vq.yaml" in readme
     assert "scripts/config/lara_so101_moe_direct.yaml" in readme
     assert "scripts/config/lara_so101_utility_pool.yaml" in readme
-    assert "use_lara_moe: false" in baseline_cfg
+    assert "use_lara_moe: true" in baseline_cfg

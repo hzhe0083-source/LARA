@@ -519,13 +519,15 @@ utility calibration, not as the next round's real closed-loop input.
 
 \subsection*{Current Repository Implementation Status}
 
-The current repository has completed only the SO101 VLA-JEPA action-baseline
-path. It reuses the pretrained VLA representation, extracts latent and embodied
-action tokens from the Qwen/V-JEPA token stream, and adapts those tokens to a
-flow-matching action head that predicts continuous follower-arm action chunks.
+The current repository has completed the SO101 VLA-JEPA action path with LARA
+components enabled by default. It reuses the pretrained VLA representation,
+extracts latent and embodied action tokens from the Qwen/V-JEPA token stream,
+and routes those tokens through the latent-action head, transition head,
+MoE/router, direct action experts, and utility-proxy losses before predicting
+continuous follower-arm action chunks.
 The SO101 dataloader and action adapter also propagate future-action validity
 masks so trajectory-end padding does not supervise the action loss or any
-default-off latent, transition, utility-proxy, or direct-expert losses. The
+latent, transition, utility-proxy, or direct-expert losses. The
 training code now separates prediction-horizon and execution-horizon evaluation
 metrics on an independent validation dataloader when
 \texttt{datasets.vla\_eval\_data} is configured, and it records the
@@ -539,7 +541,7 @@ action head with an explicit action-chunk decoder and reconstruction loss,
 residual or direct action experts, posterior-responsibility signals, an
 episode-level resident-pool router, a chunk-level top-$k$ router inside that
 pool, route diagnostics, and counterfactual-utility sidecar plumbing. These
-paths remain disabled by default and should be treated as research hooks rather
+paths are now default-on and should be treated as active research code rather
 than completed paper evidence. In particular, the current repository does not
 yet provide a trained and validated MoE action head, a validated two-level
 routing policy, real counterfactual utility labels, or closed-loop SO101
@@ -549,10 +551,10 @@ matched compute.
 The implementation exposes four explicit SO101 stage configurations:
 \texttt{lara\_so101\_baseline.yaml}, \texttt{lara\_so101\_latent\_vq.yaml},
 \texttt{lara\_so101\_moe\_direct.yaml}, and
-\texttt{lara\_so101\_utility\_pool.yaml}. The first is the main VLA action
-baseline. The latter three enable default-off latent-action, direct-MoE, and
-utility/pool scaffolds for controlled experiments, but they do not by
-themselves constitute completed LARA evidence.
+\texttt{lara\_so101\_utility\_pool.yaml}. The historical baseline filename is
+kept for compatibility, but these configs now enable the latent-action,
+direct-MoE, and utility/pool paths by default. They do not by themselves
+constitute completed LARA evidence.
 
 Protocol tooling can summarize rollout JSON/JSONL records into matched-budget
 rows, subset-retention curves, route-sequence diagnostics, and compute-success

@@ -58,20 +58,20 @@ class ActionHeadAdapter(nn.Module):
                 raise ValueError(f"{horizon_name} must be in [1, action_horizon]")
         self.use_latent_action_tokens = action_cfg.get("use_latent_action_tokens", True)
         self.max_latent_action_tokens = action_cfg.get("max_latent_action_tokens", None)
-        self.use_latent_action_head = action_cfg.get("use_latent_action_head", False)
+        self.use_latent_action_head = action_cfg.get("use_latent_action_head", True)
         self.latent_reconstruction_loss_weight = action_cfg.get("lara_latent_reconstruction_loss_weight", 1.0)
-        self.use_transition_head = action_cfg.get("lara_use_transition_head", False)
-        self.transition_loss_weight = action_cfg.get("lara_transition_loss_weight", 0.0)
+        self.use_transition_head = action_cfg.get("lara_use_transition_head", True)
+        self.transition_loss_weight = action_cfg.get("lara_transition_loss_weight", 1.0)
         self.execution_transition_loss_weight = action_cfg.get("lara_execution_transition_loss_weight", 1.0)
         self.prediction_transition_loss_weight = action_cfg.get("lara_prediction_transition_loss_weight", 1.0)
-        self.use_lara_moe = action_cfg.get("use_lara_moe", False)
+        self.use_lara_moe = action_cfg.get("use_lara_moe", True)
         self.use_expert_loss_posterior = action_cfg.get("lara_use_expert_loss_posterior", True)
-        self.use_action_loss_utility = action_cfg.get("lara_use_action_loss_utility", False)
-        self.use_action_loss_utility_components = action_cfg.get("lara_use_action_loss_utility_components", False)
+        self.use_action_loss_utility = action_cfg.get("lara_use_action_loss_utility", True)
+        self.use_action_loss_utility_components = action_cfg.get("lara_use_action_loss_utility_components", True)
         self.action_loss_utility_temperature = action_cfg.get("lara_action_loss_utility_temperature", 1.0)
         self.action_loss_utility_normalize = action_cfg.get("lara_action_loss_utility_normalize", True)
-        self.use_state_utility = action_cfg.get("lara_use_state_utility", False)
-        self.use_state_utility_components = action_cfg.get("lara_use_state_utility_components", False)
+        self.use_state_utility = action_cfg.get("lara_use_state_utility", True)
+        self.use_state_utility_components = action_cfg.get("lara_use_state_utility_components", True)
         self.state_utility_temperature = action_cfg.get(
             "lara_state_utility_temperature",
             self.action_loss_utility_temperature,
@@ -85,8 +85,11 @@ class ActionHeadAdapter(nn.Module):
         self.route_retention_fractions = (
             list(route_retention_fractions) if route_retention_fractions is not None else None
         )
-        self.use_direct_action_experts = action_cfg.get("lara_use_direct_action_experts", False)
-        self.use_direct_action_output = action_cfg.get("lara_use_direct_action_output", False)
+        self.use_direct_action_experts = action_cfg.get("lara_use_direct_action_experts", self.use_lara_moe)
+        self.use_direct_action_output = action_cfg.get(
+            "lara_use_direct_action_output",
+            self.use_lara_moe and self.use_direct_action_experts,
+        )
         self.direct_expert_loss_weight = action_cfg.get("lara_direct_expert_loss_weight", 1.0)
         if self.use_direct_action_output and (not self.use_lara_moe or not self.use_direct_action_experts):
             raise ValueError(
@@ -140,15 +143,15 @@ class ActionHeadAdapter(nn.Module):
                 router_hidden_size=action_cfg.get("lara_router_hidden_dim", action_cfg.get("hidden_size", 1024)),
                 router_loss_weight=action_cfg.get("lara_router_loss_weight", 1.0),
                 pool_loss_weight=action_cfg.get("lara_pool_loss_weight", 1.0),
-                pool_coverage_loss_weight=action_cfg.get("lara_pool_coverage_loss_weight", 0.0),
-                utility_loss_weight=action_cfg.get("lara_utility_loss_weight", 0.0),
-                utility_rank_loss_weight=action_cfg.get("lara_utility_rank_loss_weight", 0.0),
-                utility_head_loss_weight=action_cfg.get("lara_utility_head_loss_weight", 0.0),
+                pool_coverage_loss_weight=action_cfg.get("lara_pool_coverage_loss_weight", 0.25),
+                utility_loss_weight=action_cfg.get("lara_utility_loss_weight", 1.0),
+                utility_rank_loss_weight=action_cfg.get("lara_utility_rank_loss_weight", 0.25),
+                utility_head_loss_weight=action_cfg.get("lara_utility_head_loss_weight", 1.0),
                 balance_loss_weight=action_cfg.get("lara_balance_loss_weight", 0.0),
                 stickiness_loss_weight=action_cfg.get("lara_stickiness_loss_weight", 0.0),
                 diversity_loss_weight=action_cfg.get("lara_diversity_loss_weight", 0.0),
                 entropy_loss_weight=action_cfg.get("lara_entropy_loss_weight", 0.0),
-                use_utility_head=action_cfg.get("lara_use_utility_head", False),
+                use_utility_head=action_cfg.get("lara_use_utility_head", True),
                 utility_hidden_size=action_cfg.get("lara_utility_hidden_dim", action_cfg.get("hidden_size", 1024)),
                 utility_progress_weight=action_cfg.get("lara_utility_progress_weight", 1.0),
                 utility_uncertainty_weight=action_cfg.get("lara_utility_uncertainty_weight", 1.0),
@@ -992,7 +995,7 @@ class ActionHeadAdapter(nn.Module):
             posterior_probs,
             trajectory_tensor,
             avg_weight=self.config.framework.action_model.get("lara_pool_target_avg_weight", 1.0),
-            max_weight=self.config.framework.action_model.get("lara_pool_target_max_weight", 0.0),
+            max_weight=self.config.framework.action_model.get("lara_pool_target_max_weight", 1.0),
             utility_scores=utility_scores,
             utility_weight=self.config.framework.action_model.get("lara_pool_target_utility_weight", 0.0),
             utility_candidate_mask=utility_candidate_mask,

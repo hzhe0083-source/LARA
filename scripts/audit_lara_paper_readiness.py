@@ -118,42 +118,45 @@ def _config_checks(cfg: Any, config_path: Path) -> list[dict[str, Any]]:
     dataset_cfg = _value(cfg, "datasets.vla_data", {})
     trainer_cfg = _value(cfg, "trainer", {})
     pretrained = str(_value(trainer_cfg, "pretrained_checkpoint", ""))
-    run_id = str(_value(cfg, "run_id", config_path.stem))
-    is_baseline_config = config_path.stem in {"lara_so101_ft", "lara_so101_baseline"} or run_id.endswith(
-        "_vla_baseline"
+    required_lara_flags = (
+        "use_latent_action_head",
+        "lara_use_transition_head",
+        "use_lara_moe",
+        "lara_use_action_loss_utility",
+        "lara_use_action_loss_utility_components",
+        "lara_use_state_utility",
+        "lara_use_state_utility_components",
+        "lara_use_utility_head",
+        "lara_use_direct_action_experts",
+        "lara_use_direct_action_output",
     )
-
-    baseline_default_keys = {
-        "use_latent_action_head": False,
-        "lara_use_transition_head": False,
-        "use_lara_moe": False,
-        "lara_use_action_loss_utility": False,
-        "lara_use_action_loss_utility_components": False,
-        "lara_use_state_utility": False,
-        "lara_use_state_utility_components": False,
-        "lara_use_utility_head": False,
-        "lara_use_direct_action_experts": False,
-        "lara_use_direct_action_output": False,
-    }
-    unsafe_defaults = {
+    disabled_lara_flags = {
         key: _value(action_cfg, key)
-        for key, expected in baseline_default_keys.items()
-        if _value(action_cfg, key) != expected
+        for key in required_lara_flags
+        if _value(action_cfg, key) is not True
     }
-    zero_weight_keys = (
+    required_positive_weight_keys = (
+        "lara_transition_loss_weight",
+        "lara_pool_coverage_loss_weight",
         "lara_utility_loss_weight",
         "lara_utility_rank_loss_weight",
         "lara_utility_head_loss_weight",
-        "lara_transition_loss_weight",
+    )
+    nonpositive_lara_weights = {
+        key: float(_value(action_cfg, key, 0.0) or 0.0)
+        for key in required_positive_weight_keys
+        if float(_value(action_cfg, key, 0.0) or 0.0) <= 0.0
+    }
+    optional_zero_weight_keys = (
         "lara_balance_loss_weight",
         "lara_stickiness_loss_weight",
         "lara_diversity_loss_weight",
         "lara_entropy_loss_weight",
         "lara_inference_stickiness_weight",
     )
-    nonzero_default_weights = {
+    nonzero_optional_weights = {
         key: float(_value(action_cfg, key, 0.0))
-        for key in zero_weight_keys
+        for key in optional_zero_weight_keys
         if float(_value(action_cfg, key, 0.0) or 0.0) != 0.0
     }
 
@@ -186,16 +189,17 @@ def _config_checks(cfg: Any, config_path: Path) -> list[dict[str, Any]]:
             pretrained_checkpoint=pretrained,
         ),
         _check(
-            "baseline_defaults_safe",
-            (not is_baseline_config) or (not unsafe_defaults and not nonzero_default_weights),
+            "lara_defaults_enabled",
+            not disabled_lara_flags and not nonpositive_lara_weights,
             detail=(
-                "Non-baseline configs may enable staged LARA components."
-                if not is_baseline_config
-                else "Latent/MoE/utility research paths must stay default-off for the baseline config."
+                "Default configs should instantiate the latent-action, MoE/router, direct-expert, "
+                "transition, and utility paths; paper readiness still requires real training and rollout evidence."
             ),
-            baseline_config=is_baseline_config,
-            unsafe_defaults=unsafe_defaults if is_baseline_config else {},
-            nonzero_default_weights=nonzero_default_weights if is_baseline_config else {},
+            disabled_flags=disabled_lara_flags,
+            nonpositive_weights=nonpositive_lara_weights,
+            required_flags=list(required_lara_flags),
+            required_positive_weights=list(required_positive_weight_keys),
+            nonzero_optional_weights=nonzero_optional_weights,
         ),
         _check(
             "so101_horizon_contract",

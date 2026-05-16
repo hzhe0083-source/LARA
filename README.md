@@ -2,17 +2,20 @@
 
 LARA is the local research codebase for adapting VLA-JEPA pretraining to SO101 robot control.
 
-The current implementation is an engineering baseline, not the full latent-action MoE system from the LARA paper. It uses the VLA-JEPA pretrain representation, extracts latent action tokens from the Qwen/V-JEPA token stream, and conditions a GR00T-style flow-matching action head on:
+The current implementation is an engineering version of the LARA training path, not a validated paper-complete system. It uses the VLA-JEPA pretrain representation, extracts latent action tokens from the Qwen/V-JEPA token stream, and now enables the latent-action head, transition head, MoE/router, direct action experts, and utility-proxy losses by default. The compatibility configs still keep some historical `baseline` names, but they no longer turn the LARA components off.
 
 ```text
-latent action tokens + embodied action tokens -> continuous follower-arm action chunk
+latent action tokens + embodied action tokens
+  -> latent action head + transition head
+  -> episode-pool / chunk-router MoE with direct action experts
+  -> continuous follower-arm action chunk
 ```
 
 The SO101 path intentionally does not default to the VLA-JEPA Real-world checkpoint, because that checkpoint is adapted to other robot embodiments. For SO101, the training target is the follower arm `action` and `state` from the local LeRobot dataset.
 
 ## Implementation Status
 
-The manuscript in [`document/LARA_collapse_paper.tex`](./document/LARA_collapse_paper.tex) describes the intended full LARA algorithm. The code in this repository has implemented the SO101 VLA/action-baseline path and several default-off scaffolds, but the paper's latent-action MoE and two-level routing method should still be treated as unfinished.
+The manuscript in [`document/LARA_collapse_paper.tex`](./document/LARA_collapse_paper.tex) describes the intended full LARA algorithm. The code now instantiates the latent-action, transition, MoE/router, direct-expert, and utility-proxy paths by default, but the paper's latent-action MoE and two-level routing method should still be treated as unfinished until full training and closed-loop evidence exist.
 
 See [`document/IMPLEMENTATION_GAP.md`](./document/IMPLEMENTATION_GAP.md) for the current paper-to-code gap list and recommended implementation order.
 
@@ -20,24 +23,24 @@ Completed in code:
 
 - SO101 single-arm LeRobot dataset support.
 - VLA-JEPA Pretrain checkpoint loading.
-- Latent-token conditioned flow action head baseline.
+- Latent-token conditioned action path with default-on latent-action, transition, MoE/router, direct-expert, and utility-proxy components.
 - Long-prediction / short-execution horizon setup:
   - `action_horizon: 60`
   - `execution_horizon: 10`
   - at 30 Hz, predict 2.0 seconds and execute the first 0.333 seconds before re-observing.
 - SO101/LeRobot action-valid masks for trajectory-end chunks, so padded future action steps do not supervise the flow, latent-action, transition, or direct-expert losses.
 
-Experimental scaffolding exists but is not complete or validated:
+Experimental components are enabled by default, but they are not complete or validated as paper evidence:
 
-- Stage-1 latent action head scaffold with posterior encoder, VQ codebook, optional code-usage regularization, context-only prior, and optional execution/prediction boundary-state transition loss (`use_latent_action_head: false`, `lara_use_transition_head: false` by default). This is not yet production-ready latent-action training.
-- Stage-2 MoE/router scaffold with residual token experts, optional direct action-chunk experts, optional routed direct-expert action output, posterior responsibility from latent tokens or per-expert action reconstruction losses, optional posterior floor/top-r smoothing, LeRobot trajectory ids for coverage-aware episode-level resident pool targets (mean posterior + max posterior + optional utility), optional pool coverage loss, optional episode-start image encoding for the resident pool router, reusable episode-level resident pool masks, budget-conditioned episode pool routing, optional training-time randomized resident-pool size, chunk-level top-k routing inside the resident pool, optional inference stickiness, optional balance/stickiness/expert-diversity/entropy stabilizers, and route-quality aggregation metrics (`use_lara_moe: false` by default). This is code scaffolding only; the MoE experts and two-level router have not been validated as the LARA paper method.
-- Utility calibration scaffold with optional action-loss utility labels, optional transition-state consistency utility labels, optional direct-expert action reconstruction or transition-state component labels for value/progress/uncertainty targets, optional dataset-provided utility/candidate/cost/component targets, strict counterfactual rollout-record to `utility_scores` / `utility_candidate_mask` matrix conversion, an optional supervised route utility head, candidate value/progress/uncertainty/cost scoring helpers, centered utility regression, and pairwise ranking losses (`lara_utility_loss_weight: 0.0`, `lara_utility_head_loss_weight: 0.0`, `lara_use_action_loss_utility: false`, `lara_use_state_utility: false`, `lara_use_utility_head: false` by default). These labels are proxies, pass-through hooks, or offline label plumbing; real closed-loop counterfactual evaluator labels are still required before this becomes the paper's utility calibration stage.
+- Stage-1 latent action head path with posterior encoder, VQ codebook, optional code-usage regularization, context-only prior, and execution/prediction boundary-state transition loss (`use_latent_action_head: true`, `lara_use_transition_head: true` by default). This is not yet production-ready latent-action training.
+- Stage-2 MoE/router path with residual token experts, direct action-chunk experts, routed direct-expert action output, posterior responsibility from latent tokens or per-expert action reconstruction losses, optional posterior floor/top-r smoothing, LeRobot trajectory ids for coverage-aware episode-level resident pool targets (mean posterior + max posterior + optional utility), pool coverage loss, optional episode-start image encoding for the resident pool router, reusable episode-level resident pool masks, budget-conditioned episode pool routing, optional training-time randomized resident-pool size, chunk-level top-k routing inside the resident pool, optional inference stickiness, optional balance/stickiness/expert-diversity/entropy stabilizers, and route-quality aggregation metrics (`use_lara_moe: true` by default). This is still code scaffolding until the MoE experts and two-level router are validated as the LARA paper method.
+- Utility calibration path with action-loss utility labels, transition-state consistency utility labels, direct-expert action reconstruction or transition-state component labels for value/progress/uncertainty targets, optional dataset-provided utility/candidate/cost/component targets, strict counterfactual rollout-record to `utility_scores` / `utility_candidate_mask` matrix conversion, a supervised route utility head, candidate value/progress/uncertainty/cost scoring helpers, centered utility regression, and pairwise ranking losses (`lara_utility_loss_weight: 1.0`, `lara_utility_head_loss_weight: 1.0`, `lara_use_action_loss_utility: true`, `lara_use_state_utility: true`, `lara_use_utility_head: true` by default). These labels are proxies, pass-through hooks, or offline label plumbing; real closed-loop counterfactual evaluator labels are still required before this becomes the paper's utility calibration stage.
 - Action-head MoE diagnostics include `metric/moe_route_quality_*` scalars for posterior/utility ranking, posterior-router KL, top-k consistency, route regret, resident/active teacher mass, critical expert miss rate, and retained probability mass when MoE is enabled.
 - Matched-compute and matched-resident protocol helpers for subset-retention success aggregation, active/resident budget checks, result-table rows, compute-success Pareto flags, route-sequence diagnostics over receding-horizon chunks, automatic diagnostic extraction from raw `router_probs_sequence` / `active_mask_sequence` / `pool_mask_sequence` rollout fields, and JSON/JSONL rollout-record summarization via `scripts/summarize_lara_protocol.py`.
 - Strict protocol evidence audit via `scripts/summarize_lara_protocol.py --require-paper-metrics`, which fails when rollout records lack paper-required success, FLOPs, latency, VRAM, route diagnostics, posterior-router KL, resident-pool teacher mass, critical expert miss rate, or required resident fractions.
-- Paper-readiness audit via `scripts/audit_lara_paper_readiness.py`, which keeps the repository from treating default-off MoE/router scaffolding as the completed paper method until real utility sidecars, closed-loop protocol records, full SO101 training evidence, and real robot evaluation artifacts are present.
+- Paper-readiness audit via `scripts/audit_lara_paper_readiness.py`, which requires LARA components to be default-on while still preventing the repository from treating enabled MoE/router code as the completed paper method until real utility sidecars, closed-loop protocol records, full SO101 training evidence, and real robot evaluation artifacts are present.
 - Minimal dummy-batch smoke coverage exists for `ActionHeadAdapter` forward and prediction shapes.
-- The real-component smoke script can temporarily enable the default-off Stage-1/Stage-2 scaffolds to prove they instantiate and complete a dummy forward/backward with local Qwen/V-JEPA checkpoints. This is an integration smoke check only; it is not full SO101 training or closed-loop validation.
+- The real-component smoke script can verify or override the default-on Stage-1/Stage-2 paths and prove they instantiate and complete a dummy forward/backward with local Qwen/V-JEPA checkpoints. This is an integration smoke check only; it is not full SO101 training or closed-loop validation.
 
 Described in the paper but not implemented yet:
 
@@ -54,11 +57,12 @@ In other words, the current code path is:
 ```text
 VLA-JEPA/Qwen token stream
   -> latent action tokens + embodied action tokens
-  -> flow-matching action head
+  -> latent action / transition objectives
+  -> MoE router + direct action experts
   -> continuous SO101 follower-arm action chunk
 ```
 
-It is a baseline adapter for SO101 fine-tuning, not the final latent-action MoE/router implementation.
+It is the default LARA training path for SO101 fine-tuning, but not yet a validated final latent-action MoE/router implementation.
 
 ## Repository Layout
 
@@ -70,9 +74,9 @@ Lara/
   model/modules/world_model/  V-JEPA latent world model pieces
   training/                   Accelerate/DeepSpeed training loops
 scripts/
-  config/lara_so101_ft.yaml   compatibility alias for SO101 VLA baseline
+  config/lara_so101_ft.yaml   compatibility alias for SO101 LARA-default training
   config/lara_so101_baseline.yaml
-                                SO101 VLA/action baseline config
+                                legacy-named SO101 config; LARA components enabled
   config/lara_so101_latent_vq.yaml
                                 SO101 latent-action VQ scaffold config
   config/lara_so101_moe_direct.yaml
@@ -80,9 +84,9 @@ scripts/
   config/lara_so101_utility_pool.yaml
                                 SO101 utility/pool scaffold config
   config/lara_libero100_baseline.yaml
-                                LIBERO100 VLA baseline config
+                                legacy-named LIBERO100 config; LARA components enabled
   config/lara_metaworld_mt50_baseline.yaml
-                                MetaWorld MT50 VLA baseline config
+                                legacy-named MetaWorld MT50 config; LARA components enabled
   download_benchmark_data.py   Download/preflight benchmark LeRobot datasets
   summarize_lara_protocol.py  Summarize rollout JSON/JSONL into paper protocol rows
   audit_lara_paper_readiness.py
@@ -133,15 +137,15 @@ trainer:
 
 This means the VLA-JEPA pretrain representation is reused, while the SO101 action head is trained on SO101 follower-arm action/state data.
 
-The SO101 configs are deliberately split by paper stage:
+The SO101 configs are deliberately split by paper stage. The historical `baseline` filename is retained for compatibility, but the main configs now enable the LARA component stack by default:
 
 | Config | Intended use | Status |
 | --- | --- | --- |
-| `scripts/config/lara_so101_baseline.yaml` | VLA-JEPA pretrain + latent/body tokens + flow action head | Main baseline |
-| `scripts/config/lara_so101_latent_vq.yaml` | Adds posterior/VQ/prior latent-action head and action-chunk reconstruction loss | Scaffold, needs SO101 validation |
-| `scripts/config/lara_so101_moe_direct.yaml` | Adds latent head plus MoE/direct action experts and routed direct action output | Scaffold, needs SO101 validation |
-| `scripts/config/lara_so101_utility_pool.yaml` | Adds utility/pool settings for counterfactual sidecar training | Scaffold, requires real forced-route utility labels |
-| `scripts/config/lara_so101_ft.yaml` | Backward-compatible alias of the baseline config | Compatibility |
+| `scripts/config/lara_so101_baseline.yaml` | VLA-JEPA pretrain + default-on latent/MoE/direct-expert/utility path | Legacy name, active LARA defaults |
+| `scripts/config/lara_so101_latent_vq.yaml` | Stage-focused config for posterior/VQ/prior latent-action checks | Default-on LARA path, needs SO101 validation |
+| `scripts/config/lara_so101_moe_direct.yaml` | Stage-focused config for MoE/direct action experts and routed direct action output | Default-on LARA path, needs SO101 validation |
+| `scripts/config/lara_so101_utility_pool.yaml` | Utility/pool config for counterfactual sidecar training | Default-on LARA path, requires real forced-route utility labels |
+| `scripts/config/lara_so101_ft.yaml` | Backward-compatible alias of the legacy-named config | Compatibility |
 
 For trainer evaluation, add `datasets.vla_eval_data` with a separate validation dataset config. If it is absent, the trainer records `eval/skipped_no_eval_dataloader` instead of reusing the training iterator as validation.
 
@@ -154,7 +158,7 @@ python scripts/smoke_lara_real_components.py --config scripts/config/lara_so101_
 When the local Qwen/V-JEPA checkpoints and runtime dependencies are available, add `--instantiate` or `--run-step` to load the actual `Lara` framework and execute a one-step dummy forward/backward check. Use `--attn-implementation sdpa` or `--attn-implementation eager` to smoke-test environments that do not have FlashAttention2 installed. The `--run-step` path mirrors trainer/server device placement for V-JEPA and the action head. The smoke dummy follows the SO101 dataloader convention of two V-JEPA view streams; single-camera SO101 data is duplicated before entering the world model.
 Those modes return structured JSON errors if dependency import or model loading fails, which makes missing runtime packages easier to diagnose before launching training.
 
-To smoke-check paper-stage scaffolds without changing the default training config:
+To smoke-check the default-on paper-stage paths, optionally adding real batches or explicit override flags:
 
 ```bash
 python scripts/smoke_lara_real_components.py \
@@ -180,7 +184,7 @@ python scripts/smoke_lara_real_components.py \
   --use-action-loss-utility-components
 ```
 
-`--use-real-batch` loads a small batch from the configured SO101 LeRobot dataset instead of the synthetic dummy batch. It can be combined with `--run-step` and the paper-stage flags to check that real SO101 sample shapes feed the same model path. `--optimizer-step` implies the one-step smoke and runs one lightweight SGD update over `action_head` parameters after backward, reporting gradient/update diagnostics without pretending to be a full trainer run. `--include-episode-start` temporarily requests `episode_start_image` from the SO101 dataloader and makes the optional episode-level pool router condition on the first observation `h_1` instead of the current chunk context. `--use-transition-head` temporarily enables the boundary-state transition scaffold and gives it loss weight 1.0 when the config keeps the default zero weight; pass `--transition-loss-weight` to override that smoke weight. `--use-direct-action-experts` implies `--use-lara-moe`; `--use-direct-action-output` implies both. `--use-action-loss-utility-components` derives value/progress/uncertainty utility-head targets from direct-expert full/execution/tail action reconstruction losses and also enables the required direct experts, MoE, and utility head. `--use-state-utility` derives router utility labels from per-expert transition-state consistency errors and enables MoE plus the transition head; `--use-state-utility-components` also supervises the utility-head value/progress/uncertainty components from those transition-state errors. `--counterfactual-utility-labels-path` points smoke checks at a generated sidecar, enables MoE utility loss, and restricts real-batch sampling to labeled steps unless `--counterfactual-utility-all-steps` is set. These flags are smoke-time overrides only, and a passing smoke check does not mean the MoE/two-level routing method from the paper is complete or trained.
+`--use-real-batch` loads a small batch from the configured SO101 LeRobot dataset instead of the synthetic dummy batch. It can be combined with `--run-step` and the paper-stage flags to check that real SO101 sample shapes feed the same model path. `--optimizer-step` implies the one-step smoke and runs one lightweight SGD update over `action_head` parameters after backward, reporting gradient/update diagnostics without pretending to be a full trainer run. `--include-episode-start` requests `episode_start_image` from the SO101 dataloader and makes the episode-level pool router condition on the first observation `h_1` instead of the current chunk context. `--use-transition-head` ensures the boundary-state transition path is enabled and gives it loss weight 1.0 if a custom config sets the weight to zero; pass `--transition-loss-weight` to override that smoke weight. `--use-direct-action-experts` implies `--use-lara-moe`; `--use-direct-action-output` implies both. `--use-action-loss-utility-components` derives value/progress/uncertainty utility-head targets from direct-expert full/execution/tail action reconstruction losses and also ensures the required direct experts, MoE, and utility head are enabled. `--use-state-utility` derives router utility labels from per-expert transition-state consistency errors and ensures MoE plus the transition head are enabled; `--use-state-utility-components` also supervises the utility-head value/progress/uncertainty components from those transition-state errors. `--counterfactual-utility-labels-path` points smoke checks at a generated sidecar, ensures MoE utility loss is active, and restricts real-batch sampling to labeled steps unless `--counterfactual-utility-all-steps` is set. These flags are smoke-time overrides only, and a passing smoke check does not mean the MoE/two-level routing method from the paper is complete or trained.
 
 ## SO101 Dataset
 
@@ -223,7 +227,7 @@ State order:
 
 ## Horizon Settings
 
-The SO101 baseline uses receding-horizon control:
+The SO101 LARA-default path uses receding-horizon control:
 
 ```yaml
 framework:
@@ -242,9 +246,9 @@ framework:
 `action_horizon` is the canonical prediction horizon. `future_action_window_size` is a legacy compatibility field and should stay equal to `action_horizon - 1` until it is removed.
 SO101 batches pass `future_actions` as an explicit future-only supervision window, and that window must have exactly `action_horizon` steps. The older `action` fallback can still carry wider context and is tail-sliced only for compatibility.
 SO101 batches also pass `future_action_mask`; near trajectory ends, invalid padded steps are masked out of the flow-matching loss, latent posterior pooling, transition/action utility proxies, and direct-expert reconstruction losses.
-When the optional latent-action head is enabled, its posterior/codebook/prior is trained on the first `latent_action_horizon` steps of that window, so the latent code stays aligned with the executable receding-horizon chunk while the flow/direct action heads still predict the full `action_horizon`.
-When the optional MoE/direct-expert path is enabled, posterior responsibility and pool-router targets use `router_horizon`, while action-loss utility proxies and value/progress/uncertainty component labels use `utility_horizon`.
-For episode-level pool-router experiments, set `datasets.vla_data.include_episode_start: true` or use the smoke flag `--include-episode-start`; this adds the episode's first image and lets `Lara_core` encode an initial pool context for `p_\chi(P_\tau | g, h_1, b)`. The default remains `false` so the baseline path does not pay a second Qwen encode.
+The latent-action posterior/codebook/prior is trained on the first `latent_action_horizon` steps of that window, so the latent code stays aligned with the executable receding-horizon chunk while the flow/direct action heads still predict the full `action_horizon`.
+The MoE/direct-expert path uses `router_horizon` for posterior responsibility and pool-router targets, while action-loss utility proxies and value/progress/uncertainty component labels use `utility_horizon`.
+For episode-level pool-router experiments, set `datasets.vla_data.include_episode_start: true` or use the smoke flag `--include-episode-start`; this adds the episode's first image and lets `Lara_core` encode an initial pool context for `p_\chi(P_\tau | g, h_1, b)`. The default remains `false` to avoid a second Qwen encode in ordinary training.
 For utility-calibration experiments with real counterfactual evaluator labels, set `datasets.vla_data.counterfactual_utility_labels_path` to a JSON/JSONL file whose records contain either `context_id` or `trajectory_id` plus `base_index`, a candidate `expert_id`, and an outcome such as `success`, `return_score`, or `utility_score`. The loader injects matched labels as `utility_scores` and `utility_candidate_mask`; records with fewer than two candidate experts per context are rejected by default. Set `counterfactual_utility_sample_labeled_only: true` when training the utility router on a partial sidecar so every batch sample carries labels.
 
 At 30 Hz:
@@ -308,7 +312,7 @@ The script fixes `HF_HOME`, `HF_HUB_CACHE`, and `HF_XET_CACHE` under `benchmark_
 python scripts/download_benchmark_data.py --dataset all --preflight-only
 ```
 
-A dataset is not considered ready until `meta/info.json`, `meta/stats.json`, task metadata (`meta/tasks.parquet` or `meta/tasks.jsonl`), and the expected LeRobot v3 chunk parquet count are present: 279 `data/chunk-*/*.parquet` files for LIBERO100 and 492 for MetaWorld MT50. The preflight intentionally counts chunk parquet files, not duplicate split files under `data/train-*`, and exits nonzero while any selected dataset is incomplete. For progress-only supervision during a long download, add `--allow-incomplete`. The current benchmark configs use the baseline VLA path only; MoE and two-level routing remain disabled by default.
+A dataset is not considered ready until `meta/info.json`, `meta/stats.json`, task metadata (`meta/tasks.parquet` or `meta/tasks.jsonl`), and the expected LeRobot v3 chunk parquet count are present: 279 `data/chunk-*/*.parquet` files for LIBERO100 and 492 for MetaWorld MT50. The preflight intentionally counts chunk parquet files, not duplicate split files under `data/train-*`, and exits nonzero while any selected dataset is incomplete. For progress-only supervision during a long download, add `--allow-incomplete`. The benchmark configs now enable the LARA latent-action, MoE/router, direct-expert, and utility-proxy paths by default, but they still need full benchmark training and closed-loop rollout evidence.
 
 The LeRobot v3 collate path emits both current Qwen images and `example["video"]` for V-JEPA, using `framework.vj2_model.num_frames` frames instead of the 60-frame action horizon. If the local environment does not have the upstream `lerobot` package installed, real-batch LIBERO100 loading will fail before reading parquet files; install `.[benchmark]` first.
 
@@ -355,7 +359,7 @@ accelerate launch \
   datasets.vla_data.per_device_batch_size=1
 ```
 
-## Action Head Baseline
+## Action Head
 
 The current adapter is implemented in:
 
@@ -372,7 +376,7 @@ It:
 - adds token-type embeddings for latent/body token streams
 - trains the flow action head on the configured `action_horizon`
 - treats `future_actions` as a strict horizon-aligned target while keeping legacy `action` tail-slicing as a fallback
-- when the optional latent-action head is enabled, reconstructs the executable latent action chunk and logs raw, weight, and weighted latent/MoE loss components separately
+- reconstructs the executable latent action chunk and logs raw, weight, and weighted latent/MoE loss components separately
 
 The flow head implementation is in:
 
