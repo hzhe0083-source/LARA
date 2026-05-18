@@ -15,6 +15,7 @@ from Lara.model.modules.action_model.lara_moe import (
     ActionChunkExpertBank,
     LatentActionMoE,
     aggregate_episode_responsibilities,
+    expert_diversity_loss,
     posterior_from_expert_losses,
     route_quality_metrics,
     utility_component_targets_from_expert_losses,
@@ -91,6 +92,32 @@ class ActionHeadAdapter(nn.Module):
             self.use_lara_moe and self.use_direct_action_experts,
         )
         self.direct_expert_loss_weight = action_cfg.get("lara_direct_expert_loss_weight", 1.0)
+        direct_expert_action_mode = action_cfg.get("lara_direct_expert_action_mode", None)
+        if direct_expert_action_mode is None:
+            direct_expert_action_mode = (
+                "residual" if action_cfg.get("lara_use_direct_action_residual", False) else "full"
+            )
+        if direct_expert_action_mode not in {"full", "residual"}:
+            raise ValueError("lara_direct_expert_action_mode must be 'full' or 'residual'")
+        self.direct_expert_action_mode = direct_expert_action_mode
+        self.direct_expert_residual_scale = action_cfg.get("lara_direct_expert_residual_scale", 1.0)
+        self.direct_expert_residual_cost_weight = action_cfg.get(
+            "lara_direct_expert_residual_cost_weight",
+            0.0,
+        )
+        self.direct_expert_improvement_posterior = action_cfg.get(
+            "lara_direct_expert_improvement_posterior",
+            self.direct_expert_action_mode == "residual",
+        )
+        self.direct_residual_norm_loss_weight = action_cfg.get("lara_direct_residual_norm_loss_weight", 0.0)
+        self.direct_residual_diversity_loss_weight = action_cfg.get(
+            "lara_direct_residual_diversity_loss_weight",
+            0.0,
+        )
+        self.shared_action_deterministic_baseline = action_cfg.get(
+            "lara_shared_action_deterministic_baseline",
+            True,
+        )
         if self.use_direct_action_output and (not self.use_lara_moe or not self.use_direct_action_experts):
             raise ValueError(
                 "lara_use_direct_action_output requires use_lara_moe=True "
@@ -178,6 +205,53 @@ class ActionHeadAdapter(nn.Module):
             if self.use_lara_moe and self.use_direct_action_experts
             else None
         )
+
+    def _shared_action_prediction(
+        self,
+        conditioning_tokens: torch.Tensor,
+        state_tensor: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        """Run the dense action head as a frozen shared baseline for residual experts."""
+        was_training = self.action_model.training
+        self.action_model.eval()
+        initial_actions = None
+        if self.shared_action_deterministic_baseline:
+            initial_actions = torch.zeros(
+                conditioning_tokens.shape[0],
+                self.action_horizon,
+                self.config.framework.action_model.action_dim,
+                device=conditioning_tokens.device,
+                dtype=conditioning_tokens.dtype,
+            )
+        try:
+            shared_actions = self.action_model.predict_action(
+                conditioning_tokens.detach(),
+                state_tensor.detach() if state_tensor is not None else None,
+                initial_actions=initial_actions,
+            )
+        finally:
+            if was_training:
+                self.action_model.train()
+        return shared_actions.detach()
+
+    def _direct_expert_action_bank(
+        self,
+        conditioning_tokens: torch.Tensor,
+        state_tensor: Optional[torch.Tensor],
+    ) -> tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
+        if self.direct_action_experts is None:
+            raise RuntimeError("_direct_expert_action_bank requires direct_action_experts")
+        raw_expert_actions = self.direct_action_experts(conditioning_tokens, state=state_tensor)
+        if self.direct_expert_action_mode == "full":
+            return raw_expert_actions, None, None
+        shared_actions = self._shared_action_prediction(conditioning_tokens, state_tensor)
+        residual_actions = self.direct_expert_residual_scale * raw_expert_actions
+        expert_actions = shared_actions[:, None, :, :] + residual_actions
+        return expert_actions, residual_actions, shared_actions
+
+    @staticmethod
+    def _expert_residual_norm(residual_actions: torch.Tensor) -> torch.Tensor:
+        return residual_actions.pow(2).mean(dim=(-1, -2)).sqrt()
 
     @staticmethod
     def _as_tensor(value, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
@@ -459,11 +533,19 @@ class ActionHeadAdapter(nn.Module):
         if self.lara_moe is not None:
             direct_expert_loss = None
             direct_expert_losses = None
+            direct_posterior_losses = None
             utility_expert_losses = None
             state_utility_losses = None
             state_utility_component_targets = None
+            direct_expert_residuals = None
+            shared_actions = None
+            shared_router_losses = None
+            direct_residual_regularization_loss = None
             if self.direct_action_experts is not None:
-                direct_expert_actions = self.direct_action_experts(conditioning_tokens, state=state_tensor)
+                direct_expert_actions, direct_expert_residuals, shared_actions = self._direct_expert_action_bank(
+                    conditioning_tokens,
+                    state_tensor,
+                )
                 direct_expert_loss_components = self.direct_action_experts.reconstruction_loss_components(
                     direct_expert_actions,
                     actions_target,
@@ -477,6 +559,12 @@ class ActionHeadAdapter(nn.Module):
                     router_actions_target,
                     action_mask=router_action_mask,
                 )
+                if shared_actions is not None:
+                    shared_router_losses = self.direct_action_experts.reconstruction_losses(
+                        shared_actions[:, None, : self.router_horizon, :],
+                        router_actions_target,
+                        action_mask=router_action_mask,
+                    ).squeeze(1)
                 utility_expert_losses = self.direct_action_experts.reconstruction_losses(
                     direct_expert_actions[:, :, : self.utility_horizon, :],
                     utility_actions_target,
@@ -497,19 +585,77 @@ class ActionHeadAdapter(nn.Module):
                         temperature=self.action_loss_utility_temperature,
                         normalize=self.action_loss_utility_normalize,
                     )
+                direct_posterior_losses = direct_expert_losses.detach()
+                if (
+                    self.direct_expert_improvement_posterior
+                    and shared_router_losses is not None
+                ):
+                    direct_posterior_losses = direct_posterior_losses - shared_router_losses[:, None].detach()
+                    if self.direct_expert_residual_cost_weight > 0 and direct_expert_residuals is not None:
+                        residual_cost = self._expert_residual_norm(
+                            direct_expert_residuals[:, :, : self.router_horizon, :]
+                        ).detach()
+                        direct_posterior_losses = (
+                            direct_posterior_losses
+                            + self.direct_expert_residual_cost_weight * residual_cost
+                        )
                 direct_posterior = posterior_from_expert_losses(
-                    direct_expert_losses.detach(),
+                    direct_posterior_losses,
                     temperature=self.lara_moe.posterior_temperature,
                     uniform_floor=self.lara_moe.posterior_uniform_floor,
                     top_r=self.lara_moe.posterior_top_r,
                 )
                 direct_expert_loss = (direct_expert_loss_components["weighted"] * direct_posterior).sum(dim=-1).mean()
+                if direct_expert_residuals is not None:
+                    residual_norm_loss = direct_expert_residuals.pow(2).mean()
+                    residual_diversity_loss = expert_diversity_loss(direct_expert_residuals)
+                    direct_residual_regularization_loss = (
+                        self.direct_residual_norm_loss_weight * residual_norm_loss
+                        + self.direct_residual_diversity_loss_weight * residual_diversity_loss
+                    )
+                    aux_losses.update(
+                        {
+                            "moe_direct_residual_norm": self._expert_residual_norm(direct_expert_residuals)
+                            .mean()
+                            .detach(),
+                            "moe_direct_residual_norm_loss_raw": residual_norm_loss.detach(),
+                            "moe_direct_residual_norm_loss_weight": torch.as_tensor(
+                                self.direct_residual_norm_loss_weight,
+                                device=residual_norm_loss.device,
+                                dtype=residual_norm_loss.dtype,
+                            ),
+                            "moe_direct_residual_norm_loss_weighted": (
+                                self.direct_residual_norm_loss_weight * residual_norm_loss.detach()
+                            ),
+                            "moe_direct_residual_diversity_loss_raw": residual_diversity_loss.detach(),
+                            "moe_direct_residual_diversity_loss_weight": torch.as_tensor(
+                                self.direct_residual_diversity_loss_weight,
+                                device=residual_diversity_loss.device,
+                                dtype=residual_diversity_loss.dtype,
+                            ),
+                            "moe_direct_residual_diversity_loss_weighted": (
+                                self.direct_residual_diversity_loss_weight * residual_diversity_loss.detach()
+                            ),
+                            "moe_direct_residual_regularization_loss": direct_residual_regularization_loss,
+                            "moe_direct_residual_regularization_loss_weighted": direct_residual_regularization_loss.detach(),
+                        }
+                    )
+                if shared_router_losses is not None:
+                    improvement = shared_router_losses[:, None].detach() - direct_expert_losses.detach()
+                    aux_losses.update(
+                        {
+                            "moe_shared_action_loss": shared_router_losses.mean().detach(),
+                            "moe_direct_expert_improvement_mean": improvement.mean().detach(),
+                            "moe_direct_expert_improvement_top1": improvement.max(dim=-1).values.mean().detach(),
+                            "moe_direct_expert_improvement_positive_rate": (improvement > 0).float().mean().detach(),
+                        }
+                    )
             else:
                 direct_utility_component_targets = None
             with torch.no_grad():
                 expert_action_losses = (
-                    direct_expert_losses.detach()
-                    if direct_expert_losses is not None
+                    direct_posterior_losses.detach()
+                    if direct_posterior_losses is not None
                     else self._expert_action_losses(
                         conditioning_tokens,
                         router_actions_target,
@@ -847,6 +993,7 @@ class ActionHeadAdapter(nn.Module):
                 + aux_losses.get("transition_state_loss", 0.0)
                 + aux_losses.get("moe_loss", 0.0)
                 + aux_losses.get("moe_direct_expert_loss", 0.0)
+                + aux_losses.get("moe_direct_residual_regularization_loss", 0.0)
             )
         aux_losses["action_loss"] = action_loss
         aux_losses["total_action_loss"] = (
@@ -855,6 +1002,7 @@ class ActionHeadAdapter(nn.Module):
             + aux_losses.get("transition_state_loss", 0.0)
             + aux_losses.get("moe_loss", 0.0)
             + aux_losses.get("moe_direct_expert_loss", 0.0)
+            + aux_losses.get("moe_direct_residual_regularization_loss", 0.0)
         )
         return aux_losses
 
@@ -1104,7 +1252,7 @@ class ActionHeadAdapter(nn.Module):
                 forced_router_probs=forced_router_probs,
             )
             if self.use_direct_action_output:
-                direct_expert_actions = self.direct_action_experts(conditioning_tokens, state=state_tensor)
+                direct_expert_actions, _, _ = self._direct_expert_action_bank(conditioning_tokens, state_tensor)
                 pred_actions = ActionChunkExpertBank.routed_actions(direct_expert_actions, moe_output.router_probs)
                 if return_aux:
                     return {

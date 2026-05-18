@@ -89,6 +89,16 @@ framework:
     lara_inference_stickiness_weight: 0.0
     lara_direct_expert_hidden_dim: 1024
     lara_direct_expert_loss_weight: 1.0
+    # Direct experts default to residual corrections over the dense/latent
+    # shared action head. This keeps common action structure in the shared
+    # policy and asks routed experts to specialize on corrections.
+    lara_direct_expert_action_mode: residual
+    lara_direct_expert_improvement_posterior: true
+    lara_direct_expert_residual_scale: 1.0
+    lara_direct_expert_residual_cost_weight: 0.01
+    lara_direct_residual_norm_loss_weight: 0.001
+    lara_direct_residual_diversity_loss_weight: 0.005
+    lara_shared_action_deterministic_baseline: true
     lara_posterior_temperature: 1.0
     lara_posterior_uniform_floor: 0.0
     lara_posterior_top_r:

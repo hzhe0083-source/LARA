@@ -27,6 +27,14 @@ DEFAULT_DEEPSPEED_CONFIG = REPO_ROOT / "Lara/config/deepseeds/deepspeed_zero2.ya
 STAGES = ("dense", "latent", "experts", "router", "joint", "utility_proxy", "eval")
 DEFAULT_SAVE_INTERVAL = 10000
 PROVENANCE_HASH_LIMIT_BYTES = 256 * 1024 * 1024
+EXPERTS_WARMSTART_MODULES = (
+    "qwen,vj2,"
+    "action_head.action_model,"
+    "action_head.latent_action_head,"
+    "action_head.transition_head,"
+    "action_head.condition_norm,"
+    "action_head.latent_norm"
+)
 LARA_FLAG_KEYS = (
     "use_latent_action_head",
     "lara_use_transition_head",
@@ -34,6 +42,11 @@ LARA_FLAG_KEYS = (
     "lara_use_direct_action_experts",
     "lara_use_expert_loss_posterior",
     "lara_use_direct_action_output",
+    "lara_direct_expert_action_mode",
+    "lara_direct_expert_improvement_posterior",
+    "lara_direct_expert_residual_cost_weight",
+    "lara_direct_residual_norm_loss_weight",
+    "lara_direct_residual_diversity_loss_weight",
     "lara_num_experts",
     "lara_episode_pool_size",
     "lara_top_k",
@@ -148,9 +161,15 @@ def _stage_overrides(stage: str) -> dict[tuple[str, ...], Any]:
             ("framework", "action_model", "lara_use_direct_action_experts"): True,
             ("framework", "action_model", "lara_use_expert_loss_posterior"): True,
             ("framework", "action_model", "lara_use_direct_action_output"): False,
+            ("framework", "action_model", "lara_direct_expert_action_mode"): "residual",
+            ("framework", "action_model", "lara_direct_expert_improvement_posterior"): True,
             ("framework", "action_model", "lara_router_loss_weight"): 0.0,
             ("framework", "action_model", "lara_pool_loss_weight"): 0.0,
             ("framework", "action_model", "lara_pool_coverage_loss_weight"): 0.0,
+            (
+                "trainer",
+                "freeze_modules",
+            ): "qwen_vl_interface,action_head.action_model,action_head.latent_action_head,action_head.transition_head,action_head.condition_norm,action_head.latent_norm,vj_predictor",
             **_utility_off(),
         }
     if stage == "router":
@@ -399,6 +418,11 @@ def build_training_config(
         )
     for keys, value in _stage_overrides(args.stage).items():
         _set_nested(cfg, keys, value)
+    if args.resume_from and not args.resume_training_state:
+        if args.stage == "experts":
+            _set_nested(cfg, ("trainer", "reload_modules"), EXPERTS_WARMSTART_MODULES)
+        elif args.stage in {"router", "joint", "utility_proxy"}:
+            _set_nested(cfg, ("trainer", "reload_modules"), "")
     if args.stage == "utility_proxy" and not args.counterfactual_utility_labels_path:
         _set_nested(cfg, ("datasets", "vla_data", "counterfactual_utility_sample_labeled_only"), False)
 

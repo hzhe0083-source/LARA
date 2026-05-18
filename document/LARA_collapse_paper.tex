@@ -9,8 +9,6 @@
 \usepackage{xcolor}
 \usepackage{hyperref}
 \usepackage{caption}
-\usepackage{algorithm}
-\usepackage{algpseudocode}
 \usepackage{microtype}
 \usepackage{titlesec}
 \usepackage{float}
@@ -29,6 +27,12 @@
 \setlist[itemize]{leftmargin=1.2em,itemsep=0.18em,topsep=0.2em}
 \setlist[enumerate]{leftmargin=1.5em,itemsep=0.18em,topsep=0.2em}
 \captionsetup{font=small,labelfont=bf}
+\newfloat{algorithm}{tbp}{loa}
+\floatname{algorithm}{Algorithm}
+\newenvironment{algorithmic}[1][]%
+  {\begin{enumerate}[leftmargin=1.5em,label=\arabic*.,itemsep=0.12em,topsep=0.2em]}%
+  {\end{enumerate}}
+\newcommand{\State}{\item}
 \makeatletter
 \setlength{\@fptop}{0pt}
 \setlength{\@fpsep}{8pt plus 2pt minus 2pt}
@@ -56,13 +60,13 @@
 \vspace{-1.5em}
 
 \begin{abstract}
-Vision-language-action (VLA) policies are commonly trained from goal-level language paired with robot trajectories. Yet a single instruction can induce a multi-modal short-horizon action distribution: a robot may approach, transport, align, insert, reorient, retry, or recover through different local behaviors. A dense action head must represent all of these modes through one shared computation path, while a naively routed mixture-of-experts (MoE) can collapse into generic load balancing or a hand-designed stage machine. This paper proposes \emph{LARA}, a latent-action routing framework for VLA control. LARA does not predefine experts as semantic, contact, spatial, or recovery modules. Instead, a posterior latent-action encoder compresses demonstrated future action chunks into latent action codes; learned experts specialize through likelihood-based posterior responsibilities over these codes; and a deployable router selects sparse experts from the current multimodal context alone. For deployment, the router can be implemented as a two-level mechanism: an episode-level pool router selects a resident expert subset, and a chunk-level router selects top-$k$ experts inside that pool. A final counterfactual utility objective calibrates routing toward experts that improve downstream control, rather than merely reconstructing demonstrations. LARA uses ordinary goal-level language and robot trajectories, without dense step-level language annotations or high-frequency video generation. The intended empirical claim is deliberately narrow: under matched active inference compute and resident-expert budgets, latent-action experts and utility-calibrated sparse routing should improve closed-loop success, policy-ranking fidelity, route calibration, and compute-success Pareto efficiency relative to dense VLA and generic sparse MoE baselines.
+Vision-language-action (VLA) policies are commonly trained from goal-level language paired with robot trajectories. Yet a single instruction can induce a multi-modal short-horizon action distribution: a robot may approach, transport, align, insert, reorient, retry, or recover through different local behaviors. A dense action head must represent all of these modes through one shared computation path, while a naively routed mixture-of-experts (MoE) can collapse into generic load balancing or redundant experts that relearn the same full action predictor. This paper proposes \emph{LARA}, a latent-action routing framework for VLA control. LARA does not predefine experts as semantic, contact, spatial, or recovery modules. Instead, a posterior latent-action encoder compresses demonstrated future action chunks into latent action codes; a shared latent-action policy predicts the common action chunk; residual experts specialize by improving that shared prediction; and a deployable router selects sparse residual experts from the current multimodal context alone. For deployment, the router can be implemented as a two-level mechanism: an episode-level pool router selects a resident expert subset, and a chunk-level router selects top-$k$ experts inside that pool. A final counterfactual utility objective calibrates routing toward experts that improve downstream control, rather than merely reconstructing demonstrations. LARA uses ordinary goal-level language and robot trajectories, without dense step-level language annotations or high-frequency video generation. The intended empirical claim is deliberately narrow: under matched active inference compute and resident-expert budgets, latent-action residual experts and utility-calibrated sparse routing should improve closed-loop success, policy-ranking fidelity, route calibration, and compute-success Pareto efficiency relative to dense VLA and generic sparse MoE baselines.
 \end{abstract}
 
 \begin{figure}[t]
   \centering
   \includegraphics[width=\textwidth]{overview.png}
-  \caption{Overview of LARA. Given ordinary goal-level language and robot demonstrations, LARA first discovers latent action codes from demonstrated future action chunks, without dense step-level language labels. The codes organize demonstrations into a latent behavior manifold and are softly bound to learned MoE action experts by posterior responsibility. A deployable router then predicts sparse expert selection from the current multimodal context alone. In deployment-oriented settings, this router can be two-level: an episode-level pool router selects a resident expert subset, while a chunk-level router selects top-$k$ experts inside the pool. Counterfactual utility fine-tuning calibrates routing toward experts that improve chunk-level control under matched active inference compute. Expert semantics are discovered post-hoc rather than manually predefined, and the method avoids high-frequency visual rollout generation.}
+  \caption{Overview of LARA. Given ordinary goal-level language and robot demonstrations, LARA first discovers latent action codes from demonstrated future action chunks, without dense step-level language labels. The codes organize demonstrations into a latent behavior manifold. A shared latent-action policy captures common control structure, while routed residual experts learn corrections that improve the shared action chunk for particular behavior regions. A deployable router then predicts sparse expert selection from the current multimodal context alone. In deployment-oriented settings, this router can be two-level: an episode-level pool router selects a resident expert subset, while a chunk-level router selects top-$k$ experts inside the pool. Counterfactual utility fine-tuning calibrates routing toward experts that improve chunk-level control under matched active inference compute. Expert semantics are discovered post-hoc rather than manually predefined, and the method avoids high-frequency visual rollout generation.}
   \label{fig:overview}
 \end{figure}
 
@@ -82,7 +86,7 @@ This is not a claim that MoE removes dependence on data coverage or hardware con
 \paragraph{Contributions.}
 \begin{enumerate}
   \item We formulate VLA expert routing around \emph{latent action codes} learned from demonstrated action chunks, not human-defined manipulation stages or dense step-level text annotations.
-  \item We propose a likelihood-based posterior responsibility mechanism that softly binds demonstrations and latent action codes to learned MoE action experts.
+  \item We propose an improvement-based posterior responsibility mechanism that softly binds demonstrations and latent action codes to learned residual experts over a shared latent-action policy.
   \item We train a deployable router by distilling posterior expert responsibilities into a context-only route predictor, optionally factorized into an episode-level pool router and a chunk-level top-$k$ router for resident-expert efficiency.
   \item We refine routing with counterfactual control utility, so experts are selected for downstream control value rather than only demonstration reconstruction.
   \item We define a matched-compute and matched-resident-expert experimental protocol that tests closed-loop success, policy ranking, route calibration, subset retention, and compute-success Pareto efficiency without high-frequency visual generation.
@@ -258,31 +262,63 @@ main chunk-level predictive substrate for scoring candidate experts and routes.
   \label{fig:latent_action}
 \end{figure}
 
-\section{Binding Latent Action Codes to MoE Experts}
+\section{Binding Latent Action Codes to Residual Experts}
 
-Let there be $M$ expert action generators $\{E_m\}_{m=1}^M$. Expert $m$ defines a likelihood or reconstruction score for a demonstrated chunk:
+Let $f_{\mathrm{sh}}$ be the dense or latent-action policy obtained before expert
+training. It predicts a shared action chunk
 \begin{equation}
- p_m(a_{t:t+H-1}|h_t) \quad \text{or} \quad \ell_m(a_{t:t+H-1};h_t).
+ a_{\mathrm{sh},t}=f_{\mathrm{sh}}(h_t,z_t^a),
 \end{equation}
-The posterior responsibility of expert $m$ for a demonstrated chunk is
+which carries the common visuomotor structure needed by most demonstrations.
+Rather than asking each expert to predict the full chunk from scratch, LARA
+uses $M$ residual experts $\{\Delta E_m\}_{m=1}^M$:
+\begin{equation}
+ \hat{a}^{(m)}_{t:t+H-1}
+ = a_{\mathrm{sh},t:t+H-1}+\Delta E_m(h_t,z_t^a).
+ \label{eq:residual_expert}
+\end{equation}
+This parameterization makes overlap explicit: common behavior remains in the
+shared policy, while routed experts are rewarded for corrections that improve
+the shared prediction on particular behavior regions.
+
+For a demonstrated chunk, define the shared loss and expert-corrected loss as
+\begin{equation}
+ \ell_{\mathrm{sh}}=\ell(a_{t:t+H-1},a_{\mathrm{sh},t:t+H-1}),\qquad
+ \ell_m=\ell(a_{t:t+H-1},\hat{a}^{(m)}_{t:t+H-1}).
+\end{equation}
+The training-time posterior responsibility is assigned by improvement over the
+shared policy, optionally penalizing large residual corrections:
 \begin{equation}
  q(m|h_t,a_{t:t+H-1}) =
- \frac{\exp(-\ell_m(a_{t:t+H-1};h_t)/\tau_q)}
- {\sum_{j=1}^{M}\exp(-\ell_j(a_{t:t+H-1};h_t)/\tau_q)},
+ \frac{\exp\left((\ell_{\mathrm{sh}}-\ell_m-\beta\|\Delta E_m(h_t,z_t^a)\|^2)/\tau_q\right)}
+ {\sum_{j=1}^{M}\exp\left((\ell_{\mathrm{sh}}-\ell_j-\beta\|\Delta E_j(h_t,z_t^a)\|^2)/\tau_q\right)}.
  \label{eq:responsibility}
 \end{equation}
-or equivalently $q(m|h_t,a_{t:t+H-1})\propto p(a_{t:t+H-1}|h_t,m)$.
+When no expert improves the shared policy by a useful margin, the route should
+remain close to the shared action rather than inventing a spurious expert
+assignment. In implementation this is monitored by expert improvement and
+residual-norm diagnostics, and can be enforced with a shared-only option or a
+margin gate.
 
-The expert loss is responsibility-weighted:
+The residual expert loss is responsibility-weighted:
 \begin{equation}
  \mathcal{L}_{\mathrm{expert}} =
  \sum_{i\in\mathcal{B}}\sum_{m=1}^{M}
- q(m|h_i,a_{i:i+H-1})\,\ell_m(a_{i:i+H-1};h_i).
+ q(m|h_i,a_{i:i+H-1})\,\ell_m(a_{i:i+H-1};h_i)
+ +\lambda_{\Delta}\|\Delta E_m(h_i,z_i^a)\|^2.
  \label{eq:expert_loss}
 \end{equation}
-This is a soft assignment, not a hard split of the dataset. A demonstration can update multiple experts, but it updates most strongly the experts that explain it best. The mechanism resembles soft EM: responsibilities estimate which expert explains which region of the behavior manifold, and the experts improve on the demonstrations for which they have high responsibility.
+This is a soft assignment, not a hard split of the dataset. A demonstration can
+update multiple experts, but it updates most strongly the experts that improve
+the shared latent-action policy. The mechanism resembles soft EM, with the
+important distinction that responsibilities measure \emph{relative improvement}
+rather than generic full-action likelihood. This avoids the failure mode where
+all experts relearn the same dense action head.
 
-This design avoids a hand-coded taxonomy. We do not say that Expert 1 is contact, Expert 2 is transport, or Expert 3 is recovery. If such tendencies appear after training, they are post-hoc interpretations of learned behavior regions, not imposed labels.
+This design avoids a hand-coded taxonomy. We do not say that Expert 1 is
+contact, Expert 2 is transport, or Expert 3 is recovery. If such tendencies
+appear after training, they are post-hoc interpretations of learned residual
+behavior regions, not imposed labels.
 
 \begin{figure}[t]
   \centering
@@ -428,12 +464,12 @@ Low perplexity or a high dead-code ratio indicates codebook collapse. We optiona
 where $\mathbf{u}_K$ is the uniform distribution over codebook entries. In implementation, EMA codebook updates or dead-code reinitialization can be used when many codes remain unused for long intervals.
 
 \paragraph{Responsibility smoothing.}
-Expert specialization is driven by $q_{\mathrm{post}}$. If the responsibility distribution becomes too sharp early in training, a slightly better expert can absorb most chunks before other experts learn. We therefore use a high initial temperature $\tau_q$ and anneal it only after the experts begin to specialize. We also allow a small uniform floor,
+Expert specialization is driven by $q_{\mathrm{post}}$. If the responsibility distribution becomes too sharp early in training, a slightly better expert can absorb most chunks before other experts learn. If it remains too diffuse, experts can all learn the same correction. We therefore treat temperature and top-$r$ assignment as bootstrapping tools rather than evidence of specialization: early training may restrict responsibility to several high-improvement experts, and later stages relax this constraint to test whether the learned residual preferences persist. We also allow a small uniform floor,
 \begin{equation}
 \tilde{q}_{\mathrm{post}}(m|h_t,\achunk)
 =(1-\epsilon)q_{\mathrm{post}}(m|h_t,\achunk)+\epsilon/M,
 \end{equation}
-or a top-$r$ soft assignment that updates several high-responsibility experts instead of using a hard top-1 assignment. These choices give non-dominant experts gradient signal during early training.
+or a top-$r$ soft assignment that updates several high-responsibility experts instead of using a hard top-1 assignment. These choices give non-dominant experts gradient signal during early training, but they do not by themselves prove complementary experts.
 
 \paragraph{Expert and router balance.}
 For chunk-level routing, balancing should be measured across a diverse batch of episodes rather than inside a single episode. For episode-level pools, balancing is likewise computed over many trajectories. A generic form is
@@ -445,14 +481,15 @@ For chunk-level routing, balancing should be measured across a diverse batch of 
 where $\bar{p}_{\mathrm{route}}$ is the average chunk-level route distribution and $\bar{p}_{\mathrm{pool}}$ is the average episode-level pool distribution. Early training can also use router entropy regularization or noisy top-$k$ routing to encourage exploration. Route stickiness is kept as a separate stabilizer because it prevents high-frequency route thrashing without forcing all experts to be used inside one trajectory.
 
 \paragraph{Expert diversity and capacity.}
-Balanced usage does not guarantee distinct expert functions. We monitor pairwise similarity of expert outputs on shared inputs and optionally add a weak decorrelation penalty,
+Balanced usage does not guarantee distinct expert functions. In the residual formulation, diversity should be measured on corrections rather than final actions, because many states legitimately require similar total motor commands. We monitor residual norm, per-expert improvement over the shared policy, and pairwise similarity of residual outputs on shared inputs. We optionally add a weak decorrelation penalty,
 \begin{equation}
 \mathcal{L}_{\mathrm{div}}
 =\frac{1}{M(M-1)}\sum_{m\ne n}
-\left(\frac{E_m(u_t)^\top E_n(u_t)}{\|E_m(u_t)\|\,\|E_n(u_t)\|}\right)^2,
+\left(\frac{\Delta E_m(u_t)^\top \Delta E_n(u_t)}
+{\|\Delta E_m(u_t)\|\,\|\Delta E_n(u_t)\|}\right)^2,
 \quad u_t=[h_t,z_t^a].
 \end{equation}
-Expert dropout or soft capacity limits can further prevent early dominant experts from consuming most high-responsibility chunks.
+Expert dropout or soft capacity limits can further prevent early dominant experts from consuming most high-responsibility chunks. A healthy residual expert set should show nonzero residual norms, positive improvement for at least some contexts, and residual similarity below the fully redundant regime.
 
 \paragraph{Delayed utility calibration.}
 Counterfactual utility should not dominate before the latent codes, experts, and prior router are reasonably stable. We therefore start with latent-action reconstruction and posterior-responsibility training, then add prior-router distillation, and only later increase the weight of $\mathcal{L}_{\mathrm{utility}}$. Utility targets use stop-gradient labels and lagged value or uncertainty heads. We retain a nonzero distillation weight during utility fine-tuning so that routing remains close to the demonstrated behavior distribution while being calibrated toward downstream control.
@@ -492,8 +529,10 @@ The latent regularizer $\mathcal{L}_{\mathrm{latent}}$ contains the codebook, co
 \State Encode current and boundary states: $h_t=F_\theta(o_t,g,p_t,a_{t-k:t-1})$, $\bar{h}_{t+H_e}=\bar{F}(o_{t+H_e},g,p_{t+H_e},a_{t+H_e-k:t+H_e-1})$, and $\bar{h}_{t+H_p}=\bar{F}(o_{t+H_p},g,p_{t+H_p},a_{t+H_p-k:t+H_p-1})$.
 \State Infer posterior latent action embedding $e_t=E_\phi(h_t,a_{t:t+H_p-1})$ and obtain $z_t^a$ by quantization or continuous sampling.
 \State Train action decoder and chunk-boundary transition with $\mathcal{L}_{\mathrm{chunk}}$ and $\mathcal{L}_{\mathrm{state}}$.
-\State Compute posterior expert responsibilities $q_{\mathrm{post}}(m|h_t,a_{t:t+H_p-1})$.
-\State Update experts with responsibility-weighted loss $\mathcal{L}_{\mathrm{expert}}$.
+\State Freeze or slow-update the shared latent-action policy and compute $a_{\mathrm{sh}}=f_{\mathrm{sh}}(h_t,z_t^a)$.
+\State Predict residual corrections $\Delta E_m(h_t,z_t^a)$ and expert-corrected chunks $\hat{a}^{(m)}=a_{\mathrm{sh}}+\Delta E_m(h_t,z_t^a)$.
+\State Compute posterior expert responsibilities from improvement over the shared loss, $q_{\mathrm{post}}(m|h_t,a_{t:t+H_p-1})$.
+\State Update residual experts with responsibility-weighted loss $\mathcal{L}_{\mathrm{expert}}$ and residual norm/diversity diagnostics.
 \State Optionally aggregate responsibilities over the episode and train $p_\chi(P_\tau|g,h_1,b)$ with $\mathcal{L}_{\mathrm{pool}}$.
 \State Train the chunk-level prior router $p_\rho(m|h_t,P_\tau)$ by distillation from $q_{\mathrm{post}}$.
 \State Apply stabilization terms, including code-usage monitoring, smoothed responsibilities, global load balancing, route stickiness, and optional expert-diversity regularization.
@@ -523,8 +562,8 @@ The current repository has completed the SO101 VLA-JEPA action path with LARA
 components enabled by default. It reuses the pretrained VLA representation,
 extracts latent and embodied action tokens from the Qwen/V-JEPA token stream,
 and routes those tokens through the latent-action head, transition head,
-MoE/router, direct action experts, and utility-proxy losses before predicting
-continuous follower-arm action chunks.
+MoE/router, residual or direct action experts, and utility-proxy losses before
+predicting continuous follower-arm action chunks.
 The SO101 dataloader and action adapter also propagate future-action validity
 masks so trajectory-end padding does not supervise the action loss or any
 latent, transition, utility-proxy, or direct-expert losses. The
@@ -538,10 +577,11 @@ The latent-action, MoE, and two-level routing components described in the
 preceding sections are not yet completed as a validated implementation of
 LARA. The codebase contains experimental scaffolding for a posterior latent
 action head with an explicit action-chunk decoder and reconstruction loss,
-residual or direct action experts, posterior-responsibility signals, an
+residual action experts over a shared latent-action baseline, direct full-action
+experts for ablation, posterior-responsibility signals, an
 episode-level resident-pool router, a chunk-level top-$k$ router inside that
 pool, route diagnostics, and counterfactual-utility sidecar plumbing. These
-paths are now default-on and should be treated as active research code rather
+paths are now default-on in the LIBERO100 experiment configuration and should be treated as active research code rather
 than completed paper evidence. In particular, the current repository does not
 yet provide a trained and validated MoE action head, a validated two-level
 routing policy, real counterfactual utility labels, or closed-loop SO101
@@ -604,7 +644,7 @@ All primary comparisons must report total parameters, resident parameters, activ
 
 \subsection{Metrics}
 
-The primary metric is closed-loop success under matched active inference compute. Secondary metrics are return, sample-efficiency AUC, compute-success Pareto efficiency, policy-ranking Spearman $\rho$ and Kendall $\tau$, posterior-router KL, teacher mass@resident-pool, teacher mass@active-top-$k$, critical expert miss rate, top-$k$ route consistency, route regret, expert usage entropy, route-switch frequency, utility calibration error, train-time overhead, and inference latency. If the episode-level route pool is used, also report subset-retention curves: success versus percentage of resident experts retained, e.g., 100\%, 50\%, 25\%, and 12.5\% resident experts.
+The primary metric is closed-loop success under matched active inference compute. Secondary metrics are return, sample-efficiency AUC, compute-success Pareto efficiency, policy-ranking Spearman $\rho$ and Kendall $\tau$, posterior-router KL, teacher mass@resident-pool, teacher mass@active-top-$k$, critical expert miss rate, top-$k$ route consistency, route regret, expert usage entropy, residual improvement over the shared policy, residual norm, pairwise residual similarity, route-switch frequency, utility calibration error, train-time overhead, and inference latency. If the episode-level route pool is used, also report subset-retention curves: success versus percentage of resident experts retained, e.g., 100\%, 50\%, 25\%, and 12.5\% resident experts.
 
 \begin{table}[t]
 \centering

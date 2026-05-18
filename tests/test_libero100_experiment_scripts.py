@@ -166,6 +166,8 @@ class Libero100ExperimentScriptsTest(unittest.TestCase):
             cases = {
                 "experts": {
                     "lara_use_direct_action_output": False,
+                    "lara_direct_expert_action_mode": "residual",
+                    "lara_direct_expert_improvement_posterior": True,
                     "lara_router_loss_weight": 0.0,
                     "lara_pool_loss_weight": 0.0,
                     "lara_pool_coverage_loss_weight": 0.0,
@@ -220,6 +222,52 @@ class Libero100ExperimentScriptsTest(unittest.TestCase):
                 action_model = cfg["framework"]["action_model"]
                 for key, value in expected.items():
                     self.assertEqual(action_model[key], value, f"{stage} {key}")
+                if stage == "experts":
+                    self.assertIn("action_head.action_model", cfg["trainer"]["freeze_modules"])
+
+    def test_runner_resume_uses_stage_specific_reload_modules(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            data_root = _make_minimal_libero(tmp_path / "data")
+            output_dir = tmp_path / "runs"
+            resume = tmp_path / "resume.pt"
+            resume.write_bytes(b"checkpoint")
+            cases = {
+                "experts": "action_head.action_model",
+                "router": "",
+            }
+            for stage, expected_reload in cases.items():
+                run_id = f"unit_resume_{stage}"
+                rc = subprocess.run(
+                    [
+                        sys.executable,
+                        str(ROOT / "scripts/run_lara_libero100_experiment.py"),
+                        "--stage",
+                        stage,
+                        "--data_root",
+                        str(data_root),
+                        "--resume_from",
+                        str(resume),
+                        "--output_dir",
+                        str(output_dir),
+                        "--run_id",
+                        run_id,
+                        "--dry_run",
+                        "--skip_preflight",
+                        "--no_accelerate",
+                    ],
+                    cwd=ROOT,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+                self.assertEqual(rc.returncode, 0, rc.stderr + rc.stdout)
+                cfg = yaml.safe_load((output_dir / run_id / "config" / f"{run_id}.yaml").read_text(encoding="utf-8"))
+                self.assertEqual(cfg["trainer"]["pretrained_checkpoint"], str(resume))
+                if expected_reload:
+                    self.assertIn(expected_reload, cfg["trainer"]["reload_modules"])
+                else:
+                    self.assertEqual(cfg["trainer"]["reload_modules"], expected_reload)
 
     def test_visualize_lara_routes_generates_core_figures(self):
         with tempfile.TemporaryDirectory() as tmp:

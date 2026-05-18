@@ -526,6 +526,60 @@ class ActionHeadAdapterSmokeTest(unittest.TestCase):
         self.assertEqual(pred_actions.shape, (1, 3, 2))
         self.assertTrue(torch.isfinite(pred_actions).all().item())
 
+    def test_residual_direct_experts_report_improvement_and_residual_metrics(self):
+        torch.manual_seed(0)
+        adapter = ActionHeadAdapter(
+            config=tiny_action_config(
+                use_lara_moe=True,
+                lara_num_experts=3,
+                lara_episode_pool_size=3,
+                lara_top_k=2,
+                lara_use_direct_action_experts=True,
+                lara_direct_expert_action_mode="residual",
+                lara_direct_expert_improvement_posterior=True,
+                lara_direct_expert_residual_cost_weight=0.01,
+                lara_direct_residual_norm_loss_weight=0.001,
+                lara_direct_residual_diversity_loss_weight=0.002,
+            ),
+            context_hidden_size=16,
+        )
+        adapter.train()
+
+        embodied_tokens = torch.randn(2, 2, 16)
+        latent_tokens = torch.randn(2, 1, 16)
+        actions = torch.randn(2, 3, 2)
+        state = torch.randn(2, 1, 3)
+
+        output = adapter(
+            embodied_action_tokens=embodied_tokens,
+            latent_action_tokens=latent_tokens,
+            actions=actions,
+            state=state,
+            trajectory_ids=[1, 1],
+            return_aux=True,
+        )
+
+        self.assertEqual(adapter.direct_expert_action_mode, "residual")
+        for key in [
+            "moe_shared_action_loss",
+            "moe_direct_expert_improvement_mean",
+            "moe_direct_expert_improvement_top1",
+            "moe_direct_expert_improvement_positive_rate",
+            "moe_direct_residual_norm",
+            "moe_direct_residual_norm_loss_weighted",
+            "moe_direct_residual_diversity_loss_weighted",
+            "moe_direct_residual_regularization_loss",
+        ]:
+            self.assertIn(key, output)
+            self.assertTrue(torch.isfinite(output[key]).all().item())
+        expected_total = (
+            output["action_loss"]
+            + output["moe_loss"]
+            + output["moe_direct_expert_loss"]
+            + output["moe_direct_residual_regularization_loss"]
+        )
+        self.assertTrue(torch.allclose(output["total_action_loss"], expected_total))
+
     def test_transition_head_adds_boundary_state_loss_when_targets_exist(self):
         torch.manual_seed(0)
         adapter = ActionHeadAdapter(

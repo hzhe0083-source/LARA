@@ -385,15 +385,26 @@ class FlowmatchingActionHead(nn.Module):
         return self.action_loss(pred_actions, velocity, reduction=reduction, action_mask=action_mask)
 
     @torch.no_grad()
-    def predict_action(self, vl_embs: torch.Tensor, state: torch.Tensor = None) -> torch.Tensor:
+    def predict_action(
+        self,
+        vl_embs: torch.Tensor,
+        state: torch.Tensor = None,
+        initial_actions: torch.Tensor = None,
+    ) -> torch.Tensor:
         # Set initial actions as the sampled noise.
         batch_size = vl_embs.shape[0]
         device = vl_embs.device
-        actions = torch.randn(
-            size=(batch_size, self.action_horizon, self.action_dim),
-            dtype=vl_embs.dtype,
-            device=device,
-        )
+        if initial_actions is None:
+            actions = torch.randn(
+                size=(batch_size, self.action_horizon, self.action_dim),
+                dtype=vl_embs.dtype,
+                device=device,
+            )
+        else:
+            expected_shape = (batch_size, self.action_horizon, self.action_dim)
+            if tuple(initial_actions.shape) != expected_shape:
+                raise ValueError(f"Expected initial_actions shape {expected_shape}, got {tuple(initial_actions.shape)}")
+            actions = initial_actions.to(device=device, dtype=vl_embs.dtype)
 
         num_steps = self.num_inference_timesteps
         dt = 1.0 / num_steps
