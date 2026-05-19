@@ -537,6 +537,13 @@ class ActionHeadAdapterSmokeTest(unittest.TestCase):
                 lara_use_direct_action_experts=True,
                 lara_direct_expert_action_mode="residual",
                 lara_direct_expert_improvement_posterior=True,
+                lara_direct_expert_hard_assignment=True,
+                lara_direct_expert_posterior_top_r=2,
+                lara_direct_expert_improvement_margin=0.0,
+                lara_direct_expert_shared_only_gate=True,
+                lara_direct_expert_residual_scale=0.5,
+                lara_direct_expert_residual_max_norm=0.02,
+                lara_direct_expert_residual_warmup_steps=10,
                 lara_direct_expert_residual_cost_weight=0.01,
                 lara_direct_residual_norm_loss_weight=0.001,
                 lara_direct_residual_diversity_loss_weight=0.002,
@@ -565,10 +572,47 @@ class ActionHeadAdapterSmokeTest(unittest.TestCase):
             "moe_direct_expert_improvement_mean",
             "moe_direct_expert_improvement_top1",
             "moe_direct_expert_improvement_positive_rate",
+            "moe_direct_expert_improvement_candidate_rate",
+            "moe_direct_assignment_active_rate",
+            "moe_direct_assignment_shared_only_rate",
+            "moe_direct_assignment_selected_experts",
+            "moe_direct_posterior_entropy",
+            "moe_direct_posterior_entropy_p50",
+            "moe_direct_posterior_effective_experts",
+            "moe_direct_posterior_top1_prob",
+            "moe_direct_posterior_top2_mass",
+            "moe_direct_posterior_support_size",
+            "moe_direct_posterior_usage_0",
+            "moe_direct_posterior_usage_1",
+            "moe_direct_posterior_usage_2",
             "moe_direct_residual_norm",
+            "moe_direct_residual_norm_0",
+            "moe_direct_residual_norm_1",
+            "moe_direct_residual_norm_2",
+            "moe_direct_residual_raw_norm",
+            "moe_direct_residual_raw_norm_0",
+            "moe_direct_residual_raw_norm_1",
+            "moe_direct_residual_raw_norm_2",
+            "moe_direct_residual_clamp_rate",
+            "moe_direct_residual_clamp_rate_0",
+            "moe_direct_residual_clamp_rate_1",
+            "moe_direct_residual_clamp_rate_2",
+            "moe_direct_residual_scale_base",
+            "moe_direct_residual_scale_effective",
+            "moe_direct_residual_warmup_fraction",
+            "moe_direct_residual_max_norm",
             "moe_direct_residual_norm_loss_weighted",
             "moe_direct_residual_diversity_loss_weighted",
             "moe_direct_residual_regularization_loss",
+            "moe_direct_expert_improvement_mean_0",
+            "moe_direct_expert_improvement_mean_1",
+            "moe_direct_expert_improvement_mean_2",
+            "moe_direct_expert_improvement_positive_rate_0",
+            "moe_direct_expert_improvement_positive_rate_1",
+            "moe_direct_expert_improvement_positive_rate_2",
+            "moe_direct_assignment_usage_0",
+            "moe_direct_assignment_usage_1",
+            "moe_direct_assignment_usage_2",
         ]:
             self.assertIn(key, output)
             self.assertTrue(torch.isfinite(output[key]).all().item())
@@ -579,6 +623,29 @@ class ActionHeadAdapterSmokeTest(unittest.TestCase):
             + output["moe_direct_residual_regularization_loss"]
         )
         self.assertTrue(torch.allclose(output["total_action_loss"], expected_total))
+        self.assertLessEqual(float(output["moe_direct_residual_norm"]), 0.0201)
+        self.assertTrue(torch.allclose(output["moe_direct_residual_scale_base"], torch.tensor(0.5)))
+        self.assertTrue(torch.allclose(output["moe_direct_residual_warmup_fraction"], torch.tensor(0.1)))
+        self.assertTrue(torch.allclose(output["moe_direct_residual_scale_effective"], torch.tensor(0.05)))
+        self.assertTrue(torch.allclose(output["moe_direct_residual_max_norm"], torch.tensor(0.02)))
+
+    def test_direct_expert_residual_clamp_bounds_per_expert_correction(self):
+        adapter = ActionHeadAdapter(
+            config=tiny_action_config(
+                use_lara_moe=True,
+                lara_use_direct_action_experts=True,
+                lara_direct_expert_action_mode="residual",
+                lara_direct_expert_residual_max_norm=0.5,
+            ),
+            context_hidden_size=16,
+        )
+
+        residuals = torch.ones(2, 3, 4, 2)
+        clamped = adapter._clamp_direct_expert_residuals(residuals)
+        norms = adapter._expert_residual_norm(clamped)
+
+        self.assertTrue(torch.all(norms <= 0.5001).item())
+        self.assertTrue(torch.allclose(norms, torch.full_like(norms, 0.5), atol=1e-4))
 
     def test_transition_head_adds_boundary_state_loss_when_targets_exist(self):
         torch.manual_seed(0)

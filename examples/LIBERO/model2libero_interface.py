@@ -127,7 +127,9 @@ class M1Inference:
         raw_action = {
             "world_vector": np.array(raw_actions[0, :3]),
             "rotation_delta": np.array(raw_actions[0, 3:6]),
-            "open_gripper": np.array(raw_actions[0, 6:7]),  # range [0, 1]; 1 = open; 0 = close
+            # LIBERO stores the gripper as the environment command:
+            # negative opens the gripper, positive closes it.
+            "open_gripper": np.array(raw_actions[0, 6:7]),
         }
 
         return {"raw_action": raw_action, "raw_actions": raw_actions[:7]}
@@ -137,7 +139,6 @@ class M1Inference:
         mask = action_norm_stats.get("mask", np.ones_like(action_norm_stats["min"], dtype=bool))
         action_high, action_low = np.array(action_norm_stats["max"]), np.array(action_norm_stats["min"])
         normalized_actions = np.clip(normalized_actions, -1, 1)
-        normalized_actions[:, 6] = np.where(normalized_actions[:, 6] < 0.5, 0, 1) 
         actions = np.where(
             mask,
             0.5 * (normalized_actions + 1) * (action_high - action_low) + action_low,

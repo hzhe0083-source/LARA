@@ -23,6 +23,13 @@ def _as_int(value) -> int:
     return int(torch.as_tensor(value).flatten()[0])
 
 
+def _task_text_column(columns: list[str]) -> str | None:
+    for candidate in ("task", "instruction", "__index_level_0__"):
+        if candidate in columns:
+            return candidate
+    return None
+
+
 def _load_task_map(repo_id: str) -> dict[int, str]:
     meta_dir = Path(repo_id) / "meta"
     tasks_parquet = meta_dir / "tasks.parquet"
@@ -34,7 +41,7 @@ def _load_task_map(repo_id: str) -> dict[int, str]:
         columns = table.column_names
         if "task_index" not in columns:
             return {}
-        task_column = "task" if "task" in columns else "instruction" if "instruction" in columns else None
+        task_column = _task_text_column(columns)
         if task_column is None:
             return {}
         indices = table["task_index"].to_pylist()
@@ -48,7 +55,7 @@ def _load_task_map(repo_id: str) -> dict[int, str]:
                     continue
                 row = json.loads(line)
                 task_index = row.get("task_index")
-                task = row.get("task", row.get("instruction"))
+                task = row.get("task", row.get("instruction", row.get("__index_level_0__")))
                 if task_index is not None and task is not None:
                     task_map[int(task_index)] = str(task)
         return task_map

@@ -20,4 +20,8 @@ dependencies:
   - pip:
       - -r requirements.txt
       - -c constraints/benchmark-py310.txt
+      - libero==0.1.1
+      - robosuite==1.4.0
+      - mujoco==3.8.1
+      - websockets==15.0.1
       - -e .[benchmark]

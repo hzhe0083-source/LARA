@@ -22,11 +22,24 @@ from examples.LIBERO.model2libero_interface import M1Inference
 
 LIBERO_DUMMY_ACTION = [0.0] * 6 + [-1.0]
 LIBERO_ENV_RESOLUTION = 256  # resolution used to render training data
-def _binarize_gripper_open(open_val: np.ndarray | float) -> np.ndarray:
-    arr = np.asarray(open_val, dtype=np.float32).reshape(-1)
-    v = float(arr[0])
-    bin_val = 1.0 - 2.0 * (v > 0.5)
-    return np.asarray([bin_val], dtype=np.float32)
+def _libero_gripper_command(gripper_val: np.ndarray | float) -> np.ndarray:
+    arr = np.asarray(gripper_val, dtype=np.float32).reshape(-1)
+    value = float(arr[0])
+    return np.asarray([-1.0 if value <= 0.0 else 1.0], dtype=np.float32)
+
+
+def _libero_observation_state(obs: dict) -> np.ndarray:
+    return np.concatenate(
+        (
+            np.asarray(obs["robot0_joint_pos"], dtype=np.float32),
+            np.asarray(obs["robot0_gripper_qpos"], dtype=np.float32),
+        )
+    )
+
+
+def _policy_image(image: np.ndarray) -> np.ndarray:
+    # MuJoCo's offscreen image is vertically flipped relative to the LeRobot frames.
+    return np.ascontiguousarray(np.asarray(image)[::-1, :])
 
 import hashlib
 
@@ -156,22 +169,13 @@ def eval_libero(args: Args) -> None:
                     t += 1
                     continue
 
-                # IMPORTANT: rotate 180 degrees to match train preprocessing
-                img = np.ascontiguousarray(obs["agentview_image"][::-1, ::-1])
-                wrist_img = np.ascontiguousarray(
-                    obs["robot0_eye_in_hand_image"][::-1, ::-1]
-                )
+                img = _policy_image(obs["agentview_image"])
+                wrist_img = _policy_image(obs["robot0_eye_in_hand_image"])
 
                 # Save preprocessed image for replay video
                 replay_images.append(img)
 
-                state = np.concatenate(
-                    (
-                        obs["robot0_eef_pos"],
-                        _quat2axisangle(obs["robot0_eef_quat"]),
-                        obs["robot0_gripper_qpos"],
-                    )
-                )
+                state = _libero_observation_state(obs)
 
                 observation = { # 
                     "observation.primary": np.expand_dims(
@@ -207,7 +211,7 @@ def eval_libero(args: Args) -> None:
                 world_vector_delta = np.asarray(raw_action.get("world_vector"), dtype=np.float32).reshape(-1)
                 rotation_delta = np.asarray(raw_action.get("rotation_delta"), dtype=np.float32).reshape(-1)
                 open_gripper = np.asarray(raw_action.get("open_gripper"), dtype=np.float32).reshape(-1)
-                gripper = _binarize_gripper_open(open_gripper)
+                gripper = _libero_gripper_command(open_gripper)
 
                 if not (world_vector_delta.size == 3 and rotation_delta.size == 3 and open_gripper.size == 1):
                     logging.warning(f"Unexpected action sizes: "
@@ -282,6 +286,7 @@ def _get_libero_env(task, resolution, seed):
         "bddl_file_name": task_bddl_file,
         "camera_heights": resolution,
         "camera_widths": resolution,
+        "control_freq": 30,
     }
     env = OffScreenRenderEnv(**env_args)
     env.seed(

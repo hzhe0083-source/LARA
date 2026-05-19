@@ -94,9 +94,15 @@ framework:
     # policy and asks routed experts to specialize on corrections.
     lara_direct_expert_action_mode: residual
     lara_direct_expert_improvement_posterior: true
-    lara_direct_expert_residual_scale: 1.0
-    lara_direct_expert_residual_cost_weight: 0.01
-    lara_direct_residual_norm_loss_weight: 0.001
+    lara_direct_expert_hard_assignment: true
+    lara_direct_expert_posterior_top_r: 2
+    lara_direct_expert_improvement_margin: 0.0
+    lara_direct_expert_shared_only_gate: true
+    lara_direct_expert_residual_scale: 0.08
+    lara_direct_expert_residual_max_norm: 0.06
+    lara_direct_expert_residual_warmup_steps: 800
+    lara_direct_expert_residual_cost_weight: 0.04
+    lara_direct_residual_norm_loss_weight: 0.01
     lara_direct_residual_diversity_loss_weight: 0.005
     lara_shared_action_deterministic_baseline: true
     lara_posterior_temperature: 1.0

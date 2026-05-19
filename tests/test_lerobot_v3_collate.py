@@ -1,14 +1,16 @@
 import unittest
+import tempfile
 import sys
 import types
 from types import SimpleNamespace
+from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
 import torch
 
 from Lara.dataloader import build_dataloader
-from Lara.dataloader.lerobot_v3_datasets import TaskTextDataset, collate_fn, get_lerobot_v3_datasets
+from Lara.dataloader.lerobot_v3_datasets import TaskTextDataset, _load_task_map, collate_fn, get_lerobot_v3_datasets
 
 
 class AttrDict(dict):
@@ -112,6 +114,32 @@ class LeRobotV3CollateTest(unittest.TestCase):
         )
 
         self.assertEqual(examples[0]["lang"], "open the drawer")
+
+    def test_load_task_map_accepts_lerobot_v3_index_level_task_text(self):
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            meta_dir = Path(tmpdir) / "meta"
+            meta_dir.mkdir()
+            pq.write_table(
+                pa.table(
+                    {
+                        "task_index": [7],
+                        "__index_level_0__": [
+                            "LIVING_ROOM_SCENE2: put both the alphabet soup and the tomato sauce in the basket"
+                        ],
+                    }
+                ),
+                meta_dir / "tasks.parquet",
+            )
+
+            task_map = _load_task_map(tmpdir)
+
+        self.assertEqual(
+            task_map[7],
+            "LIVING_ROOM_SCENE2: put both the alphabet soup and the tomato sauce in the basket",
+        )
 
     def test_build_dataloader_passes_vj2_video_horizon_to_v3_dataset_and_collate(self):
         class TinyDataset:

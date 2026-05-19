@@ -271,10 +271,22 @@ training. It predicts a shared action chunk
 \end{equation}
 which carries the common visuomotor structure needed by most demonstrations.
 Rather than asking each expert to predict the full chunk from scratch, LARA
-uses $M$ residual experts $\{\Delta E_m\}_{m=1}^M$:
+uses $M$ residual experts $\{\Delta E_m\}_{m=1}^M$. In practice we apply a
+training schedule and a norm clamp to the residual before adding it to the
+shared prediction:
+\begin{equation}
+ \tilde{\Delta}E_m(u_t)
+ = s(t)\,
+ \min\left(1,\frac{\Delta_{\max}}{\|\Delta E_m(u_t)\|_2+\epsilon}\right)
+ \Delta E_m(u_t),
+ \qquad u_t=[h_t,z_t^a],
+ \label{eq:residual_clamp}
+\end{equation}
+where $s(t)\in[0,1]$ is a residual warm-up schedule and $\Delta_{\max}$ is the
+maximum correction norm. The expert-corrected chunk is then
 \begin{equation}
  \hat{a}^{(m)}_{t:t+H-1}
- = a_{\mathrm{sh},t:t+H-1}+\Delta E_m(h_t,z_t^a).
+ = a_{\mathrm{sh},t:t+H-1}+\tilde{\Delta}E_m(h_t,z_t^a).
  \label{eq:residual_expert}
 \end{equation}
 This parameterization makes overlap explicit: common behavior remains in the
@@ -290,8 +302,8 @@ The training-time posterior responsibility is assigned by improvement over the
 shared policy, optionally penalizing large residual corrections:
 \begin{equation}
  q(m|h_t,a_{t:t+H-1}) =
- \frac{\exp\left((\ell_{\mathrm{sh}}-\ell_m-\beta\|\Delta E_m(h_t,z_t^a)\|^2)/\tau_q\right)}
- {\sum_{j=1}^{M}\exp\left((\ell_{\mathrm{sh}}-\ell_j-\beta\|\Delta E_j(h_t,z_t^a)\|^2)/\tau_q\right)}.
+ \frac{\exp\left((\ell_{\mathrm{sh}}-\ell_m-\beta\|\tilde{\Delta}E_m(h_t,z_t^a)\|^2)/\tau_q\right)}
+ {\sum_{j=1}^{M}\exp\left((\ell_{\mathrm{sh}}-\ell_j-\beta\|\tilde{\Delta}E_j(h_t,z_t^a)\|^2)/\tau_q\right)}.
  \label{eq:responsibility}
 \end{equation}
 When no expert improves the shared policy by a useful margin, the route should
@@ -305,7 +317,7 @@ The residual expert loss is responsibility-weighted:
  \mathcal{L}_{\mathrm{expert}} =
  \sum_{i\in\mathcal{B}}\sum_{m=1}^{M}
  q(m|h_i,a_{i:i+H-1})\,\ell_m(a_{i:i+H-1};h_i)
- +\lambda_{\Delta}\|\Delta E_m(h_i,z_i^a)\|^2.
+ +\lambda_{\Delta}\|\tilde{\Delta}E_m(h_i,z_i^a)\|^2.
  \label{eq:expert_loss}
 \end{equation}
 This is a soft assignment, not a hard split of the dataset. A demonstration can
@@ -491,6 +503,23 @@ Balanced usage does not guarantee distinct expert functions. In the residual for
 \end{equation}
 Expert dropout or soft capacity limits can further prevent early dominant experts from consuming most high-responsibility chunks. A healthy residual expert set should show nonzero residual norms, positive improvement for at least some contexts, and residual similarity below the fully redundant regime.
 
+\paragraph{Residual magnitude control.}
+Residual experts can also fail in the opposite direction: once they receive
+enough posterior mass, their corrections can grow until they overwrite the
+shared latent-action policy instead of improving it. We therefore treat residual
+magnitude as a first-class stability constraint. During expert warm-up, the
+effective residual scale $s(t)$ increases gradually from zero to its target
+value, and the applied correction is clipped by the norm constraint in
+Eq.~\eqref{eq:residual_clamp}. The raw residual is still logged, but the policy
+only receives the clamped residual. We monitor the applied residual norm, raw
+residual norm, clamp rate, expert active rate, shared-only rate, effective
+number of posterior experts, and mean improvement
+$\ell_{\mathrm{sh}}-\ell_m$. A useful residual expert should keep nonzero
+expert participation and non-collapsed top-$r$ assignment while maintaining
+nonnegative or near-zero improvement over the shared policy. Persistent negative
+improvement together with rising raw residual norm indicates over-correction,
+even if routing entropy or load balance looks healthy.
+
 \paragraph{Delayed utility calibration.}
 Counterfactual utility should not dominate before the latent codes, experts, and prior router are reasonably stable. We therefore start with latent-action reconstruction and posterior-responsibility training, then add prior-router distillation, and only later increase the weight of $\mathcal{L}_{\mathrm{utility}}$. Utility targets use stop-gradient labels and lagged value or uncertainty heads. We retain a nonzero distillation weight during utility fine-tuning so that routing remains close to the demonstrated behavior distribution while being calibrated toward downstream control.
 
@@ -530,9 +559,9 @@ The latent regularizer $\mathcal{L}_{\mathrm{latent}}$ contains the codebook, co
 \State Infer posterior latent action embedding $e_t=E_\phi(h_t,a_{t:t+H_p-1})$ and obtain $z_t^a$ by quantization or continuous sampling.
 \State Train action decoder and chunk-boundary transition with $\mathcal{L}_{\mathrm{chunk}}$ and $\mathcal{L}_{\mathrm{state}}$.
 \State Freeze or slow-update the shared latent-action policy and compute $a_{\mathrm{sh}}=f_{\mathrm{sh}}(h_t,z_t^a)$.
-\State Predict residual corrections $\Delta E_m(h_t,z_t^a)$ and expert-corrected chunks $\hat{a}^{(m)}=a_{\mathrm{sh}}+\Delta E_m(h_t,z_t^a)$.
+\State Predict raw residual corrections $\Delta E_m(h_t,z_t^a)$, apply residual warm-up and norm clipping to obtain $\tilde{\Delta}E_m(h_t,z_t^a)$, and form expert-corrected chunks $\hat{a}^{(m)}=a_{\mathrm{sh}}+\tilde{\Delta}E_m(h_t,z_t^a)$.
 \State Compute posterior expert responsibilities from improvement over the shared loss, $q_{\mathrm{post}}(m|h_t,a_{t:t+H_p-1})$.
-\State Update residual experts with responsibility-weighted loss $\mathcal{L}_{\mathrm{expert}}$ and residual norm/diversity diagnostics.
+\State Update residual experts with responsibility-weighted loss $\mathcal{L}_{\mathrm{expert}}$ and raw/applied residual norm, clamp-rate, improvement, and diversity diagnostics.
 \State Optionally aggregate responsibilities over the episode and train $p_\chi(P_\tau|g,h_1,b)$ with $\mathcal{L}_{\mathrm{pool}}$.
 \State Train the chunk-level prior router $p_\rho(m|h_t,P_\tau)$ by distillation from $q_{\mathrm{post}}$.
 \State Apply stabilization terms, including code-usage monitoring, smoothed responsibilities, global load balancing, route stickiness, and optional expert-diversity regularization.
@@ -709,7 +738,7 @@ The two-level routing implementation connects active-compute efficiency with res
 
 \section{Limitations}
 
-The method does not bypass data limitations. If the demonstrations do not cover the necessary behavior modes, latent-action discovery cannot invent them. MoE also does not automatically reduce VRAM: if all experts are resident on the device, memory may increase, even if active FLOPs decrease. Practical deployment should prefer shared VLA backbones with small MoE adapters or action heads. Finally, the posterior teacher can produce misleading responsibilities if the experts are weak early in training; curriculum, entropy regularization, warm-started dense action models, and explicit collapse diagnostics are likely necessary. Stabilizers such as load balancing or diversity penalties must be tuned carefully, since overly strong regularization can force artificial expert usage and degrade control performance.
+The method does not bypass data limitations. If the demonstrations do not cover the necessary behavior modes, latent-action discovery cannot invent them. MoE also does not automatically reduce VRAM: if all experts are resident on the device, memory may increase, even if active FLOPs decrease. Practical deployment should prefer shared VLA backbones with small MoE adapters or action heads. Finally, the posterior teacher can produce misleading responsibilities if the experts are weak early in training; curriculum, entropy regularization, warm-started dense action models, residual warm-up, norm clipping, and explicit collapse diagnostics are likely necessary. Stabilizers such as load balancing or diversity penalties must be tuned carefully, since overly strong regularization can force artificial expert usage and degrade control performance.
 
 \section{Conclusion}
 

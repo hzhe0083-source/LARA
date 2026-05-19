@@ -25,6 +25,9 @@ import numpy as np
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LIBERO_DUMMY_ACTION = [0.0] * 6 + [-1.0]
 LIBERO_ENV_RESOLUTION = 256
+DEFAULT_LEROBOT_TASKS_PATH = (
+    REPO_ROOT / "data/libero100/kevin_libero100_lerobot/meta/tasks.parquet"
+)
 
 
 def _jsonable(value: Any) -> Any:
@@ -43,21 +46,57 @@ def _jsonable(value: Any) -> Any:
     return value
 
 
-def _quat2axisangle(quat: np.ndarray) -> np.ndarray:
-    quat = np.asarray(quat, dtype=np.float64)
-    if quat[3] > 1.0:
-        quat = quat / np.linalg.norm(quat)
-    angle = 2.0 * np.arccos(quat[3])
-    den = np.sqrt(max(1.0 - quat[3] * quat[3], 0.0))
-    if den < 1e-8:
-        return np.zeros(3, dtype=np.float32)
-    return (quat[:3] * angle / den).astype(np.float32)
-
-
-def _binarize_gripper_open(open_val: np.ndarray | float) -> np.ndarray:
-    arr = np.asarray(open_val, dtype=np.float32).reshape(-1)
+def _libero_gripper_command(gripper_val: np.ndarray | float) -> np.ndarray:
+    arr = np.asarray(gripper_val, dtype=np.float32).reshape(-1)
     value = float(arr[0])
-    return np.asarray([1.0 - 2.0 * (value > 0.5)], dtype=np.float32)
+    return np.asarray([-1.0 if value <= 0.0 else 1.0], dtype=np.float32)
+
+
+def _action_replan_period(action_chunk_size: int, replan_every: int | None) -> int:
+    if replan_every is None:
+        return action_chunk_size
+    if replan_every <= 0:
+        raise ValueError(f"replan_every must be positive, got {replan_every}")
+    return min(int(replan_every), int(action_chunk_size))
+
+
+def _transform_libero_action(
+    raw_action_row: np.ndarray,
+    *,
+    xyz_scale: float,
+    rot_scale: float,
+    invert_x: bool,
+    invert_y: bool,
+    invert_z: bool,
+    invert_rx: bool,
+    invert_ry: bool,
+    invert_rz: bool,
+) -> np.ndarray:
+    action = np.asarray(raw_action_row, dtype=np.float32).copy()
+    action[:3] *= float(xyz_scale)
+    action[3:6] *= float(rot_scale)
+    if invert_x:
+        action[0] *= -1.0
+    if invert_y:
+        action[1] *= -1.0
+    if invert_z:
+        action[2] *= -1.0
+    if invert_rx:
+        action[3] *= -1.0
+    if invert_ry:
+        action[4] *= -1.0
+    if invert_rz:
+        action[5] *= -1.0
+    return action
+
+
+def _libero_observation_state(obs: dict[str, Any]) -> np.ndarray:
+    return np.concatenate(
+        (
+            np.asarray(obs["robot0_joint_pos"], dtype=np.float32),
+            np.asarray(obs["robot0_gripper_qpos"], dtype=np.float32),
+        )
+    )[None]
 
 
 def _resize_image(image: np.ndarray, image_size: list[int]) -> np.ndarray:
@@ -66,12 +105,90 @@ def _resize_image(image: np.ndarray, image_size: list[int]) -> np.ndarray:
     return cv.resize(image, tuple(image_size), interpolation=cv.INTER_AREA)
 
 
+def _policy_image(image: np.ndarray) -> np.ndarray:
+    # MuJoCo's offscreen image is vertically flipped relative to the LeRobot frames.
+    return np.ascontiguousarray(np.asarray(image)[::-1, :])
+
+
 def _short_name(text: str, max_len: int = 80) -> str:
     import hashlib
 
     digest = hashlib.md5(text.encode("utf-8")).hexdigest()[:8]
     clean = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in text)[:max_len]
     return f"{clean}_{digest}"
+
+
+def _load_lerobot_task_texts(path: Path | None) -> dict[str, dict[str, str]]:
+    if path is None:
+        return {}
+    if not path.exists():
+        raise FileNotFoundError(f"LeRobot task metadata not found: {path}")
+
+    def split_scene(text: str) -> tuple[str | None, str]:
+        if ":" not in text:
+            return None, text.strip()
+        scene, instruction = text.split(":", 1)
+        return scene.strip(), instruction.strip()
+
+    if path.suffix == ".parquet":
+        import pyarrow.parquet as pq
+
+        table = pq.read_table(path)
+        rows = table.to_pylist()
+        columns = table.column_names
+        text_column = next(
+            (candidate for candidate in ("task", "instruction", "__index_level_0__") if candidate in columns),
+            None,
+        )
+    else:
+        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        text_column = None
+
+    task_texts: dict[str, dict[str, str]] = {}
+    for row in rows:
+        task_index = row.get("task_index")
+        if task_index is None:
+            continue
+        raw_text = row.get(text_column) if text_column is not None else row.get("task", row.get("instruction"))
+        if raw_text is None:
+            raw_text = row.get("__index_level_0__")
+        if raw_text is None:
+            continue
+        full_text = str(raw_text).strip()
+        scene, instruction = split_scene(full_text)
+        task_texts[str(int(task_index))] = {
+            "full": full_text,
+            "instruction": instruction,
+            "scene": scene or "",
+        }
+    return task_texts
+
+
+def _task_description_for_policy(
+    *,
+    suite_name: str,
+    task_id: int,
+    libero_language: str,
+    problem_folder: str | None = None,
+    lerobot_task_texts: dict[str, dict[str, str]],
+    use_lerobot_task_text: bool,
+) -> str:
+    if not use_lerobot_task_text:
+        return libero_language
+    scene = Path(str(problem_folder)).name if problem_folder else None
+    matches = [row for row in lerobot_task_texts.values() if row["instruction"] == libero_language]
+    if scene:
+        scene_matches = [row for row in matches if row["scene"] == scene]
+        if len(scene_matches) == 1:
+            return scene_matches[0]["full"]
+    if len(matches) == 1:
+        return matches[0]["full"]
+    if len(matches) > 1:
+        raise KeyError(
+            f"Ambiguous LeRobot task text for {suite_name}:{task_id} "
+            f"scene={scene!r} instruction={libero_language!r}"
+        )
+    raise KeyError(f"Could not map LIBERO task {suite_name}:{task_id} to LeRobot task text: {libero_language!r}")
 
 
 def _max_steps(task_suite_name: str) -> int:
@@ -89,12 +206,21 @@ def _max_steps(task_suite_name: str) -> int:
 
 
 def _get_libero_env(task, resolution: int, seed: int):
+    import libero.libero as libero_module
+    from libero.libero import get_libero_path
     from libero.libero.envs import OffScreenRenderEnv
 
+    assets_path = Path(get_libero_path("assets"))
+    if assets_path.exists():
+        # The pip package's get_assets_path() does not read LIBERO_CONFIG_PATH.
+        # Point its cache at the configured assets so arena XML paths resolve.
+        libero_module._assets_path_cache = str(assets_path)
+
     env_args = {
-        "bddl_file_name": task.problem_folder + "/" + task.bddl_file,
+        "bddl_file_name": str(Path(get_libero_path("bddl_files")) / task.problem_folder / task.bddl_file),
         "camera_heights": resolution,
         "camera_widths": resolution,
+        "control_freq": 30,
     }
     env = OffScreenRenderEnv(**env_args)
     env.seed(seed)
@@ -202,7 +328,26 @@ def _summarize_records(records: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 class RouteClient:
-    def __init__(self, host: str, port: int, checkpoint: Path, image_size: list[int], with_state: bool):
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        checkpoint: Path,
+        image_size: list[int],
+        with_state: bool,
+        *,
+        replan_every: int | None,
+        xyz_scale: float,
+        rot_scale: float,
+        invert_x: bool,
+        invert_y: bool,
+        invert_z: bool,
+        invert_rx: bool,
+        invert_ry: bool,
+        invert_rz: bool,
+        sticky_gripper_steps: int,
+        gripper_lookahead_steps: int,
+    ):
         from deployment.model_server.tools.websocket_policy_client import WebsocketClientPolicy
         from examples.LIBERO.model2libero_interface import M1Inference
 
@@ -216,8 +361,24 @@ class RouteClient:
         self.image_size = image_size
         self.action_norm_stats = M1Inference.get_action_stats(self.unnorm_key, policy_ckpt_path=checkpoint)
         self.action_chunk_size = M1Inference.get_action_chunk_size(policy_ckpt_path=checkpoint)
+        self.replan_period = _action_replan_period(self.action_chunk_size, replan_every)
         self.unnormalize_actions = M1Inference.unnormalize_actions
         self.with_state = with_state
+        self.xyz_scale = xyz_scale
+        self.rot_scale = rot_scale
+        self.invert_x = invert_x
+        self.invert_y = invert_y
+        self.invert_z = invert_z
+        self.invert_rx = invert_rx
+        self.invert_ry = invert_ry
+        self.invert_rz = invert_rz
+        if sticky_gripper_steps < 0:
+            raise ValueError(f"sticky_gripper_steps must be non-negative, got {sticky_gripper_steps}")
+        if gripper_lookahead_steps < 0:
+            raise ValueError(f"gripper_lookahead_steps must be non-negative, got {gripper_lookahead_steps}")
+        self.sticky_gripper_steps = int(sticky_gripper_steps)
+        self.gripper_lookahead_steps = int(gripper_lookahead_steps)
+        self.sticky_gripper_remaining = 0
         self.task_description = None
         self.raw_actions = None
         self.last_latency_ms = None
@@ -238,6 +399,7 @@ class RouteClient:
     def reset(self, task_description: str, session_id: str, *, write_previous_trace: bool = False) -> None:
         self.task_description = task_description
         self.raw_actions = None
+        self.sticky_gripper_remaining = 0
         self.last_latency_ms = None
         self.last_vram_mb = None
         if write_previous_trace:
@@ -265,7 +427,7 @@ class RouteClient:
         forced_expert_id: int | None = None,
     ) -> dict[str, Any]:
         images = [_resize_image(image, self.image_size) for image in images]
-        if step % self.action_chunk_size == 0 or self.raw_actions is None:
+        if step % self.replan_period == 0 or self.raw_actions is None:
             payload: dict[str, Any] = {
                 "batch_images": [images],
                 "instructions": [self.task_description],
@@ -287,13 +449,43 @@ class RouteClient:
                 normalized_actions=normalized_actions,
                 action_norm_stats=self.action_norm_stats,
             )
-        raw_action_row = self.raw_actions[step % self.action_chunk_size][None]
+        raw_action_row = self.raw_actions[step % self.replan_period]
+        transformed_action_row = _transform_libero_action(
+            raw_action_row,
+            xyz_scale=self.xyz_scale,
+            rot_scale=self.rot_scale,
+            invert_x=self.invert_x,
+            invert_y=self.invert_y,
+            invert_z=self.invert_z,
+            invert_rx=self.invert_rx,
+            invert_ry=self.invert_ry,
+            invert_rz=self.invert_rz,
+        )
         raw_action = {
-            "world_vector": np.array(raw_action_row[0, :3]),
-            "rotation_delta": np.array(raw_action_row[0, 3:6]),
-            "open_gripper": np.array(raw_action_row[0, 6:7]),
+            "world_vector": np.array(transformed_action_row[:3]),
+            "rotation_delta": np.array(transformed_action_row[3:6]),
+            "open_gripper": np.array(transformed_action_row[6:7]),
         }
-        return {"raw_action": raw_action, "raw_actions": raw_action_row}
+        gripper = _libero_gripper_command(raw_action["open_gripper"])
+        if float(gripper[0]) <= 0.0 and self.gripper_lookahead_steps > 0:
+            lookahead_end = min(
+                len(self.raw_actions),
+                step % self.replan_period + self.gripper_lookahead_steps + 1,
+            )
+            future_gripper = self.raw_actions[step % self.replan_period + 1 : lookahead_end, 6]
+            if future_gripper.size and bool(np.any(future_gripper > 0.0)):
+                raw_action["open_gripper"] = np.asarray([1.0], dtype=np.float32)
+                gripper = np.asarray([1.0], dtype=np.float32)
+        if float(gripper[0]) > 0.0 and self.sticky_gripper_steps > 0:
+            self.sticky_gripper_remaining = self.sticky_gripper_steps
+        elif self.sticky_gripper_remaining > 0:
+            raw_action["open_gripper"] = np.asarray([1.0], dtype=np.float32)
+            self.sticky_gripper_remaining -= 1
+        return {
+            "raw_action": raw_action,
+            "raw_actions": transformed_action_row[None],
+            "raw_model_action": np.asarray(raw_action_row, dtype=np.float32)[None],
+        }
 
 
 def maybe_start_server(args: argparse.Namespace, trace_path: Path) -> subprocess.Popen | None:
@@ -323,6 +515,8 @@ def maybe_start_server(args: argparse.Namespace, trace_path: Path) -> subprocess
 
 def run_eval(args: argparse.Namespace) -> dict[str, Any]:
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    if args.video_out_dir is not None:
+        args.video_out_dir.mkdir(parents=True, exist_ok=True)
     records_path = args.output_dir / "rollout_records.jsonl"
     summary_path = args.output_dir / "eval_summary.json"
     full_trace_path = args.output_dir / "sampled_route_traces.jsonl"
@@ -336,12 +530,26 @@ def run_eval(args: argparse.Namespace) -> dict[str, Any]:
     try:
         suite_plan = _suite_plan(args.task_suite_name, args.category_value)
         selected_task_ids_by_suite = _suite_task_ids(args.task_ids, suite_plan)
+        lerobot_task_texts = _load_lerobot_task_texts(
+            args.lerobot_tasks_path if args.use_lerobot_task_text else None
+        )
         client = RouteClient(
             host=args.host,
             port=args.port,
             checkpoint=args.checkpoint,
             image_size=args.resize_size,
             with_state=args.with_state,
+            replan_every=args.replan_every,
+            xyz_scale=args.xyz_scale,
+            rot_scale=args.rot_scale,
+            invert_x=args.invert_x,
+            invert_y=args.invert_y,
+            invert_z=args.invert_z,
+            invert_rx=args.invert_rx,
+            invert_ry=args.invert_ry,
+            invert_rz=args.invert_rz,
+            sticky_gripper_steps=args.sticky_gripper_steps,
+            gripper_lookahead_steps=args.gripper_lookahead_steps,
         )
         rng = np.random.default_rng(args.seed)
         records: list[dict[str, Any]] = []
@@ -351,7 +559,15 @@ def run_eval(args: argparse.Namespace) -> dict[str, Any]:
             for task_id in selected_task_ids_by_suite.get(suite_name, []):
                 task = task_suite.get_task(task_id)
                 initial_states = task_suite.get_task_init_states(task_id)
-                env, task_description = _get_libero_env(task, LIBERO_ENV_RESOLUTION, args.seed)
+                env, libero_task_description = _get_libero_env(task, LIBERO_ENV_RESOLUTION, args.seed)
+                task_description = _task_description_for_policy(
+                    suite_name=suite_name,
+                    task_id=task_id,
+                    libero_language=libero_task_description,
+                    problem_folder=getattr(task, "problem_folder", None),
+                    lerobot_task_texts=lerobot_task_texts,
+                    use_lerobot_task_text=args.use_lerobot_task_text,
+                )
                 for episode_idx in range(args.num_trials_per_task):
                     session_id = f"{suite_name}_task{task_id}_episode{episode_idx}_{int(time.time() * 1000)}"
                     client.reset(task_description=task_description, session_id=session_id)
@@ -367,20 +583,17 @@ def run_eval(args: argparse.Namespace) -> dict[str, Any]:
                     start_time = time.perf_counter()
                     latency_ms_values = []
                     vram_mb_values = []
+                    replay_images = []
                     while t < max_steps + args.num_steps_wait:
                         if t < args.num_steps_wait:
                             obs, reward, done, _info = env.step(LIBERO_DUMMY_ACTION)
                             t += 1
                             continue
-                        img = np.ascontiguousarray(obs["agentview_image"][::-1, ::-1])
-                        wrist_img = np.ascontiguousarray(obs["robot0_eye_in_hand_image"][::-1, ::-1])
-                        state = np.concatenate(
-                            (
-                                obs["robot0_eef_pos"],
-                                _quat2axisangle(obs["robot0_eef_quat"]),
-                                obs["robot0_gripper_qpos"],
-                            )
-                        )[None]
+                        img = _policy_image(obs["agentview_image"])
+                        wrist_img = _policy_image(obs["robot0_eye_in_hand_image"])
+                        if args.video_out_dir is not None:
+                            replay_images.append(img)
+                        state = _libero_observation_state(obs)
                         response = client.step(
                             images=[img, wrist_img],
                             state=state,
@@ -395,7 +608,7 @@ def run_eval(args: argparse.Namespace) -> dict[str, Any]:
                         raw_action = response["raw_action"]
                         world_vector_delta = np.asarray(raw_action["world_vector"], dtype=np.float32).reshape(-1)
                         rotation_delta = np.asarray(raw_action["rotation_delta"], dtype=np.float32).reshape(-1)
-                        gripper = _binarize_gripper_open(raw_action["open_gripper"])
+                        gripper = _libero_gripper_command(raw_action["open_gripper"])
                         action = np.concatenate([world_vector_delta, rotation_delta, gripper], axis=0)
                         obs, reward, done, _info = env.step(action.tolist())
                         return_score += float(reward)
@@ -414,6 +627,7 @@ def run_eval(args: argparse.Namespace) -> dict[str, Any]:
                         "task_id": task_id,
                         "episode_idx": episode_idx,
                         "task_description": task_description,
+                        "libero_task_description": libero_task_description,
                         "success": bool(done),
                         "return_score": return_score,
                         "episode_length": step,
@@ -430,6 +644,19 @@ def run_eval(args: argparse.Namespace) -> dict[str, Any]:
                         # outcome still lands in rollout_records.jsonl below.
                         client.clear_session(session_id)
                     _write_jsonl(records_path, outcome)
+                    if args.video_out_dir is not None and replay_images:
+                        import imageio
+
+                        suffix = "success" if done else "failure"
+                        video_name = (
+                            f"{suite_name}_task{task_id}_episode{episode_idx}_{suffix}_"
+                            f"{_short_name(task_description)}.mp4"
+                        )
+                        imageio.mimwrite(
+                            args.video_out_dir / video_name,
+                            [np.asarray(image) for image in replay_images],
+                            fps=10,
+                        )
                     records.append(outcome)
                     logging.info(
                         "suite=%s task=%s episode=%s success=%s return=%.3f length=%s",
@@ -449,6 +676,18 @@ def run_eval(args: argparse.Namespace) -> dict[str, Any]:
                 "task_suite_name": args.task_suite_name,
                 "suite_plan": [suite_name for suite_name, _ in suite_plan],
                 "task_ids": selected_task_ids_by_suite,
+                "action_chunk_size": client.action_chunk_size,
+                "replan_every": client.replan_period,
+                "xyz_scale": args.xyz_scale,
+                "rot_scale": args.rot_scale,
+                "invert_x": args.invert_x,
+                "invert_y": args.invert_y,
+                "invert_z": args.invert_z,
+                "invert_rx": args.invert_rx,
+                "invert_ry": args.invert_ry,
+                "invert_rz": args.invert_rz,
+                "sticky_gripper_steps": args.sticky_gripper_steps,
+                "gripper_lookahead_steps": args.gripper_lookahead_steps,
                 "rollout_records": str(records_path),
                 "sampled_route_traces": str(full_trace_path) if full_trace_path.exists() else None,
             }
@@ -468,6 +707,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", required=True, type=Path)
     parser.add_argument("--output_dir", "--output-dir", required=True, type=Path)
+    parser.add_argument("--video_out_dir", "--video-out-dir", type=Path)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=10093)
     parser.add_argument("--start_server", "--start-server", action="store_true")
@@ -487,10 +727,52 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--resize_size", "--resize-size", type=int, nargs=2, default=[224, 224])
     parser.add_argument("--with_state", "--with-state", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--replan_every",
+        "--replan-every",
+        type=int,
+        help="Request a fresh policy chunk every N executed steps. Defaults to the checkpoint chunk size.",
+    )
+    parser.add_argument("--xyz_scale", "--xyz-scale", type=float, default=1.5)
+    parser.add_argument("--rot_scale", "--rot-scale", type=float, default=1.5)
+    parser.add_argument("--invert_x", "--invert-x", action="store_true")
+    parser.add_argument("--invert_y", "--invert-y", action="store_true")
+    parser.add_argument("--invert_z", "--invert-z", action="store_true")
+    parser.add_argument("--invert_rx", "--invert-rx", action="store_true")
+    parser.add_argument("--invert_ry", "--invert-ry", action="store_true")
+    parser.add_argument("--invert_rz", "--invert-rz", action="store_true")
+    parser.add_argument(
+        "--sticky_gripper_steps",
+        "--sticky-gripper-steps",
+        type=int,
+        default=0,
+        help="After a close command is predicted, keep sending close for this many additional env steps.",
+    )
+    parser.add_argument(
+        "--gripper_lookahead_steps",
+        "--gripper-lookahead-steps",
+        type=int,
+        default=0,
+        help="If a future step in the current chunk predicts close, start closing this many steps early.",
+    )
     parser.add_argument("--sample_full_route_every", "--sample-full-route-every", type=int, default=10)
     parser.add_argument("--forced_expert_id", "--forced-expert-id", type=int)
     parser.add_argument("--random_forced_expert", "--random-forced-expert", action="store_true")
     parser.add_argument("--num_experts", "--num-experts", type=int)
+    parser.add_argument(
+        "--use_lerobot_task_text",
+        "--use-lerobot-task-text",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Use the full LeRobot metadata task text, including scene prefix when available, as the policy instruction.",
+    )
+    parser.add_argument(
+        "--lerobot_tasks_path",
+        "--lerobot-tasks-path",
+        type=Path,
+        default=DEFAULT_LEROBOT_TASKS_PATH,
+        help="Path to LeRobot meta/tasks.parquet or tasks.jsonl used for task text mapping.",
+    )
     return parser.parse_args(argv)
 
 

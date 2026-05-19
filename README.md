@@ -334,7 +334,12 @@ conda activate lara-libero100
 MAX_JOBS=4 pip install flash-attn --no-build-isolation
 ```
 
-A matching container base is provided in `Dockerfile.lara-libero100`. It intentionally does not bake model weights or LIBERO100 data into the image; mount those under your server storage and pass the paths to the launcher.
+A matching container base is provided in `Dockerfile.lara-libero100`. It starts from
+`nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04` and installs the LIBERO eval stack
+(`libero==0.1.1`, `robosuite==1.4.0`, `mujoco==3.8.1`, `websockets==15.0.1`)
+alongside the LARA training requirements. It intentionally does not bake model
+weights or LIBERO100 data into the image; mount those under your server storage
+and pass the paths to the launcher.
 
 ### Storage-Aware LIBERO100 Server Run
 

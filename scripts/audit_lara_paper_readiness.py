@@ -23,6 +23,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from Lara.evaluation import counterfactual_utility_matrix_from_records  # noqa: E402
+
 
 def _repo_path(path: str | Path | None) -> Path | None:
     if path is None or str(path) == "":
@@ -428,7 +430,7 @@ def _sidecar_check(path: Path | None, cfg: Any) -> dict[str, Any]:
     action_cfg = _value(cfg, "framework.action_model", {})
     dataset_cfg = _value(cfg, "datasets.vla_data", {})
     records = load_records(path)
-    matrix = _sidecar_metadata(
+    matrix = counterfactual_utility_matrix_from_records(
         records,
         num_experts=int(_value(action_cfg, "lara_num_experts", 0)),
         cost_weight=float(_value(dataset_cfg, "counterfactual_utility_cost_weight", 0.0) or 0.0),

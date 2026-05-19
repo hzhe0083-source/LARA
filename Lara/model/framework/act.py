@@ -101,6 +101,14 @@ class ActionHeadAdapter(nn.Module):
             raise ValueError("lara_direct_expert_action_mode must be 'full' or 'residual'")
         self.direct_expert_action_mode = direct_expert_action_mode
         self.direct_expert_residual_scale = action_cfg.get("lara_direct_expert_residual_scale", 1.0)
+        self.direct_expert_residual_max_norm = action_cfg.get("lara_direct_expert_residual_max_norm", None)
+        if self.direct_expert_residual_max_norm is not None and self.direct_expert_residual_max_norm <= 0:
+            raise ValueError("lara_direct_expert_residual_max_norm must be positive when set")
+        self.direct_expert_residual_warmup_steps = int(
+            action_cfg.get("lara_direct_expert_residual_warmup_steps", 0) or 0
+        )
+        if self.direct_expert_residual_warmup_steps < 0:
+            raise ValueError("lara_direct_expert_residual_warmup_steps must be non-negative")
         self.direct_expert_residual_cost_weight = action_cfg.get(
             "lara_direct_expert_residual_cost_weight",
             0.0,
@@ -108,6 +116,24 @@ class ActionHeadAdapter(nn.Module):
         self.direct_expert_improvement_posterior = action_cfg.get(
             "lara_direct_expert_improvement_posterior",
             self.direct_expert_action_mode == "residual",
+        )
+        self.direct_expert_hard_assignment = action_cfg.get(
+            "lara_direct_expert_hard_assignment",
+            False,
+        )
+        self.direct_expert_posterior_top_r = action_cfg.get(
+            "lara_direct_expert_posterior_top_r",
+            None,
+        )
+        if self.direct_expert_posterior_top_r is not None and self.direct_expert_posterior_top_r <= 0:
+            raise ValueError("lara_direct_expert_posterior_top_r must be positive")
+        self.direct_expert_improvement_margin = action_cfg.get(
+            "lara_direct_expert_improvement_margin",
+            0.0,
+        )
+        self.direct_expert_shared_only_gate = action_cfg.get(
+            "lara_direct_expert_shared_only_gate",
+            False,
         )
         self.direct_residual_norm_loss_weight = action_cfg.get("lara_direct_residual_norm_loss_weight", 0.0)
         self.direct_residual_diversity_loss_weight = action_cfg.get(
@@ -126,6 +152,11 @@ class ActionHeadAdapter(nn.Module):
         self.repeated_diffusion_steps = action_cfg.get(
             "repeated_diffusion_steps",
             self.config.trainer.get("repeated_diffusion_steps", 4) if self.config and self.config.trainer else 4,
+        )
+        self.register_buffer(
+            "_direct_expert_train_steps",
+            torch.zeros((), dtype=torch.long),
+            persistent=False,
         )
         self.condition_norm = nn.LayerNorm(context_hidden_size)
         self.latent_norm = nn.LayerNorm(context_hidden_size)
@@ -238,20 +269,76 @@ class ActionHeadAdapter(nn.Module):
         self,
         conditioning_tokens: torch.Tensor,
         state_tensor: Optional[torch.Tensor],
-    ) -> tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
+    ) -> tuple[
+        torch.Tensor,
+        Optional[torch.Tensor],
+        Optional[torch.Tensor],
+        dict[str, torch.Tensor],
+    ]:
         if self.direct_action_experts is None:
             raise RuntimeError("_direct_expert_action_bank requires direct_action_experts")
         raw_expert_actions = self.direct_action_experts(conditioning_tokens, state=state_tensor)
         if self.direct_expert_action_mode == "full":
-            return raw_expert_actions, None, None
+            return raw_expert_actions, None, None, {}
         shared_actions = self._shared_action_prediction(conditioning_tokens, state_tensor)
-        residual_actions = self.direct_expert_residual_scale * raw_expert_actions
+        residual_info = self._direct_expert_residual_info(
+            raw_expert_actions.device,
+            raw_expert_actions.dtype,
+        )
+        residual_actions_pre_clamp = residual_info["effective_scale"] * raw_expert_actions
+        residual_actions = self._clamp_direct_expert_residuals(residual_actions_pre_clamp)
+        residual_info["pre_clamp_residual_actions"] = residual_actions_pre_clamp
+        residual_info["raw_residual_norm"] = self._expert_residual_norm(residual_actions_pre_clamp)
+        if self.direct_expert_residual_max_norm is None:
+            residual_info["residual_clamp_rate"] = torch.zeros_like(residual_info["raw_residual_norm"])
+        else:
+            residual_info["residual_clamp_rate"] = (
+                residual_info["raw_residual_norm"] > self.direct_expert_residual_max_norm
+            ).float()
         expert_actions = shared_actions[:, None, :, :] + residual_actions
-        return expert_actions, residual_actions, shared_actions
+        return expert_actions, residual_actions, shared_actions, residual_info
 
     @staticmethod
     def _expert_residual_norm(residual_actions: torch.Tensor) -> torch.Tensor:
         return residual_actions.pow(2).mean(dim=(-1, -2)).sqrt()
+
+    def _direct_expert_residual_info(
+        self,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> dict[str, torch.Tensor]:
+        if self.training:
+            self._direct_expert_train_steps.add_(1)
+        base_scale = torch.as_tensor(
+            self.direct_expert_residual_scale,
+            device=device,
+            dtype=dtype,
+        )
+        warmup_fraction = torch.ones((), device=device, dtype=dtype)
+        if self.training and self.direct_expert_residual_warmup_steps > 0:
+            step = self._direct_expert_train_steps.to(device=device, dtype=dtype)
+            warmup_fraction = (
+                step / float(self.direct_expert_residual_warmup_steps)
+            ).clamp(max=1.0)
+        return {
+            "base_scale": base_scale,
+            "effective_scale": base_scale * warmup_fraction,
+            "warmup_fraction": warmup_fraction,
+        }
+
+    def _clamp_direct_expert_residuals(self, residual_actions: torch.Tensor) -> torch.Tensor:
+        if self.direct_expert_residual_max_norm is None:
+            return residual_actions
+        residual_norm = self._expert_residual_norm(residual_actions)
+        max_norm = torch.as_tensor(
+            self.direct_expert_residual_max_norm,
+            device=residual_actions.device,
+            dtype=residual_actions.dtype,
+        )
+        clamp_scale = (
+            max_norm / residual_norm.clamp_min(torch.finfo(residual_actions.dtype).eps)
+        ).clamp(max=1.0)
+        return residual_actions * clamp_scale[:, :, None, None]
 
     @staticmethod
     def _as_tensor(value, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
@@ -534,15 +621,24 @@ class ActionHeadAdapter(nn.Module):
             direct_expert_loss = None
             direct_expert_losses = None
             direct_posterior_losses = None
+            direct_posterior_mask = None
+            direct_assignment_support = None
+            direct_assignment_active = None
             utility_expert_losses = None
             state_utility_losses = None
             state_utility_component_targets = None
             direct_expert_residuals = None
+            direct_expert_residual_info = {}
             shared_actions = None
             shared_router_losses = None
             direct_residual_regularization_loss = None
             if self.direct_action_experts is not None:
-                direct_expert_actions, direct_expert_residuals, shared_actions = self._direct_expert_action_bank(
+                (
+                    direct_expert_actions,
+                    direct_expert_residuals,
+                    shared_actions,
+                    direct_expert_residual_info,
+                ) = self._direct_expert_action_bank(
                     conditioning_tokens,
                     state_tensor,
                 )
@@ -590,66 +686,194 @@ class ActionHeadAdapter(nn.Module):
                     self.direct_expert_improvement_posterior
                     and shared_router_losses is not None
                 ):
+                    improvement = shared_router_losses[:, None].detach() - direct_expert_losses.detach()
                     direct_posterior_losses = direct_posterior_losses - shared_router_losses[:, None].detach()
                     if self.direct_expert_residual_cost_weight > 0 and direct_expert_residuals is not None:
+                        residuals_for_cost = direct_expert_residual_info.get(
+                            "pre_clamp_residual_actions",
+                            direct_expert_residuals,
+                        )
                         residual_cost = self._expert_residual_norm(
-                            direct_expert_residuals[:, :, : self.router_horizon, :]
+                            residuals_for_cost[:, :, : self.router_horizon, :]
                         ).detach()
                         direct_posterior_losses = (
                             direct_posterior_losses
                             + self.direct_expert_residual_cost_weight * residual_cost
                         )
+                    if self.direct_expert_hard_assignment:
+                        direct_posterior_mask = self._improvement_assignment_mask(
+                            improvement,
+                            top_r=self.direct_expert_posterior_top_r,
+                            margin=self.direct_expert_improvement_margin,
+                        )
+                        direct_assignment_support = direct_posterior_mask
+                        direct_assignment_active = direct_posterior_mask.any(dim=-1)
+                        # posterior_from_expert_losses requires positive support. For shared-only
+                        # samples, keep a top-1 fallback for a valid posterior and gate the loss below.
+                        fallback_mask = self._topk_boolean_mask(improvement, top_k=1)
+                        direct_posterior_mask = torch.where(
+                            direct_assignment_active[:, None],
+                            direct_posterior_mask,
+                            fallback_mask,
+                        )
+                direct_posterior_top_r = self.direct_expert_posterior_top_r
+                if direct_posterior_top_r is None:
+                    direct_posterior_top_r = self.lara_moe.posterior_top_r
                 direct_posterior = posterior_from_expert_losses(
                     direct_posterior_losses,
                     temperature=self.lara_moe.posterior_temperature,
+                    mask=direct_posterior_mask,
                     uniform_floor=self.lara_moe.posterior_uniform_floor,
-                    top_r=self.lara_moe.posterior_top_r,
+                    top_r=direct_posterior_top_r,
                 )
-                direct_expert_loss = (direct_expert_loss_components["weighted"] * direct_posterior).sum(dim=-1).mean()
+                direct_expert_loss_per_sample = (
+                    direct_expert_loss_components["weighted"] * direct_posterior
+                ).sum(dim=-1)
+                if direct_assignment_active is not None and self.direct_expert_shared_only_gate:
+                    assignment_weight = direct_assignment_active.to(
+                        dtype=direct_expert_loss_per_sample.dtype
+                    )
+                    direct_expert_loss = (
+                        direct_expert_loss_per_sample * assignment_weight
+                    ).sum() / assignment_weight.sum().clamp_min(1.0)
+                else:
+                    direct_expert_loss = direct_expert_loss_per_sample.mean()
+                aux_losses.update(
+                    self._posterior_diagnostics(
+                        direct_posterior,
+                        prefix="moe_direct_posterior",
+                        support_mask=direct_posterior_mask,
+                    )
+                )
                 if direct_expert_residuals is not None:
-                    residual_norm_loss = direct_expert_residuals.pow(2).mean()
+                    residuals_for_norm_loss = direct_expert_residual_info.get(
+                        "pre_clamp_residual_actions",
+                        direct_expert_residuals,
+                    )
+                    residual_norm = self._expert_residual_norm(direct_expert_residuals)
+                    residual_norm_loss = residuals_for_norm_loss.pow(2).mean()
                     residual_diversity_loss = expert_diversity_loss(direct_expert_residuals)
                     direct_residual_regularization_loss = (
                         self.direct_residual_norm_loss_weight * residual_norm_loss
                         + self.direct_residual_diversity_loss_weight * residual_diversity_loss
                     )
-                    aux_losses.update(
-                        {
-                            "moe_direct_residual_norm": self._expert_residual_norm(direct_expert_residuals)
-                            .mean()
-                            .detach(),
-                            "moe_direct_residual_norm_loss_raw": residual_norm_loss.detach(),
-                            "moe_direct_residual_norm_loss_weight": torch.as_tensor(
-                                self.direct_residual_norm_loss_weight,
-                                device=residual_norm_loss.device,
-                                dtype=residual_norm_loss.dtype,
-                            ),
-                            "moe_direct_residual_norm_loss_weighted": (
-                                self.direct_residual_norm_loss_weight * residual_norm_loss.detach()
-                            ),
-                            "moe_direct_residual_diversity_loss_raw": residual_diversity_loss.detach(),
-                            "moe_direct_residual_diversity_loss_weight": torch.as_tensor(
-                                self.direct_residual_diversity_loss_weight,
-                                device=residual_diversity_loss.device,
-                                dtype=residual_diversity_loss.dtype,
-                            ),
-                            "moe_direct_residual_diversity_loss_weighted": (
-                                self.direct_residual_diversity_loss_weight * residual_diversity_loss.detach()
-                            ),
-                            "moe_direct_residual_regularization_loss": direct_residual_regularization_loss,
-                            "moe_direct_residual_regularization_loss_weighted": direct_residual_regularization_loss.detach(),
-                        }
+                    raw_residual_norm = direct_expert_residual_info.get("raw_residual_norm")
+                    residual_clamp_rate = direct_expert_residual_info.get("residual_clamp_rate")
+                    residual_metrics = {
+                        "moe_direct_residual_norm": residual_norm.mean().detach(),
+                        "moe_direct_residual_raw_norm": (
+                            raw_residual_norm.mean().detach()
+                            if raw_residual_norm is not None
+                            else residual_norm.mean().detach()
+                        ),
+                        "moe_direct_residual_clamp_rate": (
+                            residual_clamp_rate.mean().detach()
+                            if residual_clamp_rate is not None
+                            else torch.zeros((), device=direct_expert_residuals.device)
+                        ),
+                        "moe_direct_residual_scale_base": direct_expert_residual_info[
+                            "base_scale"
+                        ].detach(),
+                        "moe_direct_residual_scale_effective": direct_expert_residual_info[
+                            "effective_scale"
+                        ].detach(),
+                        "moe_direct_residual_warmup_fraction": direct_expert_residual_info[
+                            "warmup_fraction"
+                        ].detach(),
+                        "moe_direct_residual_max_norm": torch.as_tensor(
+                            self.direct_expert_residual_max_norm or 0.0,
+                            device=direct_expert_residuals.device,
+                            dtype=direct_expert_residuals.dtype,
+                        ),
+                        "moe_direct_residual_norm_loss_raw": residual_norm_loss.detach(),
+                        "moe_direct_residual_norm_loss_weight": torch.as_tensor(
+                            self.direct_residual_norm_loss_weight,
+                            device=residual_norm_loss.device,
+                            dtype=residual_norm_loss.dtype,
+                        ),
+                        "moe_direct_residual_norm_loss_weighted": (
+                            self.direct_residual_norm_loss_weight * residual_norm_loss.detach()
+                        ),
+                        "moe_direct_residual_diversity_loss_raw": residual_diversity_loss.detach(),
+                        "moe_direct_residual_diversity_loss_weight": torch.as_tensor(
+                            self.direct_residual_diversity_loss_weight,
+                            device=residual_diversity_loss.device,
+                            dtype=residual_diversity_loss.dtype,
+                        ),
+                        "moe_direct_residual_diversity_loss_weighted": (
+                            self.direct_residual_diversity_loss_weight * residual_diversity_loss.detach()
+                        ),
+                        "moe_direct_residual_regularization_loss": direct_residual_regularization_loss,
+                        "moe_direct_residual_regularization_loss_weighted": direct_residual_regularization_loss.detach(),
+                    }
+                    raw_norm_by_expert = (
+                        raw_residual_norm
+                        if raw_residual_norm is not None
+                        else residual_norm
                     )
+                    clamp_rate_by_expert = (
+                        residual_clamp_rate
+                        if residual_clamp_rate is not None
+                        else torch.zeros_like(residual_norm)
+                    )
+                    for expert_idx in range(residual_norm.shape[-1]):
+                        residual_metrics.update(
+                            {
+                                f"moe_direct_residual_norm_{expert_idx}": residual_norm[:, expert_idx].mean().detach(),
+                                f"moe_direct_residual_raw_norm_{expert_idx}": raw_norm_by_expert[:, expert_idx].mean().detach(),
+                                f"moe_direct_residual_clamp_rate_{expert_idx}": clamp_rate_by_expert[:, expert_idx].mean().detach(),
+                            }
+                        )
+                    aux_losses.update(residual_metrics)
                 if shared_router_losses is not None:
                     improvement = shared_router_losses[:, None].detach() - direct_expert_losses.detach()
-                    aux_losses.update(
-                        {
-                            "moe_shared_action_loss": shared_router_losses.mean().detach(),
-                            "moe_direct_expert_improvement_mean": improvement.mean().detach(),
-                            "moe_direct_expert_improvement_top1": improvement.max(dim=-1).values.mean().detach(),
-                            "moe_direct_expert_improvement_positive_rate": (improvement > 0).float().mean().detach(),
-                        }
-                    )
+                    improvement_metrics = {
+                        "moe_shared_action_loss": shared_router_losses.mean().detach(),
+                        "moe_direct_expert_improvement_mean": improvement.mean().detach(),
+                        "moe_direct_expert_improvement_top1": improvement.max(dim=-1).values.mean().detach(),
+                        "moe_direct_expert_improvement_positive_rate": (improvement > 0).float().mean().detach(),
+                        "moe_direct_expert_improvement_margin": torch.as_tensor(
+                            self.direct_expert_improvement_margin,
+                            device=improvement.device,
+                            dtype=improvement.dtype,
+                        ),
+                        "moe_direct_expert_improvement_candidate_rate": (
+                            improvement > self.direct_expert_improvement_margin
+                        )
+                        .float()
+                        .mean()
+                        .detach(),
+                    }
+                    for expert_idx in range(improvement.shape[-1]):
+                        expert_improvement = improvement[:, expert_idx]
+                        improvement_metrics.update(
+                            {
+                                f"moe_direct_expert_improvement_mean_{expert_idx}": expert_improvement.mean().detach(),
+                                f"moe_direct_expert_improvement_positive_rate_{expert_idx}": (
+                                    expert_improvement > 0
+                                )
+                                .float()
+                                .mean()
+                                .detach(),
+                            }
+                        )
+                    if direct_assignment_active is not None:
+                        selected_count = direct_assignment_support.to(dtype=improvement.dtype).sum(dim=-1)
+                        assignment_usage = direct_assignment_support.to(dtype=improvement.dtype).mean(dim=0)
+                        improvement_metrics.update(
+                            {
+                                "moe_direct_assignment_active_rate": direct_assignment_active.float().mean().detach(),
+                                "moe_direct_assignment_shared_only_rate": (
+                                    1.0 - direct_assignment_active.float().mean()
+                                ).detach(),
+                                "moe_direct_assignment_selected_experts": selected_count.mean().detach(),
+                            }
+                        )
+                        for expert_idx in range(assignment_usage.shape[-1]):
+                            improvement_metrics[f"moe_direct_assignment_usage_{expert_idx}"] = assignment_usage[
+                                expert_idx
+                            ].detach()
+                    aux_losses.update(improvement_metrics)
             else:
                 direct_utility_component_targets = None
             with torch.no_grad():
@@ -1129,6 +1353,64 @@ class ActionHeadAdapter(nn.Module):
         mask = valid_mask.to(device=predicted.device, dtype=per_sample_loss.dtype)
         return (per_sample_loss * mask).sum() / mask.sum().clamp_min(1.0)
 
+    @staticmethod
+    def _topk_boolean_mask(scores: torch.Tensor, top_k: Optional[int]) -> torch.Tensor:
+        if top_k is None or top_k >= scores.shape[-1]:
+            return torch.ones_like(scores, dtype=torch.bool)
+        if top_k <= 0:
+            raise ValueError("top_k must be positive")
+        indices = scores.topk(k=top_k, dim=-1).indices
+        mask = torch.zeros_like(scores, dtype=torch.bool)
+        return mask.scatter(dim=-1, index=indices, value=True)
+
+    def _improvement_assignment_mask(
+        self,
+        improvement: torch.Tensor,
+        top_r: Optional[int],
+        margin: float,
+    ) -> torch.Tensor:
+        support = improvement > margin
+        if top_r is not None:
+            support = support & self._topk_boolean_mask(improvement, top_k=top_r)
+        return support
+
+    @staticmethod
+    def _percentile(values: torch.Tensor, q: float) -> torch.Tensor:
+        if values.numel() == 0:
+            return values.new_zeros(())
+        sorted_values = values.sort().values
+        index = int(round((sorted_values.numel() - 1) * q))
+        index = max(0, min(sorted_values.numel() - 1, index))
+        return sorted_values[index]
+
+    @classmethod
+    def _posterior_diagnostics(
+        cls,
+        probs: torch.Tensor,
+        prefix: str,
+        support_mask: Optional[torch.Tensor] = None,
+    ) -> dict[str, torch.Tensor]:
+        with torch.no_grad():
+            safe_probs = probs.detach()
+            entropy_per_sample = -(safe_probs * torch.log(safe_probs.clamp_min(1e-8))).sum(dim=-1)
+            sorted_probs = safe_probs.sort(dim=-1, descending=True).values
+            top2_count = min(2, safe_probs.shape[-1])
+            usage = safe_probs.mean(dim=0)
+            metrics = {
+                f"{prefix}_entropy": entropy_per_sample.mean(),
+                f"{prefix}_entropy_min": entropy_per_sample.min(),
+                f"{prefix}_entropy_p50": cls._percentile(entropy_per_sample, 0.5),
+                f"{prefix}_entropy_p90": cls._percentile(entropy_per_sample, 0.9),
+                f"{prefix}_effective_experts": torch.exp(entropy_per_sample).mean(),
+                f"{prefix}_top1_prob": sorted_probs[:, 0].mean(),
+                f"{prefix}_top2_mass": sorted_probs[:, :top2_count].sum(dim=-1).mean(),
+            }
+            if support_mask is not None:
+                metrics[f"{prefix}_support_size"] = support_mask.to(dtype=safe_probs.dtype).sum(dim=-1).mean()
+            for expert_idx in range(safe_probs.shape[-1]):
+                metrics[f"{prefix}_usage_{expert_idx}"] = usage[expert_idx]
+            return metrics
+
     def _pool_target_probs(self, expert_action_losses, trajectory_ids, utility_scores=None, utility_candidate_mask=None):
         if expert_action_losses is None or trajectory_ids is None:
             return None
@@ -1252,7 +1534,7 @@ class ActionHeadAdapter(nn.Module):
                 forced_router_probs=forced_router_probs,
             )
             if self.use_direct_action_output:
-                direct_expert_actions, _, _ = self._direct_expert_action_bank(conditioning_tokens, state_tensor)
+                direct_expert_actions, _, _, _ = self._direct_expert_action_bank(conditioning_tokens, state_tensor)
                 pred_actions = ActionChunkExpertBank.routed_actions(direct_expert_actions, moe_output.router_probs)
                 if return_aux:
                     return {

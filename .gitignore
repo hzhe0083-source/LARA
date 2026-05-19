@@ -4,6 +4,10 @@ checkpoints/
 runs/
 outputs/
 wandb/
+data/
+.cache/
+.libero/
+MUJOCO_LOG.TXT
 
 # Python/cache artifacts.
 __pycache__/

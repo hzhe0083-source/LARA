@@ -73,6 +73,7 @@ def test_so101_batches_expose_future_actions():
     assert "class TaskTextDataset" in v3_dataset_src
     assert "def _load_task_map" in v3_dataset_src
     assert 'tasks_parquet = meta_dir / "tasks.parquet"' in v3_dataset_src
+    assert '"__index_level_0__"' in v3_dataset_src
     assert 'sample["task"] = self.task_map[task_index]' in v3_dataset_src
     assert 'return_dict["execution_state_target"] = execution_state' in dataset_src
     assert 'return_dict["prediction_state_target"] = prediction_state' in dataset_src
